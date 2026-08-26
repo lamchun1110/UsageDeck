@@ -224,6 +224,7 @@ export interface AppSettings {
   providerOptions: Record<string, Record<string, string>>;
   showTotalSpend: boolean;
   theme: 'system' | 'light' | 'dark';
+  accent: 'iris' | 'ocean' | 'forest' | 'rose' | 'amber';
   density: 'default' | 'compact';
   reduceAnimations: boolean;
   windowMode: 'popup' | 'floating';

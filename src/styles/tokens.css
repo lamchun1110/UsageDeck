@@ -154,3 +154,112 @@
   --error-bg: #3d2525;
   color-scheme: dark;
 }
+
+/* Named accent palettes; iris (the default) lives in the base blocks above.
+   Keep all four blocks per accent: the doubled light/dark values are what lets
+   an explicit [data-theme] override beat the prefers-color-scheme media query
+   in both directions. */
+
+:root[data-accent='ocean'] {
+  --accent: #0284c7;
+  --accent-strong: #036aa1;
+  --accent-soft: rgba(2, 132, 199, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-accent='ocean'] {
+    --accent: #5eb7f7;
+    --accent-strong: #8ccbf9;
+    --accent-soft: rgba(94, 183, 247, 0.16);
+  }
+}
+
+:root[data-theme='light'][data-accent='ocean'] {
+  --accent: #0284c7;
+  --accent-strong: #036aa1;
+  --accent-soft: rgba(2, 132, 199, 0.12);
+}
+
+:root[data-theme='dark'][data-accent='ocean'] {
+  --accent: #5eb7f7;
+  --accent-strong: #8ccbf9;
+  --accent-soft: rgba(94, 183, 247, 0.16);
+}
+
+:root[data-accent='forest'] {
+  --accent: #059669;
+  --accent-strong: #047857;
+  --accent-soft: rgba(5, 150, 105, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-accent='forest'] {
+    --accent: #34d399;
+    --accent-strong: #6ee7b7;
+    --accent-soft: rgba(52, 211, 153, 0.16);
+  }
+}
+
+:root[data-theme='light'][data-accent='forest'] {
+  --accent: #059669;
+  --accent-strong: #047857;
+  --accent-soft: rgba(5, 150, 105, 0.12);
+}
+
+:root[data-theme='dark'][data-accent='forest'] {
+  --accent: #34d399;
+  --accent-strong: #6ee7b7;
+  --accent-soft: rgba(52, 211, 153, 0.16);
+}
+
+:root[data-accent='rose'] {
+  --accent: #e11d48;
+  --accent-strong: #be123c;
+  --accent-soft: rgba(225, 29, 72, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-accent='rose'] {
+    --accent: #fb7185;
+    --accent-strong: #fda4af;
+    --accent-soft: rgba(251, 113, 133, 0.16);
+  }
+}
+
+:root[data-theme='light'][data-accent='rose'] {
+  --accent: #e11d48;
+  --accent-strong: #be123c;
+  --accent-soft: rgba(225, 29, 72, 0.1);
+}
+
+:root[data-theme='dark'][data-accent='rose'] {
+  --accent: #fb7185;
+  --accent-strong: #fda4af;
+  --accent-soft: rgba(251, 113, 133, 0.16);
+}
+
+:root[data-accent='amber'] {
+  --accent: #d97706;
+  --accent-strong: #b45309;
+  --accent-soft: rgba(217, 119, 6, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-accent='amber'] {
+    --accent: #fbbf24;
+    --accent-strong: #fcd34d;
+    --accent-soft: rgba(251, 191, 36, 0.16);
+  }
+}
+
+:root[data-theme='light'][data-accent='amber'] {
+  --accent: #d97706;
+  --accent-strong: #b45309;
+  --accent-soft: rgba(217, 119, 6, 0.12);
+}
+
+:root[data-theme='dark'][data-accent='amber'] {
+  --accent: #fbbf24;
+  --accent-strong: #fcd34d;
+  --accent-soft: rgba(251, 191, 36, 0.16);
+}

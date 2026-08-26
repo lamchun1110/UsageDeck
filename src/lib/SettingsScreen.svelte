@@ -207,6 +207,20 @@
       />
     </div>
     <div class="setting-row">
+      <span><b>Accent</b></span><SelectMenu
+        label="Accent"
+        value={settings.accent}
+        options={[
+          { value: 'iris', label: 'Iris' },
+          { value: 'ocean', label: 'Ocean' },
+          { value: 'forest', label: 'Forest' },
+          { value: 'rose', label: 'Rose' },
+          { value: 'amber', label: 'Amber' },
+        ]}
+        onChange={(value) => patch({ accent: value as AppSettings['accent'] })}
+      />
+    </div>
+    <div class="setting-row">
       <span><b>Density</b></span><SelectMenu
         label="Density"
         value={settings.density}

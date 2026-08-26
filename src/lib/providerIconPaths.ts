@@ -47,3 +47,19 @@ export function providerIconViewBox(providerId: string) {
     visuals[providerFamily(providerId)]?.source.match(/viewBox="([^"]+)"/)?.[1] ?? '0 0 100 100'
   );
 }
+
+const accentTokens: Record<string, string> = {
+  antigravity: 'var(--provider-antigravity)',
+  claude: 'var(--provider-claude)',
+  commandcode: 'var(--provider-commandcode)',
+  codex: 'var(--provider-codex)',
+  copilot: 'var(--provider-copilot)',
+  cursor: 'var(--provider-cursor)',
+  kimi: 'var(--provider-kimi)',
+  minimax: 'var(--provider-minimax)',
+  openrouter: 'var(--provider-openrouter)',
+};
+
+export function providerAccent(providerId: string) {
+  return accentTokens[providerFamily(providerId)] ?? 'var(--accent)';
+}

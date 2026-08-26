@@ -131,6 +131,8 @@
     if (!settingsState) return;
     if (settingsState.settings.theme === 'system') delete root.dataset.theme;
     else root.dataset.theme = settingsState.settings.theme;
+    if (settingsState.settings.accent === 'iris') delete root.dataset.accent;
+    else root.dataset.accent = settingsState.settings.accent;
     root.dataset.density = settingsState.settings.density;
   });
 

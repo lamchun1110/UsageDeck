@@ -645,6 +645,21 @@ pub enum ThemePreference {
     Dark,
 }
 
+/// Accent palette layered over the light/dark appearance. `#[serde(other)]`
+/// keeps settings files portable across versions: unknown values fall back to
+/// the default instead of failing deserialization.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AccentPreference {
+    Ocean,
+    Forest,
+    Rose,
+    Amber,
+    #[default]
+    #[serde(other)]
+    Iris,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum DensityPreference {
@@ -759,6 +774,7 @@ pub struct AppSettings {
     pub provider_options: BTreeMap<String, BTreeMap<String, String>>,
     pub show_total_spend: bool,
     pub theme: ThemePreference,
+    pub accent: AccentPreference,
     pub density: DensityPreference,
     pub reduce_animations: bool,
     pub window_mode: WindowMode,
@@ -789,6 +805,7 @@ impl Default for AppSettings {
             provider_options: BTreeMap::new(),
             show_total_spend: true,
             theme: ThemePreference::System,
+            accent: AccentPreference::Iris,
             density: DensityPreference::Default,
             reduce_animations: false,
             window_mode: WindowMode::Popup,
@@ -875,6 +892,14 @@ mod tests {
         value["windowMode"] = serde_json::json!("detached");
         let settings: AppSettings = serde_json::from_value(value).unwrap();
         assert_eq!(settings.window_mode, WindowMode::Popup);
+    }
+
+    #[test]
+    fn unknown_persisted_accents_fall_back_to_iris() {
+        let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+        value["accent"] = serde_json::json!("solarized");
+        let settings: AppSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.accent, super::AccentPreference::Iris);
     }
 
     #[test]

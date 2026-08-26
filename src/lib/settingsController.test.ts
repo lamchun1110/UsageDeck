@@ -30,6 +30,7 @@ function settingsView(
       knownProviderIds: [],
       showTotalSpend: true,
       theme,
+      accent: 'iris',
       density: 'default',
       reduceAnimations: false,
       windowMode: 'popup',

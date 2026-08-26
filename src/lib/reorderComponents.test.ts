@@ -14,6 +14,7 @@ const settings: AppSettings = {
   knownProviderIds: ['codex', 'claude', 'antigravity'],
   showTotalSpend: false,
   theme: 'system',
+  accent: 'iris',
   density: 'default',
   reduceAnimations: false,
   windowMode: 'popup',

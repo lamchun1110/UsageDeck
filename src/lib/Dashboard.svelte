@@ -13,6 +13,7 @@
   import type { SpendProjection } from './totalSpend';
   import type { ProviderCatalogIndex } from './metrics';
   import { canRenameProvider } from './providerNames';
+  import { providerAccent } from './providerIconPaths';
   import type {
     AppSettings,
     MetricLayout,
@@ -425,6 +426,7 @@
   >
     <section
       class="provider-section"
+      style:--card-accent={providerAccent(provider.id)}
       data-provider-id={provider.id}
       data-reorder-group="dashboard-providers"
       data-reorder-id={provider.id}
@@ -1138,46 +1140,11 @@
       margin: 9px 2px 0;
     }
 
-    /* UsageDeck signature: every provider card carries its own brand accent.
-       Meters, trend bars, and the icon chip all inherit --card-accent. */
+    /* UsageDeck signature: every provider card carries its own brand accent,
+       resolved from the visual asset registry and bound as --card-accent.
+       Meters, trend bars, and the icon chip all inherit it. */
     .provider-section {
       --card-accent: var(--accent);
-    }
-
-    .provider-section[data-provider-id^='claude'] {
-      --card-accent: var(--provider-claude);
-    }
-
-    .provider-section[data-provider-id='codex'] {
-      --card-accent: var(--provider-codex);
-    }
-
-    .provider-section[data-provider-id='commandcode'] {
-      --card-accent: var(--provider-commandcode);
-    }
-
-    .provider-section[data-provider-id='cursor'] {
-      --card-accent: var(--provider-cursor);
-    }
-
-    .provider-section[data-provider-id='antigravity'] {
-      --card-accent: var(--provider-antigravity);
-    }
-
-    .provider-section[data-provider-id='copilot'] {
-      --card-accent: var(--provider-copilot);
-    }
-
-    .provider-section[data-provider-id='openrouter'] {
-      --card-accent: var(--provider-openrouter);
-    }
-
-    .provider-section[data-provider-id='kimi'] {
-      --card-accent: var(--provider-kimi);
-    }
-
-    .provider-section[data-provider-id='minimax'] {
-      --card-accent: var(--provider-minimax);
     }
 
     .provider-header {
