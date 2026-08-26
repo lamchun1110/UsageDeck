@@ -58,19 +58,7 @@ pub fn update(
         return;
     };
     let groups = resolved_groups(state, settings, registry);
-    let tooltip = if groups.is_empty() {
-        "UsageDeck".to_owned()
-    } else {
-        format!(
-            "UsageDeck\n{}",
-            groups
-                .iter()
-                .flat_map(|group| group.metrics.iter())
-                .map(|metric| metric.detail.as_str())
-                .collect::<Vec<_>>()
-                .join(" · ")
-        )
-    };
+    let tooltip = tooltip_text(&tooltip_entries(state, settings, registry));
     #[cfg(not(target_os = "linux"))]
     if tray.set_tooltip(Some(tooltip)).is_err() {
         crate::app_warn!("tray", "tray tooltip update failed");
@@ -241,6 +229,78 @@ fn resolved_groups(
             })
         })
         .collect()
+}
+
+/// Hover summary, one entry per provider. Prefers the first pinned metric so
+/// the tooltip matches what the tray already surfaces; falls back to the first
+/// enabled metric so a fresh install shows session limits without any setup.
+#[derive(Debug, Clone, PartialEq)]
+struct TooltipEntry {
+    name: String,
+    value: String,
+}
+
+fn tooltip_entries(
+    state: &UsageViewState,
+    settings: &AppSettings,
+    registry: &ProviderRegistry,
+) -> Vec<TooltipEntry> {
+    settings
+        .providers
+        .iter()
+        .filter(|provider| provider.enabled)
+        .filter_map(|provider| {
+            let definition = registry.definition(&provider.id)?;
+            let snapshot = state
+                .providers
+                .get(&provider.id)
+                .and_then(|state| state.snapshot.as_ref())?;
+            let mut pinned = None;
+            let mut fallback = None;
+            for metric in provider.metrics.iter().filter(|metric| metric.enabled) {
+                let metric_definition = registry.metric(&metric.id)?;
+                let Some(resolved) =
+                    tray_metric(metric_definition, snapshot, settings.usage_display)
+                else {
+                    continue;
+                };
+                if fallback.is_none() {
+                    fallback = Some(resolved.clone());
+                }
+                if metric.pinned && pinned.is_none() {
+                    pinned = Some(resolved);
+                }
+            }
+            let chosen = pinned.or(fallback)?;
+            let value = match chosen.gauge {
+                Some(gauge) => format!("{:.0}%", gauge.display_fraction * 100.0),
+                None => chosen.value.clone(),
+            };
+            Some(TooltipEntry {
+                name: settings.provider_display_name(definition).to_owned(),
+                value,
+            })
+        })
+        .collect()
+}
+
+/// Windows tray tooltips are a 128-WCHAR buffer (terminator included) that
+/// tray-icon truncates silently, hence the budget and the provider-boundary
+/// stop instead of losing text mid-value.
+fn tooltip_text(entries: &[TooltipEntry]) -> String {
+    const BUDGET_CHARS: usize = 120;
+    const ELLIPSIS: &str = " · …";
+    let mut tooltip = String::from("UsageDeck");
+    for entry in entries {
+        let piece = format!(" · {} {}", entry.name, entry.value);
+        if tooltip.chars().count() + piece.chars().count() + ELLIPSIS.chars().count() > BUDGET_CHARS
+        {
+            tooltip.push_str(ELLIPSIS);
+            return tooltip;
+        }
+        tooltip.push_str(&piece);
+    }
+    tooltip
 }
 
 fn tray_metric(
@@ -440,7 +500,8 @@ mod tests {
 
     use super::{
         bar_fractions, format_tokens, mac_menu_bar_presentation, primary_gauge, resolved_groups,
-        text_groups, MacMenuBarIcon, MacMenuBarPresentation, TrayGauge, TrayGroup, TrayMetric,
+        text_groups, tooltip_entries, tooltip_text, MacMenuBarIcon, MacMenuBarPresentation,
+        TrayGauge, TrayGroup, TrayMetric,
     };
     use crate::service::UsageViewState;
 
@@ -736,6 +797,121 @@ mod tests {
         assert_eq!(format_tokens(999), "999");
         assert_eq!(format_tokens(12_340), "12.3K");
         assert_eq!(format_tokens(2_500_000), "2.5M");
+    }
+
+    #[test]
+    fn tooltip_entries_prefer_pinned_metrics_and_fall_back_when_nothing_is_pinned() {
+        let snapshot = ProviderSnapshot {
+            provider_id: "codex".into(),
+            plan: None,
+            quotas: vec![
+                QuotaWindow {
+                    id: "session".into(),
+                    label: "Session".into(),
+                    used_percent: 25.0,
+                    resets_at: None,
+                    period_seconds: 18_000,
+                    format: crate::models::QuotaFormat::Percent,
+                    used_value: None,
+                    limit_value: None,
+                    unit: None,
+                    estimated: false,
+                    source_note: None,
+                },
+                QuotaWindow {
+                    id: "weekly".into(),
+                    label: "Weekly".into(),
+                    used_percent: 60.0,
+                    resets_at: None,
+                    period_seconds: 604_800,
+                    format: crate::models::QuotaFormat::Percent,
+                    used_value: None,
+                    limit_value: None,
+                    unit: None,
+                    estimated: false,
+                    source_note: None,
+                },
+            ],
+            value_metrics: Vec::new(),
+            status_metrics: Vec::new(),
+            notices: Vec::new(),
+            usage: UsageHistory::default(),
+            warnings: Vec::new(),
+            refreshed_at: Utc::now(),
+        };
+        let provider_state = ProviderViewState {
+            snapshot: Some(snapshot),
+            source: SnapshotSource::Live,
+            ..ProviderViewState::default()
+        };
+        let state = UsageViewState {
+            providers: [("codex".into(), provider_state)].into_iter().collect(),
+            last_full_refresh_at: None,
+        };
+        let catalog = ProviderRegistry::from_definitions(vec![codex::definition()]).unwrap();
+        let settings = default_settings(&catalog, &HashSet::from(["codex".to_owned()]));
+
+        let entries = tooltip_entries(&state, &settings, &catalog);
+        assert_eq!(
+            entries,
+            vec![super::TooltipEntry {
+                name: "Codex".into(),
+                value: "75%".into(),
+            }]
+        );
+
+        let mut weekly_only = settings.clone();
+        weekly_only.providers[0]
+            .metrics
+            .iter_mut()
+            .for_each(|metric| metric.pinned = metric.id == "codex.weekly");
+        assert_eq!(
+            tooltip_entries(&state, &weekly_only, &catalog)[0].value,
+            "40%"
+        );
+
+        let mut nothing_pinned = settings.clone();
+        nothing_pinned
+            .providers
+            .iter_mut()
+            .flat_map(|provider| provider.metrics.iter_mut())
+            .for_each(|metric| metric.pinned = false);
+        assert_eq!(
+            tooltip_entries(&state, &nothing_pinned, &catalog),
+            vec![super::TooltipEntry {
+                name: "Codex".into(),
+                value: "75%".into(),
+            }]
+        );
+        assert!(tooltip_entries(&UsageViewState::default(), &settings, &catalog).is_empty());
+    }
+
+    #[test]
+    fn tooltip_text_stays_within_the_windows_budget_and_stops_at_a_provider_boundary() {
+        assert_eq!(tooltip_text(&[]), "UsageDeck");
+        let short = vec![
+            super::TooltipEntry {
+                name: "Codex".into(),
+                value: "75%".into(),
+            },
+            super::TooltipEntry {
+                name: "Claude".into(),
+                value: "40%".into(),
+            },
+        ];
+        assert_eq!(tooltip_text(&short), "UsageDeck · Codex 75% · Claude 40%");
+
+        let long = (0..20)
+            .map(|index| super::TooltipEntry {
+                name: format!("Provider {index}"),
+                value: "100%".into(),
+            })
+            .collect::<Vec<_>>();
+        let tooltip = tooltip_text(&long);
+        assert!(tooltip.ends_with(" · …"));
+        assert!(tooltip.chars().count() <= 120);
+        assert!(tooltip.contains("Provider 0 100%"));
+        assert!(!tooltip.contains("Provider 19"));
     }
 
     #[test]
