@@ -42,8 +42,11 @@ zeroize = "1.8"
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
 
-[target.'cfg(target_os = "macos")'.dependencies]
+# The tray strip renderer compiles on macOS and Linux; Windows keeps the gauge icon.
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 fontdue = { version = "0.9.3", default-features = false, features = ["std"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7"
 
 [target.'cfg(target_os = "windows")'.dependencies]

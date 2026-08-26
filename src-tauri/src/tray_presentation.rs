@@ -373,7 +373,10 @@ fn tray_metric(
                                     UsageDisplay::Used => used_fraction,
                                     UsageDisplay::Left => 1.0 - used_fraction,
                                 },
-                                #[cfg(any(not(target_os = "macos"), test))]
+                                #[cfg(any(
+                                    all(not(target_os = "macos"), not(target_os = "linux")),
+                                    test
+                                ))]
                                 remaining_fraction: 1.0 - used_fraction,
                             }),
                         };
@@ -394,7 +397,7 @@ fn tray_metric(
                     detail: format!("{} {percent:.0}% {word}", quota.label),
                     gauge: Some(TrayGauge {
                         display_fraction,
-                        #[cfg(any(not(target_os = "macos"), test))]
+                        #[cfg(any(all(not(target_os = "macos"), not(target_os = "linux")), test))]
                         remaining_fraction: 1.0 - used_fraction,
                     }),
                 }
