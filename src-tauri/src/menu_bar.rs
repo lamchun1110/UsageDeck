@@ -8,8 +8,14 @@ use tiny_skia::{FillRule, Paint, Path, PathBuilder, Pixmap, Transform};
 
 const ICON_SIZE: u32 = 36;
 const ICON_POINTS: f32 = 18.0;
-const ICON_SCALE: f32 = ICON_SIZE as f32 / ICON_POINTS;
 pub const MAX_BARS: usize = 4;
+
+/// Linux StatusNotifier panels draw pixmaps verbatim at native pixel size —
+/// there is no scale metadata like the Retina 2x representations macOS
+/// consumes — so Linux tray artifacts are authored at the ~24px panel icon
+/// height. Compiled everywhere so the density stays unit-testable off-Linux.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const STATUS_NOTIFIER_SIZE: u32 = 24;
 
 /// Glyph color for tray strips. macOS template images are recolored by the
 /// system, but StatusNotifier panels draw pixmaps verbatim — so Linux needs
@@ -32,16 +38,53 @@ impl GlyphTone {
     }
 }
 
-const TEXT_HEIGHT: u32 = 36;
-const OUTER_PADDING: f32 = 2.0;
-const GROUP_GAP: f32 = 22.0;
-const ICON_TEXT_GAP: f32 = 8.0;
-const PROVIDER_ICON_SIZE: f32 = 32.0;
-const PROVIDER_ICON_INSET: f32 = 1.0;
-const SINGLE_VALUE_SIZE: f32 = 23.0;
-const STACKED_VALUE_SIZE: f32 = 17.0;
-const STACKED_BASELINES: [f32; 2] = [15.0, 32.0];
+/// Text strip geometry in device pixels. One set per platform density: macOS
+/// menu bar items are 18pt with the strip shipped as a 2x Retina template,
+/// while StatusNotifier panels need glyphs authored at the panel icon height.
+#[derive(Debug, Clone, Copy)]
+struct StripMetrics {
+    height: u32,
+    outer_padding: f32,
+    group_gap: f32,
+    icon_text_gap: f32,
+    provider_icon_size: f32,
+    provider_icon_inset: f32,
+    single_value_size: f32,
+    stacked_value_size: f32,
+    stacked_baselines: [f32; 2],
+}
+
+impl StripMetrics {
+    /// macOS menu bar template strip: 18pt at 2x Retina density.
+    const RETINA: Self = Self {
+        height: 36,
+        outer_padding: 2.0,
+        group_gap: 22.0,
+        icon_text_gap: 8.0,
+        provider_icon_size: 32.0,
+        provider_icon_inset: 1.0,
+        single_value_size: 23.0,
+        stacked_value_size: 17.0,
+        stacked_baselines: [15.0, 32.0],
+    };
+
+    /// Linux StatusNotifier strip: 24px tall, proportions matched to RETINA.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    const STATUS_NOTIFIER: Self = Self {
+        height: STATUS_NOTIFIER_SIZE,
+        outer_padding: 1.0,
+        group_gap: 15.0,
+        icon_text_gap: 5.0,
+        provider_icon_size: 20.0,
+        provider_icon_inset: 1.0,
+        single_value_size: 15.0,
+        stacked_value_size: 11.0,
+        stacked_baselines: [10.0, 21.0],
+    };
+}
+
 const FONT_SOURCE: &[u8] = include_bytes!("../assets/fonts/Poppins-SemiBold.ttf");
+const BRAND_SOURCE: &str = include_str!("../../assets/usagedeck-tray.svg");
 
 const CLAUDE_ICON: &str = include_str!("../../src/assets/provider-icons/claude.svg");
 const COMMANDCODE_ICON: &str = include_str!("../../src/assets/provider-icons/commandcode.svg");
@@ -64,12 +107,88 @@ pub struct TextGroup {
 }
 
 pub fn text_icon(groups: &[TextGroup], tone: GlyphTone) -> Option<Image<'static>> {
-    let strip = render_text_strip(groups, tone)?;
-    Some(Image::new_owned(strip.rgba, strip.width, TEXT_HEIGHT))
+    let strip = render_text_strip(groups, tone, StripMetrics::RETINA)?;
+    Some(Image::new_owned(
+        strip.rgba,
+        strip.width,
+        StripMetrics::RETINA.height,
+    ))
+}
+
+/// Provider strip at StatusNotifier panel density; see `STATUS_NOTIFIER_SIZE`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn status_notifier_text_icon(groups: &[TextGroup], tone: GlyphTone) -> Option<Image<'static>> {
+    let strip = render_text_strip(groups, tone, StripMetrics::STATUS_NOTIFIER)?;
+    Some(Image::new_owned(
+        strip.rgba,
+        strip.width,
+        StripMetrics::STATUS_NOTIFIER.height,
+    ))
 }
 
 pub fn bar_icon(fractions: &[f64], tone: GlyphTone) -> Image<'static> {
-    Image::new_owned(render_bar_rgba(fractions, tone), ICON_SIZE, ICON_SIZE)
+    Image::new_owned(
+        render_bar_rgba(fractions, tone, ICON_SIZE),
+        ICON_SIZE,
+        ICON_SIZE,
+    )
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn status_notifier_bar_icon(fractions: &[f64], tone: GlyphTone) -> Image<'static> {
+    Image::new_owned(
+        render_bar_rgba(fractions, tone, STATUS_NOTIFIER_SIZE),
+        STATUS_NOTIFIER_SIZE,
+        STATUS_NOTIFIER_SIZE,
+    )
+}
+
+/// Fallback mark for Linux trays: the bundled brand glyph, tone-colored and
+/// sized for the panel — the 32px PNG the macOS path uses would render a
+/// third larger than neighbouring status icons.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn status_notifier_mark_icon(tone: GlyphTone) -> Image<'static> {
+    let mut pixmap = Pixmap::new(STATUS_NOTIFIER_SIZE, STATUS_NOTIFIER_SIZE)
+        .expect("status notifier mark dimensions are valid");
+    let path = brand_mark_path();
+    let [red, green, blue] = tone.rgb();
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(red, green, blue, 255);
+    paint.anti_alias = true;
+    let bounds = path.bounds();
+    let target = STATUS_NOTIFIER_SIZE as f32 - 4.0;
+    let scale = (target / bounds.width()).min(target / bounds.height());
+    let tx = (STATUS_NOTIFIER_SIZE as f32 - bounds.width() * scale) / 2.0 - bounds.left() * scale;
+    let ty = (STATUS_NOTIFIER_SIZE as f32 - bounds.height() * scale) / 2.0 - bounds.top() * scale;
+    pixmap.fill_path(
+        path,
+        &paint,
+        FillRule::Winding,
+        Transform::from_row(scale, 0.0, 0.0, scale, tx, ty),
+        None,
+    );
+    Image::new_owned(
+        pixmap.take_demultiplied(),
+        STATUS_NOTIFIER_SIZE,
+        STATUS_NOTIFIER_SIZE,
+    )
+}
+
+fn brand_mark_path() -> &'static Path {
+    static BRAND: OnceLock<Path> = OnceLock::new();
+    BRAND.get_or_init(|| {
+        let mark = Document::parse(BRAND_SOURCE)
+            .map_err(|error| error.to_string())
+            .and_then(|document| {
+                let data = document
+                    .descendants()
+                    .find(|node| node.is_element() && node.attribute("id") == Some("brand-mark"))
+                    .and_then(|node| node.attribute("d"))
+                    .ok_or_else(|| "missing #brand-mark".to_owned())?;
+                parse_path_data(&[data])
+            });
+        mark.unwrap_or_else(|error| panic!("invalid bundled tray SVG: {error}"))
+    })
 }
 
 struct RenderedStrip {
@@ -84,7 +203,11 @@ struct GroupLayout<'a> {
     width: f32,
 }
 
-fn render_text_strip(groups: &[TextGroup], tone: GlyphTone) -> Option<RenderedStrip> {
+fn render_text_strip(
+    groups: &[TextGroup],
+    tone: GlyphTone,
+    metrics: StripMetrics,
+) -> Option<RenderedStrip> {
     let groups = groups
         .iter()
         .filter(|group| !group.values.is_empty())
@@ -97,9 +220,9 @@ fn render_text_strip(groups: &[TextGroup], tone: GlyphTone) -> Option<RenderedSt
                     measure_text(
                         value,
                         if group.values.len() == 1 {
-                            SINGLE_VALUE_SIZE
+                            metrics.single_value_size
                         } else {
-                            STACKED_VALUE_SIZE
+                            metrics.stacked_value_size
                         },
                     )
                 })
@@ -108,7 +231,7 @@ fn render_text_strip(groups: &[TextGroup], tone: GlyphTone) -> Option<RenderedSt
             GroupLayout {
                 group,
                 text_width,
-                width: PROVIDER_ICON_SIZE + ICON_TEXT_GAP + text_width,
+                width: metrics.provider_icon_size + metrics.icon_text_gap + text_width,
             }
         })
         .collect::<Vec<_>>();
@@ -117,39 +240,49 @@ fn render_text_strip(groups: &[TextGroup], tone: GlyphTone) -> Option<RenderedSt
     }
 
     let content_width = groups.iter().map(|group| group.width).sum::<f32>()
-        + GROUP_GAP * groups.len().saturating_sub(1) as f32;
-    let width = (content_width + OUTER_PADDING * 2.0).ceil().max(1.0) as u32;
-    let mut pixmap = Pixmap::new(width, TEXT_HEIGHT).expect("menu bar strip dimensions are valid");
-    let mut x = OUTER_PADDING;
+        + metrics.group_gap * groups.len().saturating_sub(1) as f32;
+    let width = (content_width + metrics.outer_padding * 2.0)
+        .ceil()
+        .max(1.0) as u32;
+    let mut pixmap =
+        Pixmap::new(width, metrics.height).expect("menu bar strip dimensions are valid");
+    let mut x = metrics.outer_padding;
 
     for layout in groups {
-        draw_provider_icon(&mut pixmap, &layout.group.provider_id, x, tone);
-        let text_x = x + PROVIDER_ICON_SIZE + ICON_TEXT_GAP;
+        draw_provider_icon(&mut pixmap, &layout.group.provider_id, x, tone, metrics);
+        let text_x = x + metrics.provider_icon_size + metrics.icon_text_gap;
         if layout.group.values.len() == 1 {
             let value = &layout.group.values[0];
-            let baseline = centered_baseline(value, SINGLE_VALUE_SIZE, TEXT_HEIGHT as f32);
+            let baseline =
+                centered_baseline(value, metrics.single_value_size, metrics.height as f32);
             draw_text(
                 &mut pixmap,
                 value,
-                SINGLE_VALUE_SIZE,
+                metrics.single_value_size,
                 text_x,
                 baseline,
                 tone,
             );
         } else {
-            for (value, baseline) in layout.group.values.iter().take(2).zip(STACKED_BASELINES) {
-                let value_width = measure_text(value, STACKED_VALUE_SIZE);
+            for (value, baseline) in layout
+                .group
+                .values
+                .iter()
+                .take(2)
+                .zip(metrics.stacked_baselines)
+            {
+                let value_width = measure_text(value, metrics.stacked_value_size);
                 draw_text(
                     &mut pixmap,
                     value,
-                    STACKED_VALUE_SIZE,
+                    metrics.stacked_value_size,
                     text_x + layout.text_width - value_width,
                     baseline,
                     tone,
                 );
             }
         }
-        x += layout.width + GROUP_GAP;
+        x += layout.width + metrics.group_gap;
     }
 
     Some(RenderedStrip {
@@ -258,20 +391,26 @@ fn blend_alpha_mask(
     }
 }
 
-fn draw_provider_icon(pixmap: &mut Pixmap, provider_id: &str, x: f32, tone: GlyphTone) {
+fn draw_provider_icon(
+    pixmap: &mut Pixmap,
+    provider_id: &str,
+    x: f32,
+    tone: GlyphTone,
+    metrics: StripMetrics,
+) {
     let [red, green, blue] = tone.rgb();
     let mut paint = Paint::default();
     paint.set_color_rgba8(red, green, blue, 255);
     paint.anti_alias = true;
-    let icon_top = (TEXT_HEIGHT as f32 - PROVIDER_ICON_SIZE) / 2.0;
+    let icon_top = (metrics.height as f32 - metrics.provider_icon_size) / 2.0;
 
     if let Some(path) = provider_path(provider_id) {
         let bounds = path.bounds();
-        let target = PROVIDER_ICON_SIZE - PROVIDER_ICON_INSET * 2.0;
+        let target = metrics.provider_icon_size - metrics.provider_icon_inset * 2.0;
         let scale = (target / bounds.width()).min(target / bounds.height());
-        let tx = x + PROVIDER_ICON_INSET + (target - bounds.width() * scale) / 2.0
+        let tx = x + metrics.provider_icon_inset + (target - bounds.width() * scale) / 2.0
             - bounds.left() * scale;
-        let ty = icon_top + PROVIDER_ICON_INSET + (target - bounds.height() * scale) / 2.0
+        let ty = icon_top + metrics.provider_icon_inset + (target - bounds.height() * scale) / 2.0
             - bounds.top() * scale;
         pixmap.fill_path(
             path,
@@ -283,9 +422,9 @@ fn draw_provider_icon(pixmap: &mut Pixmap, provider_id: &str, x: f32, tone: Glyp
     } else {
         let mut fallback = PathBuilder::new();
         fallback.push_circle(
-            x + PROVIDER_ICON_SIZE / 2.0,
-            icon_top + PROVIDER_ICON_SIZE / 2.0,
-            (PROVIDER_ICON_SIZE - 2.0) / 2.0,
+            x + metrics.provider_icon_size / 2.0,
+            icon_top + metrics.provider_icon_size / 2.0,
+            (metrics.provider_icon_size - 2.0) / 2.0,
         );
         if let Some(path) = fallback.finish() {
             pixmap.fill_path(
@@ -348,9 +487,13 @@ fn parse_svg_path(source: &str) -> Result<Path, String> {
     if path_data.is_empty() {
         return Err("missing path data".to_owned());
     }
+    parse_path_data(&path_data)
+}
 
+/// Combines one or more SVG path `d` fragments into a single path.
+fn parse_path_data(path_data: &[&str]) -> Result<Path, String> {
     let mut builder = PathBuilder::new();
-    for data in path_data {
+    for &data in path_data {
         let mut current = None;
         let mut subpath_start = None;
         let mut previous_cubic_control = None;
@@ -452,9 +595,10 @@ fn parse_svg_path(source: &str) -> Result<Path, String> {
     builder.finish().ok_or_else(|| "path is empty".into())
 }
 
-fn render_bar_rgba(fractions: &[f64], tone: GlyphTone) -> Vec<u8> {
+fn render_bar_rgba(fractions: &[f64], tone: GlyphTone, icon_size: u32) -> Vec<u8> {
+    let scale = icon_size as f32 / ICON_POINTS;
     let size = ICON_POINTS;
-    let mut pixmap = Pixmap::new(ICON_SIZE, ICON_SIZE).expect("menu bar icon dimensions are valid");
+    let mut pixmap = Pixmap::new(icon_size, icon_size).expect("menu bar icon dimensions are valid");
     let count = fractions.len().min(MAX_BARS);
     if count == 0 {
         return pixmap.take_demultiplied();
@@ -476,12 +620,12 @@ fn render_bar_rgba(fractions: &[f64], tone: GlyphTone) -> Vec<u8> {
         let y = y_offset + index as f32 * (track_height + gap) + 1.0;
         fill_rounded_bar(
             &mut pixmap,
-            track_x * ICON_SCALE,
-            y * ICON_SCALE,
-            track_width * ICON_SCALE,
-            track_height * ICON_SCALE,
-            radius * ICON_SCALE,
-            radius * ICON_SCALE,
+            track_x * scale,
+            y * scale,
+            track_width * scale,
+            track_height * scale,
+            radius * scale,
+            radius * scale,
             tone,
             41,
         );
@@ -495,12 +639,12 @@ fn render_bar_rgba(fractions: &[f64], tone: GlyphTone) -> Vec<u8> {
             };
             fill_rounded_bar(
                 &mut pixmap,
-                track_x * ICON_SCALE,
-                y * ICON_SCALE,
-                fill.fill_width * ICON_SCALE,
-                track_height * ICON_SCALE,
-                radius * ICON_SCALE,
-                trailing * ICON_SCALE,
+                track_x * scale,
+                y * scale,
+                fill.fill_width * scale,
+                track_height * scale,
+                radius * scale,
+                trailing * scale,
                 tone,
                 255,
             );
@@ -508,12 +652,12 @@ fn render_bar_rgba(fractions: &[f64], tone: GlyphTone) -> Vec<u8> {
         if let Some(divider_x) = fill.divider_x {
             fill_rounded_bar(
                 &mut pixmap,
-                (track_x + divider_x) * ICON_SCALE,
-                y * ICON_SCALE,
-                fill.remainder_width * ICON_SCALE,
-                track_height * ICON_SCALE,
-                (radius * 0.2).floor().max(0.0) * ICON_SCALE,
-                radius * ICON_SCALE,
+                (track_x + divider_x) * scale,
+                y * scale,
+                fill.remainder_width * scale,
+                track_height * scale,
+                (radius * 0.2).floor().max(0.0) * scale,
+                radius * scale,
                 tone,
                 61,
             );
@@ -619,7 +763,9 @@ fn fill_rounded_bar(
 mod tests {
     use super::{
         bar_fill, bar_icon, parse_svg_path, provider_path, render_bar_rgba, render_text_strip,
-        text_icon, visual_bar_fraction, GlyphTone, TextGroup, ICON_SIZE, MAX_BARS, TEXT_HEIGHT,
+        status_notifier_bar_icon, status_notifier_mark_icon, status_notifier_text_icon, text_icon,
+        visual_bar_fraction, GlyphTone, StripMetrics, TextGroup, ICON_SIZE, MAX_BARS,
+        STATUS_NOTIFIER_SIZE,
     };
 
     fn text_group(provider_id: &str, values: &[&str]) -> TextGroup {
@@ -658,10 +804,14 @@ mod tests {
                 text_group("cursor", &["93%", "0%"]),
             ],
             GlyphTone::Dark,
+            StripMetrics::RETINA,
         )
         .expect("provider values should produce a strip");
-        assert_eq!(strip.rgba.len(), (strip.width * TEXT_HEIGHT * 4) as usize);
-        assert!(strip.width > TEXT_HEIGHT * 3);
+        assert_eq!(
+            strip.rgba.len(),
+            (strip.width * StripMetrics::RETINA.height * 4) as usize
+        );
+        assert!(strip.width > StripMetrics::RETINA.height * 3);
         assert!(strip
             .rgba
             .as_chunks::<4>()
@@ -670,8 +820,8 @@ mod tests {
             .any(|pixel| pixel[3] == 255));
         let icon = text_icon(&[text_group("codex", &["75%", "40%"])], GlyphTone::Light)
             .expect("public text renderer should return an image");
-        assert_eq!(icon.height(), TEXT_HEIGHT);
-        assert!(icon.width() > TEXT_HEIGHT);
+        assert_eq!(icon.height(), StripMetrics::RETINA.height);
+        assert!(icon.width() > StripMetrics::RETINA.height);
     }
 
     #[test]
@@ -687,28 +837,45 @@ mod tests {
 
     #[test]
     fn text_strip_uses_natural_width_and_ignores_empty_groups() {
-        assert!(render_text_strip(&[], GlyphTone::Dark).is_none());
-        assert!(render_text_strip(&[text_group("codex", &[])], GlyphTone::Dark).is_none());
+        assert!(render_text_strip(&[], GlyphTone::Dark, StripMetrics::RETINA).is_none());
+        assert!(render_text_strip(
+            &[text_group("codex", &[])],
+            GlyphTone::Dark,
+            StripMetrics::RETINA
+        )
+        .is_none());
 
-        let one = render_text_strip(&[text_group("codex", &["75%"])], GlyphTone::Dark)
-            .expect("one group should render");
+        let one = render_text_strip(
+            &[text_group("codex", &["75%"])],
+            GlyphTone::Dark,
+            StripMetrics::RETINA,
+        )
+        .expect("one group should render");
         let two = render_text_strip(
             &[
                 text_group("codex", &["75%"]),
                 text_group("claude", &["80%", "40%"]),
             ],
             GlyphTone::Dark,
+            StripMetrics::RETINA,
         )
         .expect("two groups should render");
-        assert_eq!(one.rgba.len(), (one.width * TEXT_HEIGHT * 4) as usize);
+        assert_eq!(
+            one.rgba.len(),
+            (one.width * StripMetrics::RETINA.height * 4) as usize
+        );
         assert!(two.width > one.width);
     }
 
     #[test]
     fn unknown_providers_receive_a_visible_neutral_fallback_mark() {
         assert!(provider_path("future-provider").is_none());
-        let strip = render_text_strip(&[text_group("future-provider", &["42%"])], GlyphTone::Dark)
-            .expect("unknown provider should still render");
+        let strip = render_text_strip(
+            &[text_group("future-provider", &["42%"])],
+            GlyphTone::Dark,
+            StripMetrics::RETINA,
+        )
+        .expect("unknown provider should still render");
         assert!(strip
             .rgba
             .as_chunks::<4>()
@@ -734,10 +901,10 @@ mod tests {
                 .filter(|pixel| pixel[3] > 0)
                 .count()
         };
-        let empty = render_bar_rgba(&[], GlyphTone::Dark);
-        let zero = render_bar_rgba(&[0.0], GlyphTone::Dark);
-        let half = render_bar_rgba(&[0.5], GlyphTone::Dark);
-        let full = render_bar_rgba(&[1.0], GlyphTone::Dark);
+        let empty = render_bar_rgba(&[], GlyphTone::Dark, ICON_SIZE);
+        let zero = render_bar_rgba(&[0.0], GlyphTone::Dark, ICON_SIZE);
+        let half = render_bar_rgba(&[0.5], GlyphTone::Dark, ICON_SIZE);
+        let full = render_bar_rgba(&[1.0], GlyphTone::Dark, ICON_SIZE);
 
         assert_eq!(empty.len(), (ICON_SIZE * ICON_SIZE * 4) as usize);
         assert_eq!(alpha_pixels(&empty), 0);
@@ -764,13 +931,13 @@ mod tests {
     #[test]
     fn renderer_sanitizes_values_and_caps_the_visible_metric_count() {
         assert_eq!(
-            render_bar_rgba(&[f64::NAN, -1.0, 2.0], GlyphTone::Dark),
-            render_bar_rgba(&[0.0, 0.0, 1.0], GlyphTone::Dark)
+            render_bar_rgba(&[f64::NAN, -1.0, 2.0], GlyphTone::Dark, ICON_SIZE),
+            render_bar_rgba(&[0.0, 0.0, 1.0], GlyphTone::Dark, ICON_SIZE)
         );
         let fractions = [0.1, 0.3, 0.6, 1.0, 0.8];
         assert_eq!(
-            render_bar_rgba(&fractions, GlyphTone::Dark),
-            render_bar_rgba(&fractions[..MAX_BARS], GlyphTone::Dark)
+            render_bar_rgba(&fractions, GlyphTone::Dark, ICON_SIZE),
+            render_bar_rgba(&fractions[..MAX_BARS], GlyphTone::Dark, ICON_SIZE)
         );
     }
 
@@ -807,11 +974,61 @@ mod tests {
                 .filter(|pixel| pixel[3] == 255 && pixel[0] > 200)
                 .count()
         };
-        let dark = render_text_strip(&[text_group("codex", &["75%"])], GlyphTone::Dark)
-            .expect("dark strip should render");
-        let light = render_text_strip(&[text_group("codex", &["75%"])], GlyphTone::Light)
-            .expect("light strip should render");
+        let dark = render_text_strip(
+            &[text_group("codex", &["75%"])],
+            GlyphTone::Dark,
+            StripMetrics::RETINA,
+        )
+        .expect("dark strip should render");
+        let light = render_text_strip(
+            &[text_group("codex", &["75%"])],
+            GlyphTone::Light,
+            StripMetrics::RETINA,
+        )
+        .expect("light strip should render");
         assert_eq!(bright_pixels(&dark.rgba), 0);
         assert!(bright_pixels(&light.rgba) > 0);
+    }
+
+    #[test]
+    fn status_notifier_icons_render_at_panel_density() {
+        let strip = status_notifier_text_icon(&[text_group("zai", &["96%"])], GlyphTone::Light)
+            .expect("status notifier strip should render");
+        assert_eq!(strip.height(), STATUS_NOTIFIER_SIZE);
+        assert!(strip.width() > STATUS_NOTIFIER_SIZE);
+        assert!(strip
+            .rgba()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[3] > 0));
+
+        let bars = status_notifier_bar_icon(&[0.5], GlyphTone::Light);
+        assert_eq!(
+            (bars.width(), bars.height()),
+            (STATUS_NOTIFIER_SIZE, STATUS_NOTIFIER_SIZE)
+        );
+
+        let mark = status_notifier_mark_icon(GlyphTone::Light);
+        assert_eq!(
+            (mark.width(), mark.height()),
+            (STATUS_NOTIFIER_SIZE, STATUS_NOTIFIER_SIZE)
+        );
+        assert!(mark
+            .rgba()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn status_notifier_strip_is_compacter_than_the_retina_strip() {
+        let groups = [text_group("codex", &["75%", "40%"])];
+        let retina = text_icon(&groups, GlyphTone::Dark).expect("retina strip should render");
+        let panel =
+            status_notifier_text_icon(&groups, GlyphTone::Dark).expect("panel strip should render");
+        assert!(panel.height() < retina.height());
+        assert!(panel.width() < retina.width());
     }
 }

@@ -1,4 +1,7 @@
-use tauri::{image::Image, AppHandle};
+use tauri::AppHandle;
+
+#[cfg(not(target_os = "linux"))]
+use tauri::image::Image;
 
 #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 use crate::tray_icon;
@@ -77,17 +80,22 @@ pub fn update(
     }
 
     // Linux StatusNotifier trays accept arbitrary pixmaps, so they render the
-    // same provider strip as the macOS menu bar instead of the single gauge.
+    // same provider strip as the macOS menu bar instead of the single gauge —
+    // at the panel's ~24px icon height, since panels draw pixmaps verbatim
+    // and the Retina-density strip would tower over neighbouring icons.
     #[cfg(target_os = "linux")]
     {
         let presentation = mac_menu_bar_presentation(&groups, settings.menu_bar_style);
         let tone = linux_glyph_tone(settings.theme);
+        let mark = || crate::menu_bar::status_notifier_mark_icon(tone);
         let icon = match presentation.icon {
-            MacMenuBarIcon::Mark => mark_icon(),
+            MacMenuBarIcon::Mark => mark(),
             MacMenuBarIcon::Text(text_groups) => {
-                crate::menu_bar::text_icon(&text_groups, tone).unwrap_or_else(mark_icon)
+                crate::menu_bar::status_notifier_text_icon(&text_groups, tone).unwrap_or_else(mark)
             }
-            MacMenuBarIcon::Bars(fractions) => crate::menu_bar::bar_icon(&fractions, tone),
+            MacMenuBarIcon::Bars(fractions) => {
+                crate::menu_bar::status_notifier_bar_icon(&fractions, tone)
+            }
         };
         if tray.set_icon(Some(icon)).is_err() {
             crate::app_warn!("tray", "tray icon update failed");
@@ -518,6 +526,7 @@ fn format_tokens(tokens: u64) -> String {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 fn mark_icon() -> Image<'static> {
     Image::from_bytes(include_bytes!("../icons/32x32.png"))
         .expect("bundled UsageDeck tray mark must be a valid PNG")
