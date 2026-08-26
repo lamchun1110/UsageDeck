@@ -181,7 +181,7 @@
 
   <div class="settings-section">
     <h2>Appearance</h2>
-    {#if platform === 'macos'}
+    {#if platform === 'macos' || platform === 'linux'}
       <div class="setting-row">
         <span><b>Icon Style</b></span><SelectMenu
           label="Icon Style"

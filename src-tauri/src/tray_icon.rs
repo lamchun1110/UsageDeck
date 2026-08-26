@@ -30,7 +30,7 @@ struct GaugePaths {
     brand_mark: Path,
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 pub(crate) fn render_gauge(display_fraction: f64, remaining_fraction: f64) -> Image<'static> {
     Image::new_owned(
         render_rgba(display_fraction, remaining_fraction),

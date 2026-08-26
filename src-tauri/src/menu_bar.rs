@@ -11,6 +11,27 @@ const ICON_POINTS: f32 = 18.0;
 const ICON_SCALE: f32 = ICON_SIZE as f32 / ICON_POINTS;
 pub const MAX_BARS: usize = 4;
 
+/// Glyph color for tray strips. macOS template images are recolored by the
+/// system, but StatusNotifier panels draw pixmaps verbatim — so Linux needs
+/// the tone to match the panel rather than relying on the desktop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlyphTone {
+    Dark,
+    // Only Linux consumes Light today; macOS template images are recolored by
+    // the system, so there Dark is always passed.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Light,
+}
+
+impl GlyphTone {
+    fn rgb(self) -> [u8; 3] {
+        match self {
+            GlyphTone::Dark => [26, 26, 31],
+            GlyphTone::Light => [242, 242, 245],
+        }
+    }
+}
+
 const TEXT_HEIGHT: u32 = 36;
 const OUTER_PADDING: f32 = 2.0;
 const GROUP_GAP: f32 = 22.0;
@@ -42,13 +63,13 @@ pub struct TextGroup {
     pub values: Vec<String>,
 }
 
-pub fn text_icon(groups: &[TextGroup]) -> Option<Image<'static>> {
-    let strip = render_text_strip(groups)?;
+pub fn text_icon(groups: &[TextGroup], tone: GlyphTone) -> Option<Image<'static>> {
+    let strip = render_text_strip(groups, tone)?;
     Some(Image::new_owned(strip.rgba, strip.width, TEXT_HEIGHT))
 }
 
-pub fn bar_icon(fractions: &[f64]) -> Image<'static> {
-    Image::new_owned(render_bar_rgba(fractions), ICON_SIZE, ICON_SIZE)
+pub fn bar_icon(fractions: &[f64], tone: GlyphTone) -> Image<'static> {
+    Image::new_owned(render_bar_rgba(fractions, tone), ICON_SIZE, ICON_SIZE)
 }
 
 struct RenderedStrip {
@@ -63,7 +84,7 @@ struct GroupLayout<'a> {
     width: f32,
 }
 
-fn render_text_strip(groups: &[TextGroup]) -> Option<RenderedStrip> {
+fn render_text_strip(groups: &[TextGroup], tone: GlyphTone) -> Option<RenderedStrip> {
     let groups = groups
         .iter()
         .filter(|group| !group.values.is_empty())
@@ -102,12 +123,19 @@ fn render_text_strip(groups: &[TextGroup]) -> Option<RenderedStrip> {
     let mut x = OUTER_PADDING;
 
     for layout in groups {
-        draw_provider_icon(&mut pixmap, &layout.group.provider_id, x);
+        draw_provider_icon(&mut pixmap, &layout.group.provider_id, x, tone);
         let text_x = x + PROVIDER_ICON_SIZE + ICON_TEXT_GAP;
         if layout.group.values.len() == 1 {
             let value = &layout.group.values[0];
             let baseline = centered_baseline(value, SINGLE_VALUE_SIZE, TEXT_HEIGHT as f32);
-            draw_text(&mut pixmap, value, SINGLE_VALUE_SIZE, text_x, baseline);
+            draw_text(
+                &mut pixmap,
+                value,
+                SINGLE_VALUE_SIZE,
+                text_x,
+                baseline,
+                tone,
+            );
         } else {
             for (value, baseline) in layout.group.values.iter().take(2).zip(STACKED_BASELINES) {
                 let value_width = measure_text(value, STACKED_VALUE_SIZE);
@@ -117,6 +145,7 @@ fn render_text_strip(groups: &[TextGroup]) -> Option<RenderedStrip> {
                     STACKED_VALUE_SIZE,
                     text_x + layout.text_width - value_width,
                     baseline,
+                    tone,
                 );
             }
         }
@@ -168,7 +197,7 @@ fn measure_text(text: &str, size: f32) -> f32 {
     width.max(0.0)
 }
 
-fn draw_text(pixmap: &mut Pixmap, text: &str, size: f32, x: f32, baseline: f32) {
+fn draw_text(pixmap: &mut Pixmap, text: &str, size: f32, x: f32, baseline: f32, tone: GlyphTone) {
     let font = bundled_font();
     let mut pen_x = x;
     let mut previous = None;
@@ -188,6 +217,7 @@ fn draw_text(pixmap: &mut Pixmap, text: &str, size: f32, x: f32, baseline: f32) 
             metrics.height,
             glyph_x,
             glyph_y,
+            tone.rgb(),
         );
         pen_x += metrics.advance_width;
         previous = Some(character);
@@ -201,6 +231,7 @@ fn blend_alpha_mask(
     mask_height: usize,
     target_x: i32,
     target_y: i32,
+    [red, green, blue]: [u8; 3],
 ) {
     let width = pixmap.width() as i32;
     let height = pixmap.height() as i32;
@@ -217,14 +248,20 @@ fn blend_alpha_mask(
             }
             let alpha = mask[source_y * mask_width + source_x];
             let target = ((y * width + x) * 4) as usize;
+            if alpha > pixels[target + 3] {
+                pixels[target] = red;
+                pixels[target + 1] = green;
+                pixels[target + 2] = blue;
+            }
             pixels[target + 3] = pixels[target + 3].max(alpha);
         }
     }
 }
 
-fn draw_provider_icon(pixmap: &mut Pixmap, provider_id: &str, x: f32) {
+fn draw_provider_icon(pixmap: &mut Pixmap, provider_id: &str, x: f32, tone: GlyphTone) {
+    let [red, green, blue] = tone.rgb();
     let mut paint = Paint::default();
-    paint.set_color_rgba8(0, 0, 0, 255);
+    paint.set_color_rgba8(red, green, blue, 255);
     paint.anti_alias = true;
     let icon_top = (TEXT_HEIGHT as f32 - PROVIDER_ICON_SIZE) / 2.0;
 
@@ -415,7 +452,7 @@ fn parse_svg_path(source: &str) -> Result<Path, String> {
     builder.finish().ok_or_else(|| "path is empty".into())
 }
 
-fn render_bar_rgba(fractions: &[f64]) -> Vec<u8> {
+fn render_bar_rgba(fractions: &[f64], tone: GlyphTone) -> Vec<u8> {
     let size = ICON_POINTS;
     let mut pixmap = Pixmap::new(ICON_SIZE, ICON_SIZE).expect("menu bar icon dimensions are valid");
     let count = fractions.len().min(MAX_BARS);
@@ -445,6 +482,7 @@ fn render_bar_rgba(fractions: &[f64]) -> Vec<u8> {
             track_height * ICON_SCALE,
             radius * ICON_SCALE,
             radius * ICON_SCALE,
+            tone,
             41,
         );
 
@@ -463,6 +501,7 @@ fn render_bar_rgba(fractions: &[f64]) -> Vec<u8> {
                 track_height * ICON_SCALE,
                 radius * ICON_SCALE,
                 trailing * ICON_SCALE,
+                tone,
                 255,
             );
         }
@@ -475,6 +514,7 @@ fn render_bar_rgba(fractions: &[f64]) -> Vec<u8> {
                 track_height * ICON_SCALE,
                 (radius * 0.2).floor().max(0.0) * ICON_SCALE,
                 radius * ICON_SCALE,
+                tone,
                 61,
             );
         }
@@ -540,6 +580,7 @@ fn fill_rounded_bar(
     height: f32,
     leading_radius: f32,
     trailing_radius: f32,
+    tone: GlyphTone,
     alpha: u8,
 ) {
     if width <= 0.0 || height <= 0.0 {
@@ -561,8 +602,9 @@ fn fill_rounded_bar(
     let Some(path): Option<Path> = builder.finish() else {
         return;
     };
+    let [red, green, blue] = tone.rgb();
     let mut paint = Paint::default();
-    paint.set_color_rgba8(0, 0, 0, alpha);
+    paint.set_color_rgba8(red, green, blue, alpha);
     paint.anti_alias = true;
     pixmap.fill_path(
         &path,
@@ -577,7 +619,7 @@ fn fill_rounded_bar(
 mod tests {
     use super::{
         bar_fill, bar_icon, parse_svg_path, provider_path, render_bar_rgba, render_text_strip,
-        text_icon, visual_bar_fraction, TextGroup, ICON_SIZE, MAX_BARS, TEXT_HEIGHT,
+        text_icon, visual_bar_fraction, GlyphTone, TextGroup, ICON_SIZE, MAX_BARS, TEXT_HEIGHT,
     };
 
     fn text_group(provider_id: &str, values: &[&str]) -> TextGroup {
@@ -609,11 +651,14 @@ mod tests {
             assert!(path.bounds().height() > 0.0);
         }
 
-        let strip = render_text_strip(&[
-            text_group("claude", &["100%", "36%"]),
-            text_group("codex", &["100%", "89%"]),
-            text_group("cursor", &["93%", "0%"]),
-        ])
+        let strip = render_text_strip(
+            &[
+                text_group("claude", &["100%", "36%"]),
+                text_group("codex", &["100%", "89%"]),
+                text_group("cursor", &["93%", "0%"]),
+            ],
+            GlyphTone::Dark,
+        )
         .expect("provider values should produce a strip");
         assert_eq!(strip.rgba.len(), (strip.width * TEXT_HEIGHT * 4) as usize);
         assert!(strip.width > TEXT_HEIGHT * 3);
@@ -623,7 +668,7 @@ mod tests {
             .0
             .iter()
             .any(|pixel| pixel[3] == 255));
-        let icon = text_icon(&[text_group("codex", &["75%", "40%"])])
+        let icon = text_icon(&[text_group("codex", &["75%", "40%"])], GlyphTone::Light)
             .expect("public text renderer should return an image");
         assert_eq!(icon.height(), TEXT_HEIGHT);
         assert!(icon.width() > TEXT_HEIGHT);
@@ -642,15 +687,18 @@ mod tests {
 
     #[test]
     fn text_strip_uses_natural_width_and_ignores_empty_groups() {
-        assert!(render_text_strip(&[]).is_none());
-        assert!(render_text_strip(&[text_group("codex", &[])]).is_none());
+        assert!(render_text_strip(&[], GlyphTone::Dark).is_none());
+        assert!(render_text_strip(&[text_group("codex", &[])], GlyphTone::Dark).is_none());
 
-        let one =
-            render_text_strip(&[text_group("codex", &["75%"])]).expect("one group should render");
-        let two = render_text_strip(&[
-            text_group("codex", &["75%"]),
-            text_group("claude", &["80%", "40%"]),
-        ])
+        let one = render_text_strip(&[text_group("codex", &["75%"])], GlyphTone::Dark)
+            .expect("one group should render");
+        let two = render_text_strip(
+            &[
+                text_group("codex", &["75%"]),
+                text_group("claude", &["80%", "40%"]),
+            ],
+            GlyphTone::Dark,
+        )
         .expect("two groups should render");
         assert_eq!(one.rgba.len(), (one.width * TEXT_HEIGHT * 4) as usize);
         assert!(two.width > one.width);
@@ -659,7 +707,7 @@ mod tests {
     #[test]
     fn unknown_providers_receive_a_visible_neutral_fallback_mark() {
         assert!(provider_path("future-provider").is_none());
-        let strip = render_text_strip(&[text_group("future-provider", &["42%"])])
+        let strip = render_text_strip(&[text_group("future-provider", &["42%"])], GlyphTone::Dark)
             .expect("unknown provider should still render");
         assert!(strip
             .rgba
@@ -686,10 +734,10 @@ mod tests {
                 .filter(|pixel| pixel[3] > 0)
                 .count()
         };
-        let empty = render_bar_rgba(&[]);
-        let zero = render_bar_rgba(&[0.0]);
-        let half = render_bar_rgba(&[0.5]);
-        let full = render_bar_rgba(&[1.0]);
+        let empty = render_bar_rgba(&[], GlyphTone::Dark);
+        let zero = render_bar_rgba(&[0.0], GlyphTone::Dark);
+        let half = render_bar_rgba(&[0.5], GlyphTone::Dark);
+        let full = render_bar_rgba(&[1.0], GlyphTone::Dark);
 
         assert_eq!(empty.len(), (ICON_SIZE * ICON_SIZE * 4) as usize);
         assert_eq!(alpha_pixels(&empty), 0);
@@ -716,13 +764,13 @@ mod tests {
     #[test]
     fn renderer_sanitizes_values_and_caps_the_visible_metric_count() {
         assert_eq!(
-            render_bar_rgba(&[f64::NAN, -1.0, 2.0]),
-            render_bar_rgba(&[0.0, 0.0, 1.0])
+            render_bar_rgba(&[f64::NAN, -1.0, 2.0], GlyphTone::Dark),
+            render_bar_rgba(&[0.0, 0.0, 1.0], GlyphTone::Dark)
         );
         let fractions = [0.1, 0.3, 0.6, 1.0, 0.8];
         assert_eq!(
-            render_bar_rgba(&fractions),
-            render_bar_rgba(&fractions[..MAX_BARS])
+            render_bar_rgba(&fractions, GlyphTone::Dark),
+            render_bar_rgba(&fractions[..MAX_BARS], GlyphTone::Dark)
         );
     }
 
@@ -746,7 +794,24 @@ mod tests {
 
     #[test]
     fn icon_uses_a_retina_density_square() {
-        let icon = bar_icon(&[0.5]);
+        let icon = bar_icon(&[0.5], GlyphTone::Dark);
         assert_eq!((icon.width(), icon.height()), (36, 36));
+    }
+
+    #[test]
+    fn glyph_tone_controls_the_painted_color_for_status_notifier_panels() {
+        let bright_pixels = |rgba: &[u8]| {
+            rgba.as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|pixel| pixel[3] == 255 && pixel[0] > 200)
+                .count()
+        };
+        let dark = render_text_strip(&[text_group("codex", &["75%"])], GlyphTone::Dark)
+            .expect("dark strip should render");
+        let light = render_text_strip(&[text_group("codex", &["75%"])], GlyphTone::Light)
+            .expect("light strip should render");
+        assert_eq!(bright_pixels(&dark.rgba), 0);
+        assert!(bright_pixels(&light.rgba) > 0);
     }
 }

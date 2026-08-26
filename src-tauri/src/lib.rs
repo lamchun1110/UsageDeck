@@ -3,7 +3,7 @@ mod commands;
 mod desktop_integration;
 mod hashing;
 mod logging;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod menu_bar;
 mod migration;
 mod models;
@@ -19,7 +19,7 @@ mod refresh_loop;
 mod service;
 mod settings;
 mod storage;
-#[cfg(any(not(target_os = "macos"), test))]
+#[cfg(any(all(not(target_os = "macos"), not(target_os = "linux")), test))]
 mod tray_icon;
 mod tray_presentation;
 mod updates;

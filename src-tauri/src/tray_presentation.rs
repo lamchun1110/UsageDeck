@@ -1,6 +1,6 @@
 use tauri::{image::Image, AppHandle};
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 use crate::tray_icon;
 use crate::{
     models::{
@@ -22,7 +22,7 @@ struct TrayMetric {
 
 #[derive(Debug, Clone, PartialEq)]
 struct TrayGroup {
-    #[cfg(any(target_os = "macos", test))]
+    #[cfg(any(target_os = "macos", target_os = "linux", test))]
     provider_id: String,
     metrics: Vec<TrayMetric>,
 }
@@ -30,11 +30,11 @@ struct TrayGroup {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TrayGauge {
     display_fraction: f64,
-    #[cfg(any(not(target_os = "macos"), test))]
+    #[cfg(any(all(not(target_os = "macos"), not(target_os = "linux")), test))]
     remaining_fraction: f64,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 #[derive(Debug, Clone, PartialEq)]
 enum MacMenuBarIcon {
     Mark,
@@ -42,7 +42,7 @@ enum MacMenuBarIcon {
     Bars(Vec<f64>),
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 #[derive(Debug, Clone, PartialEq)]
 struct MacMenuBarPresentation {
     icon: MacMenuBarIcon,
@@ -66,11 +66,29 @@ pub fn update(
     #[cfg(target_os = "linux")]
     let _ = tooltip;
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
     {
         let icon = primary_gauge(&groups)
             .map(|gauge| tray_icon::render_gauge(gauge.display_fraction, gauge.remaining_fraction))
             .unwrap_or_else(mark_icon);
+        if tray.set_icon(Some(icon)).is_err() {
+            crate::app_warn!("tray", "tray icon update failed");
+        }
+    }
+
+    // Linux StatusNotifier trays accept arbitrary pixmaps, so they render the
+    // same provider strip as the macOS menu bar instead of the single gauge.
+    #[cfg(target_os = "linux")]
+    {
+        let presentation = mac_menu_bar_presentation(&groups, settings.menu_bar_style);
+        let tone = linux_glyph_tone(settings.theme);
+        let icon = match presentation.icon {
+            MacMenuBarIcon::Mark => mark_icon(),
+            MacMenuBarIcon::Text(text_groups) => {
+                crate::menu_bar::text_icon(&text_groups, tone).unwrap_or_else(mark_icon)
+            }
+            MacMenuBarIcon::Bars(fractions) => crate::menu_bar::bar_icon(&fractions, tone),
+        };
         if tray.set_icon(Some(icon)).is_err() {
             crate::app_warn!("tray", "tray icon update failed");
         }
@@ -83,7 +101,20 @@ pub fn update(
     );
 }
 
-#[cfg(any(target_os = "macos", test))]
+/// Panels follow the desktop theme; without a reliable way to probe the panel
+/// color, Appearance decides: Light renders dark glyphs (KDE/XFCE defaults),
+/// Dark and System render light glyphs (GNOME's dark top bar).
+#[cfg(target_os = "linux")]
+fn linux_glyph_tone(theme: crate::models::ThemePreference) -> crate::menu_bar::GlyphTone {
+    match theme {
+        crate::models::ThemePreference::Light => crate::menu_bar::GlyphTone::Dark,
+        crate::models::ThemePreference::Dark | crate::models::ThemePreference::System => {
+            crate::menu_bar::GlyphTone::Light
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn mac_menu_bar_presentation(
     groups: &[TrayGroup],
     style: crate::models::MenuBarStyle,
@@ -136,7 +167,8 @@ fn apply_mac_menu_bar_presentation(
             if tray.set_title(Some("")).is_err() {
                 crate::app_warn!("tray", "macOS menu bar title clear failed");
             }
-            let icon = crate::menu_bar::text_icon(&groups).unwrap_or_else(mark_icon);
+            let icon = crate::menu_bar::text_icon(&groups, crate::menu_bar::GlyphTone::Dark)
+                .unwrap_or_else(mark_icon);
             if tray.set_icon_with_as_template(Some(icon), true).is_err() {
                 crate::app_warn!("tray", "macOS menu bar icon update failed");
             }
@@ -147,7 +179,13 @@ fn apply_mac_menu_bar_presentation(
                 crate::app_warn!("tray", "macOS menu bar title clear failed");
             }
             if tray
-                .set_icon_with_as_template(Some(crate::menu_bar::bar_icon(&fractions)), true)
+                .set_icon_with_as_template(
+                    Some(crate::menu_bar::bar_icon(
+                        &fractions,
+                        crate::menu_bar::GlyphTone::Dark,
+                    )),
+                    true,
+                )
                 .is_err()
             {
                 crate::app_warn!("tray", "macOS menu bar icon update failed");
@@ -156,7 +194,7 @@ fn apply_mac_menu_bar_presentation(
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn bar_fractions(groups: &[TrayGroup]) -> Vec<f64> {
     groups
         .iter()
@@ -166,7 +204,7 @@ fn bar_fractions(groups: &[TrayGroup]) -> Vec<f64> {
         .collect()
 }
 
-#[cfg(any(not(target_os = "macos"), test))]
+#[cfg(any(all(not(target_os = "macos"), not(target_os = "linux")), test))]
 fn primary_gauge(groups: &[TrayGroup]) -> Option<TrayGauge> {
     groups
         .iter()
@@ -174,7 +212,7 @@ fn primary_gauge(groups: &[TrayGroup]) -> Option<TrayGauge> {
         .find_map(|metric| metric.gauge)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn text_groups(groups: &[TrayGroup]) -> Vec<crate::menu_bar::TextGroup> {
     groups
         .iter()
@@ -223,7 +261,7 @@ fn resolved_groups(
                 })
                 .collect::<Vec<_>>();
             (!metrics.is_empty()).then_some(TrayGroup {
-                #[cfg(any(target_os = "macos", test))]
+                #[cfg(any(target_os = "macos", target_os = "linux", test))]
                 provider_id: definition.id.clone(),
                 metrics,
             })
