@@ -23,10 +23,6 @@
 
 它常駐在系統列或選單列，不需要註冊帳號，也沒有任何東西要你登入。
 
-<p align="center">
-  <img src="assets/usagedeck-demo.gif" alt="以淺色與深色主題顯示 AI 用量的 UsageDeck 動態儀表板" width="840">
-</p>
-
 ## 從 OpenQuota 過來？
 
 UsageDeck 原本是 OpenQuota 的分支，現在已是獨立的專案。你的資料會跟著你走：首次啟動時，UsageDeck 會自動從既有的 OpenQuota 安裝搬移設定、用量歷史與價格快取，存放在系統憑證儲存區的 API 金鑰也會移到 UsageDeck 自己的條目。舊位置的資料一律不會刪除。存放在 `~/.config/openquota/<provider>.json` 的金鑰仍會被讀取；新的金鑰則存放於 `~/.config/usagedeck/`。

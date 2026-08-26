@@ -26,10 +26,6 @@ has this cost so far.
 
 It lives in your tray or menu bar. There is no account to create and nothing to sign in to.
 
-<p align="center">
-  <img src="assets/usagedeck-demo.gif" alt="UsageDeck dashboard showing animated AI usage in light and dark themes" width="840">
-</p>
-
 ## What it tracks
 
 | Provider                                          | Credentials | What you get                                                                        |

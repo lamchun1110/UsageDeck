@@ -23,10 +23,6 @@
 
 트레이나 메뉴 막대에 상주합니다. 만들 계정도, 로그인할 것도 없습니다.
 
-<p align="center">
-  <img src="assets/usagedeck-demo.gif" alt="라이트 및 다크 테마로 AI 사용량을 보여 주는 UsageDeck 대시보드" width="840">
-</p>
-
 ## OpenQuota에서 오신 분들
 
 UsageDeck은 OpenQuota 포크로 시작해 지금은 독립 프로젝트가 되었습니다. 데이터도 함께 가져옵니다: 첫 실행 시 UsageDeck은 기존 OpenQuota 설치에서 설정·사용 기록·가격 캐시를 자동으로 옮기고, OS 자격 증명 저장소에 저장된 API 키는 UsageDeck 고유 항목으로 이전합니다. 기존 위치에서 무언가를 삭제하지는 않습니다. `~/.config/openquota/<provider>.json`에 저장된 키도 계속 읽으며, 새 키는 `~/.config/usagedeck/`에 저장됩니다.

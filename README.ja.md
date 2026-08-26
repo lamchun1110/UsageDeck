@@ -23,10 +23,6 @@
 
 トレイまたはメニューバーに常駐します。アカウント登録は不要で、サインインするものもありません。
 
-<p align="center">
-  <img src="assets/usagedeck-demo.gif" alt="ライトテーマとダークテーマで AI 使用量を表示する UsageDeck ダッシュボード" width="840">
-</p>
-
 ## OpenQuota からの移行
 
 UsageDeck は OpenQuota のフォークとして始まり、現在は独立したプロジェクトです。データはそのまま引き継がれます：初回起動時、UsageDeck は既存の OpenQuota インストールから設定・使用履歴・価格キャッシュを自動で移行し、OS の資格情報ストアに保存された API キーも UsageDeck 固有のエントリーへ移します。旧ロケーションから削除されるものはありません。`~/.config/openquota/<provider>.json` に保存されたキーも引き続き読み込まれます。新しいキーは `~/.config/usagedeck/` に保存されます。
