@@ -6,6 +6,9 @@ use svgtypes::{PathParser, PathSegment};
 use tauri::image::Image;
 use tiny_skia::{FillRule, Paint, Path, PathBuilder, Pixmap, Transform};
 
+/// Retina-density bar icon; only the macOS menu bar consumes this size outside tests (Linux
+/// renders the StatusNotifier variant, Windows the gauge).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const ICON_SIZE: u32 = 36;
 const ICON_POINTS: f32 = 18.0;
 pub const MAX_BARS: usize = 4;
@@ -56,6 +59,7 @@ struct StripMetrics {
 
 impl StripMetrics {
     /// macOS menu bar template strip: 18pt at 2x Retina density.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     const RETINA: Self = Self {
         height: 36,
         outer_padding: 2.0,
@@ -106,6 +110,9 @@ pub struct TextGroup {
     pub values: Vec<String>,
 }
 
+/// Retina-density strip consumed by the macOS menu bar; Linux renders the StatusNotifier
+/// variant below and Windows the gauge icon.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn text_icon(groups: &[TextGroup], tone: GlyphTone) -> Option<Image<'static>> {
     let strip = render_text_strip(groups, tone, StripMetrics::RETINA)?;
     Some(Image::new_owned(
@@ -126,6 +133,8 @@ pub fn status_notifier_text_icon(groups: &[TextGroup], tone: GlyphTone) -> Optio
     ))
 }
 
+/// Retina-density bars consumed by the macOS menu bar; see `text_icon` for the platform split.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn bar_icon(fractions: &[f64], tone: GlyphTone) -> Image<'static> {
     Image::new_owned(
         render_bar_rgba(fractions, tone, ICON_SIZE),
