@@ -118,7 +118,7 @@ describe('UsageDeck dashboard', () => {
   });
   afterEach(cleanup);
 
-  it('renders quota, total spend, and the 30-day trend from backend data', async () => {
+  it('renders quota and the 30-day trend from backend data', async () => {
     const { container } = render(App);
     expect(await screen.findByText('Plus')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Session used' })).toHaveAttribute(
@@ -126,12 +126,7 @@ describe('UsageDeck dashboard', () => {
       '32',
     );
     expect(screen.getByRole('progressbar', { name: 'Weekly used' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Total Spend' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Usage Trend' })).toBeInTheDocument();
-    expect(container.querySelector('.spend-ring__label')).toHaveAttribute(
-      'data-tooltip',
-      '$3.84 · Estimated locally, so it may be off',
-    );
     expect(screen.getByText(`UsageDeck ${import.meta.env.APP_VERSION}`)).toBeInTheDocument();
     expect(container.querySelector('.floating-chrome')).not.toBeInTheDocument();
   });
@@ -370,11 +365,6 @@ describe('UsageDeck dashboard', () => {
     expect(screen.getByRole('heading', { name: 'Antigravity' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '$37.50 left' })).toBeInTheDocument();
     expect(screen.getAllByRole('progressbar')).toHaveLength(6);
-    expect(
-      within(screen.getByRole('region', { name: 'Total Spend' })).getByRole('img', {
-        name: 'Only includes Claude and Codex',
-      }),
-    ).toBeInTheDocument();
   });
 
   it('renames an observed Claude card from its context menu', async () => {
@@ -530,64 +520,6 @@ describe('UsageDeck dashboard', () => {
     });
   });
 
-  it('persists Total Spend metric and period choices', async () => {
-    render(App);
-    await screen.findByText('Plus');
-    await fireEvent.click(screen.getByRole('combobox', { name: 'Total Spend Metric' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Tokens' }));
-    await fireEvent.click(screen.getByRole('button', { name: '30 Days' }));
-    await waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith(
-        'save_app_settings',
-        expect.objectContaining({
-          settings: expect.objectContaining({ totalSpendPeriod: 'last30Days' }),
-        }),
-      ),
-    );
-  });
-
-  it('explains unavailable cost and reveals measured tokens for the same period', async () => {
-    mockInvoke((command: string, args?: { settings?: SettingsViewState['settings'] }) => {
-      if (command === 'get_usage_state')
-        return Promise.resolve({
-          providers: {
-            codex: {
-              ...codexState,
-              snapshot: {
-                ...codexState.snapshot!,
-                usage: {
-                  ...codexState.snapshot!.usage,
-                  today: {
-                    tokens: 2_100_000,
-                    estimatedCostUsd: null,
-                    costEstimated: true,
-                    estimateComplete: false,
-                  },
-                },
-              },
-            },
-          },
-        });
-      if (command === 'get_app_settings') return Promise.resolve(settingsState);
-      if (command === 'save_app_settings')
-        return Promise.resolve({
-          ...settingsState,
-          settings: args?.settings ?? settingsState.settings,
-        });
-      return Promise.resolve(liveState);
-    });
-    render(App);
-    const totalSpend = await screen.findByRole('region', { name: 'Total Spend' });
-    expect(within(totalSpend).getByText('No cost data for this period')).toBeInTheDocument();
-    await fireEvent.click(within(totalSpend).getByRole('combobox', { name: 'Total Spend Metric' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Tokens' }));
-    expect(within(totalSpend).getByText('Codex')).toBeInTheDocument();
-    expect(within(totalSpend).getByText('2.1')).toBeInTheDocument();
-    expect(within(totalSpend).getByText('million')).toBeInTheDocument();
-    expect(within(totalSpend).getByText('2.1M')).toBeInTheDocument();
-    expect(within(totalSpend).queryByText('No data')).not.toBeInTheDocument();
-  });
-
   it('reveals On Demand metrics without losing their saved order', async () => {
     render(App);
     await screen.findByText('Plus');
@@ -703,17 +635,6 @@ describe('UsageDeck dashboard', () => {
 
     expect(screen.getByRole('button', { name: 'Status, opens in browser' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Dashboard, opens in browser' })).toBeInTheDocument();
-  });
-
-  it('renders the Total Spend ring as separated rounded SVG sectors', async () => {
-    render(App);
-    expect(await screen.findByRole('region', { name: 'Total Spend' })).toBeInTheDocument();
-    await waitFor(() => expect(document.querySelector('.spend-ring svg')).not.toBeNull());
-    const segment = document.querySelector('.spend-ring__segment');
-    expect(segment?.tagName).toBe('path');
-    expect(segment?.getAttribute('d')).toMatch(/^M .* A .* Q .* Z$/);
-    expect(document.querySelector('.spend-ring__track')).toBeNull();
-    expect(document.querySelector('.period-switcher__selection')).not.toBeNull();
   });
 
   it('opens Customize and exposes the two-section metric layout', async () => {
@@ -1097,7 +1018,6 @@ describe('UsageDeck dashboard', () => {
       ...settingsState,
       settings: {
         ...settingsState.settings,
-        showTotalSpend: false,
         providers: [
           ...settingsState.settings.providers,
           {
@@ -1186,7 +1106,6 @@ describe('UsageDeck dashboard', () => {
       ...settingsState,
       settings: {
         ...settingsState.settings,
-        showTotalSpend: false,
         providers: [
           {
             id: 'claude',
@@ -1254,7 +1173,6 @@ describe('UsageDeck dashboard', () => {
       ...settingsState,
       settings: {
         ...settingsState.settings,
-        showTotalSpend: false,
         providers: [
           {
             id: 'claude',

@@ -204,7 +204,37 @@ pub fn delete_owned_password(service: &str, account: &str) -> Result<(), String>
 }
 
 #[cfg(target_os = "linux")]
+const SECRET_SERVICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Runs a Secret Service operation with a deadline. A keyring D-Bus call with no daemon can
+/// block forever, which would wedge the provider refresh worker; the bounded wait keeps the
+/// failure reportable instead (the wedged thread is abandoned, at most one per call).
+#[cfg(target_os = "linux")]
+fn with_secret_service_timeout<T, F>(operation: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    use std::sync::mpsc;
+
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = sender.send(operation());
+    });
+    receiver
+        .recv_timeout(SECRET_SERVICE_TIMEOUT)
+        .unwrap_or_else(|_| Err(linux_secret_service_timed_out()))
+}
+
+#[cfg(target_os = "linux")]
 pub fn read_generic_password(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
+    let service = service.to_owned();
+    let account = account.to_owned();
+    with_secret_service_timeout(move || read_generic_password_blocking(&service, &account))
+}
+
+#[cfg(target_os = "linux")]
+fn read_generic_password_blocking(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
     use std::collections::HashMap;
 
     use secret_service::{blocking::SecretService, EncryptionType};
@@ -265,6 +295,18 @@ pub fn read_owned_password(service: &str, account: &str) -> Result<Option<Vec<u8
 
 #[cfg(target_os = "linux")]
 pub fn write_generic_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+    let service = service.to_owned();
+    let account = account.to_owned();
+    let value = value.to_vec();
+    with_secret_service_timeout(move || write_generic_password_blocking(&service, &account, &value))
+}
+
+#[cfg(target_os = "linux")]
+fn write_generic_password_blocking(
+    service: &str,
+    account: &str,
+    value: &[u8],
+) -> Result<(), String> {
     use std::collections::HashMap;
 
     use secret_service::{blocking::SecretService, EncryptionType};
@@ -287,6 +329,14 @@ pub fn write_generic_password(service: &str, account: &str, value: &[u8]) -> Res
 
 #[cfg(target_os = "linux")]
 pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+    let service = service.to_owned();
+    let account = account.to_owned();
+    let value = value.to_vec();
+    with_secret_service_timeout(move || write_owned_password_blocking(&service, &account, &value))
+}
+
+#[cfg(target_os = "linux")]
+fn write_owned_password_blocking(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
     use std::collections::HashMap;
 
     use secret_service::{blocking::SecretService, EncryptionType};
@@ -316,6 +366,13 @@ pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Resul
 
 #[cfg(target_os = "linux")]
 pub fn delete_generic_password(service: &str, account: &str) -> Result<(), String> {
+    let service = service.to_owned();
+    let account = account.to_owned();
+    with_secret_service_timeout(move || delete_generic_password_blocking(&service, &account))
+}
+
+#[cfg(target_os = "linux")]
+fn delete_generic_password_blocking(service: &str, account: &str) -> Result<(), String> {
     use std::collections::HashMap;
 
     use secret_service::{blocking::SecretService, EncryptionType};
@@ -346,6 +403,12 @@ pub fn delete_owned_password(service: &str, account: &str) -> Result<(), String>
 #[cfg(target_os = "linux")]
 fn linux_secret_service_unavailable() -> String {
     "Linux Secret Service is unavailable. Start a Secret Service-compatible keyring, such as GNOME Keyring or KWallet, and try again."
+        .into()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_secret_service_timed_out() -> String {
+    "Linux Secret Service did not respond in time. Check that a Secret Service-compatible keyring, such as GNOME Keyring or KWallet, is running and unlocked."
         .into()
 }
 

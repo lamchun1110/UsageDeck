@@ -41,10 +41,79 @@ impl Storage {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(StorageError::CreateDirectory)?;
         }
+        match Self::open_at(path) {
+            Ok(storage) => Ok(storage),
+            Err(error) => {
+                // A malformed (or externally locked) database used to abort startup with no
+                // recovery path. Snapshots and caches are all rebuildable from providers, so set
+                // the file aside and start fresh rather than refusing to launch.
+                if !Self::quarantine_corrupt_database(path) {
+                    return Err(error);
+                }
+                crate::app_warn!(
+                    "storage",
+                    "UsageDeck database could not be opened ({error}); the corrupt file was moved aside and a fresh database was created"
+                );
+                Self::open_at(path)
+            }
+        }
+    }
+
+    /// Moves an unopenable database (and its WAL/SHM sidecars) aside so a fresh one can be created.
+    /// Returns false when recovery cannot help, so the original error propagates.
+    fn quarantine_corrupt_database(path: &Path) -> bool {
+        if !path.exists() {
+            return false;
+        }
+        let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+        // Sidecars follow SQLite's `<db>-wal` / `<db>-shm` naming.
+        let sidecar = |suffix: &str| {
+            let mut name = path.file_name().unwrap_or_default().to_os_string();
+            name.push(suffix);
+            path.with_file_name(name)
+        };
+        let mut moved_primary = false;
+        for candidate in [path.to_path_buf(), sidecar("-wal"), sidecar("-shm")] {
+            if !candidate.exists() {
+                continue;
+            }
+            let base = candidate.file_name().unwrap_or_default().to_os_string();
+            let quarantine_name = |suffix: &str| {
+                let mut name = base.clone();
+                name.push(suffix);
+                candidate.with_file_name(name)
+            };
+            let mut target = quarantine_name(&format!(".corrupt-{stamp}"));
+            let mut attempt = 0;
+            while target.exists() && attempt < 10 {
+                attempt += 1;
+                target = quarantine_name(&format!(".corrupt-{stamp}-{attempt}"));
+            }
+            match fs::rename(&candidate, &target) {
+                Ok(()) => {
+                    if candidate == path {
+                        moved_primary = true;
+                    }
+                }
+                Err(_) => {
+                    if candidate == path {
+                        return false;
+                    }
+                    // The primary file is gone; a stale sidecar would only confuse the fresh
+                    // database, so drop it rather than keep it.
+                    let _ = fs::remove_file(&candidate);
+                }
+            }
+        }
+        moved_primary
+    }
+
+    fn open_at(path: &Path) -> Result<Self, StorageError> {
         let connection = Connection::open(path)?;
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 2000;
              CREATE TABLE IF NOT EXISTS provider_snapshots (
                provider_id TEXT PRIMARY KEY,
                payload TEXT NOT NULL,
@@ -86,6 +155,13 @@ impl Storage {
                payload TEXT NOT NULL,
                PRIMARY KEY(provider_family, identity_key),
                UNIQUE(provider_family, provider_id)
+             );
+             CREATE TABLE IF NOT EXISTS quota_history (
+               provider_id TEXT NOT NULL,
+               quota_id TEXT NOT NULL,
+               sampled_at TEXT NOT NULL,
+               used_percent REAL NOT NULL,
+               PRIMARY KEY(provider_id, quota_id, sampled_at)
              );",
         )?;
         if !Self::has_column(&connection, "log_file_cache", "modified_nanos")? {
@@ -194,8 +270,74 @@ impl Storage {
         for day in &snapshot.usage.daily {
             Self::insert_day(&transaction, &snapshot.provider_id, day)?;
         }
+        Self::record_quota_history(&transaction, snapshot)?;
         transaction.commit()?;
         Ok(())
+    }
+
+    /// Persists one quota-level sample per hour bucket so the sparkline keeps a bounded trail of
+    /// how each limit moved, even for providers with no local usage logs. Rows older than the
+    /// trailing month are pruned on the same write.
+    fn record_quota_history(
+        transaction: &rusqlite::Transaction<'_>,
+        snapshot: &ProviderSnapshot,
+    ) -> Result<(), StorageError> {
+        let bucket =
+            |time: chrono::DateTime<chrono::Utc>| time.format("%Y-%m-%dT%H:00:00Z").to_string();
+        let sampled_at = bucket(snapshot.refreshed_at);
+        for quota in &snapshot.quotas {
+            transaction.execute(
+                "INSERT INTO quota_history(provider_id, quota_id, sampled_at, used_percent)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(provider_id, quota_id, sampled_at) DO UPDATE SET
+                   used_percent = excluded.used_percent",
+                params![
+                    snapshot.provider_id,
+                    quota.id,
+                    sampled_at,
+                    quota.used_percent
+                ],
+            )?;
+        }
+        let cutoff = bucket(snapshot.refreshed_at - chrono::Duration::days(31));
+        transaction.execute("DELETE FROM quota_history WHERE sampled_at < ?1", [cutoff])?;
+        Ok(())
+    }
+
+    /// Loads the quota history trail at one sample per day (the freshest of each day), grouped
+    /// by provider, ordered oldest to newest.
+    pub fn load_quota_history(
+        &self,
+    ) -> Result<HashMap<String, Vec<crate::models::QuotaHistorySample>>, StorageError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT provider_id, quota_id, sampled_at, used_percent FROM (
+               SELECT provider_id, quota_id, sampled_at, used_percent,
+                      ROW_NUMBER() OVER (
+                        PARTITION BY provider_id, quota_id, substr(sampled_at, 1, 10)
+                        ORDER BY sampled_at DESC
+                      ) AS day_rank
+               FROM quota_history
+             ) WHERE day_rank = 1
+             ORDER BY provider_id, quota_id, sampled_at",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    crate::models::QuotaHistorySample {
+                        quota_id: row.get(1)?,
+                        sampled_at: row.get(2)?,
+                        used_percent: row.get(3)?,
+                    },
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut history: HashMap<String, Vec<crate::models::QuotaHistorySample>> = HashMap::new();
+        for (provider_id, sample) in rows {
+            history.entry(provider_id).or_default().push(sample);
+        }
+        Ok(history)
     }
 
     pub fn load_log_events(
@@ -531,6 +673,100 @@ mod tests {
         QuotaFormat, QuotaWindow, UsageHistory, UsagePeriod,
     };
     use crate::providers::CacheIdentity;
+
+    #[test]
+    fn quota_history_keeps_one_sample_per_hour_and_day() {
+        let directory = tempdir().unwrap();
+        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let quota = |used_percent: f64| QuotaWindow {
+            id: "session".into(),
+            label: "Session".into(),
+            used_percent,
+            resets_at: None,
+            period_seconds: 1,
+            format: QuotaFormat::Percent,
+            used_value: None,
+            limit_value: None,
+            unit: None,
+            estimated: false,
+            source_note: None,
+        };
+        let snapshot_at = |day: u32, hour: u32, used_percent: f64| ProviderSnapshot {
+            provider_id: "codex".into(),
+            plan: None,
+            quotas: vec![quota(used_percent)],
+            value_metrics: Vec::new(),
+            status_metrics: Vec::new(),
+            notices: Vec::new(),
+            usage: UsageHistory::default(),
+            warnings: Vec::new(),
+            refreshed_at: Utc.with_ymd_and_hms(2026, 8, day, hour, 5, 0).unwrap(),
+        };
+
+        // Two saves inside the same hour bucket replace each other; the next day is kept.
+        use chrono::TimeZone;
+        storage.save_snapshot(&snapshot_at(20, 9, 40.0)).unwrap();
+        storage.save_snapshot(&snapshot_at(20, 9, 45.0)).unwrap();
+        storage.save_snapshot(&snapshot_at(21, 11, 60.0)).unwrap();
+
+        let history = storage.load_quota_history().unwrap();
+        let samples = history.get("codex").unwrap();
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].quota_id, "session");
+        assert_eq!(samples[0].used_percent, 45.0);
+        assert_eq!(
+            samples[0].sampled_at, "2026-08-20T09:00:00Z",
+            "same-hour samples replace the earlier value"
+        );
+        assert_eq!(samples[1].used_percent, 60.0);
+
+        // Samples past the trailing month are pruned by the newest save.
+        let mut recent = snapshot_at(21, 11, 80.0);
+        recent.refreshed_at = Utc.with_ymd_and_hms(2026, 9, 25, 1, 0, 0).unwrap();
+        storage.save_snapshot(&recent).unwrap();
+        let history = storage.load_quota_history().unwrap();
+        let samples = history.get("codex").unwrap();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].used_percent, 80.0);
+    }
+
+    #[test]
+    fn corrupted_database_is_moved_aside_and_recreated() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("openquota.db");
+        std::fs::write(&path, b"this is definitely not a sqlite database").unwrap();
+        std::fs::write(path.with_file_name("openquota.db-wal"), b"stale wal").unwrap();
+
+        let storage = Storage::open(&path).unwrap();
+        let snapshot = ProviderSnapshot {
+            provider_id: "codex".into(),
+            plan: Some("Plus".into()),
+            quotas: Vec::new(),
+            value_metrics: Vec::new(),
+            status_metrics: Vec::new(),
+            notices: Vec::new(),
+            usage: UsageHistory::default(),
+            warnings: Vec::new(),
+            refreshed_at: Utc::now(),
+        };
+        storage.save_snapshot(&snapshot).unwrap();
+        assert_eq!(storage.load_snapshot("codex").unwrap(), Some(snapshot));
+
+        let mut quarantined = std::fs::read_dir(directory.path())
+            .unwrap()
+            .filter_map(|entry| {
+                let name = entry.ok()?.file_name().into_string().ok()?;
+                name.starts_with("openquota.db.corrupt-").then_some(name)
+            })
+            .collect::<Vec<_>>();
+        quarantined.sort();
+        assert_eq!(quarantined.len(), 1, "only the primary file remains to quarantine after the stale WAL is dropped or moved: {quarantined:?}");
+        assert!(quarantined[0].starts_with("openquota.db.corrupt-"));
+        assert_eq!(
+            std::fs::read(directory.path().join(&quarantined[0])).unwrap(),
+            b"this is definitely not a sqlite database"
+        );
+    }
 
     #[test]
     fn snapshot_round_trip_contains_no_credentials() {

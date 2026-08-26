@@ -15,7 +15,11 @@ pub fn spawn(
     notifications: Arc<NotificationEvaluator>,
 ) {
     tauri::async_runtime::spawn(async move {
+        // Anchor the schedule to a fixed deadline so a slow batch lengthens the gap by its own
+        // duration instead of drifting the cadence by (interval + refresh time).
+        let mut next_refresh = tokio::time::Instant::now();
         loop {
+            next_refresh += REFRESH_INTERVAL;
             let provider_ids = settings.enabled_provider_ids();
             if !provider_ids.is_empty() {
                 let progress_app = app.clone();
@@ -37,7 +41,10 @@ pub fn spawn(
                 let _ = app.emit("usage-state", &state);
                 finish_refresh(&app, &state, &settings, &notifications);
             }
-            tokio::time::sleep(REFRESH_INTERVAL).await;
+            if next_refresh <= tokio::time::Instant::now() {
+                next_refresh = tokio::time::Instant::now() + REFRESH_INTERVAL;
+            }
+            tokio::time::sleep_until(next_refresh).await;
         }
     });
 }

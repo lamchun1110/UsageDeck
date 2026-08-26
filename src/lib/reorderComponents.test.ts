@@ -12,7 +12,6 @@ const settings: AppSettings = {
   providerNames: {},
   providerOptions: {},
   knownProviderIds: ['codex', 'claude', 'antigravity'],
-  showTotalSpend: false,
   theme: 'system',
   accent: 'iris',
   density: 'default',
@@ -22,6 +21,7 @@ const settings: AppSettings = {
   usageDisplay: 'left',
   resetDisplay: 'countdown',
   timeFormat: 'system',
+  language: 'system',
   alwaysShowPacing: false,
   launchAtLogin: false,
   autoCheckUpdates: true,
@@ -30,8 +30,6 @@ const settings: AppSettings = {
   globalShortcut: null,
   logLevel: 'info',
   notifications: { almostOut: false, cuttingItClose: false, willRunOut: false },
-  totalSpendMetric: 'cost',
-  totalSpendPeriod: 'today',
   detectionNoticeDismissed: true,
   providers: [
     {

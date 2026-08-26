@@ -19,6 +19,16 @@ use crate::{
 // Cursor can make several bounded requests in sequence; allow its full healthy network budget
 // before quarantining the synchronous provider worker.
 const PROVIDER_REFRESH_TIMEOUT: Duration = Duration::from_secs(120);
+// How long a timed-out worker may keep draining before the flight is abandoned so a replacement
+// can run. Backs off exponentially per consecutive abandonment to bound leaked blocking threads.
+const WORKER_DRAIN_GRACE_FLOOR: Duration = Duration::from_secs(30);
+const DRAIN_BACKOFF_STEPS: u32 = 8;
+
+fn default_drain_grace(refresh_timeout: Duration) -> Duration {
+    refresh_timeout
+        .saturating_mul(3)
+        .max(WORKER_DRAIN_GRACE_FLOOR)
+}
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +46,7 @@ pub struct ProviderService {
     last_failed_refresh: Mutex<HashMap<String, Instant>>,
     last_full_refresh_at: RwLock<Option<chrono::DateTime<Utc>>>,
     refresh_timeout: Duration,
+    drain_grace_base: Duration,
     settings: Option<Arc<SettingsService>>,
 }
 
@@ -64,13 +75,50 @@ impl ProviderService {
         storage: Arc<Storage>,
         refresh_timeout: Duration,
     ) -> Self {
-        Self::with_refresh_timeout_and_settings(registry, storage, refresh_timeout, None)
+        Self::with_refresh_timeouts(
+            registry,
+            storage,
+            refresh_timeout,
+            default_drain_grace(refresh_timeout),
+        )
+    }
+
+    #[cfg(test)]
+    fn with_refresh_timeouts(
+        registry: Arc<ProviderRegistry>,
+        storage: Arc<Storage>,
+        refresh_timeout: Duration,
+        drain_grace_base: Duration,
+    ) -> Self {
+        Self::with_refresh_timeouts_and_settings(
+            registry,
+            storage,
+            refresh_timeout,
+            drain_grace_base,
+            None,
+        )
     }
 
     fn with_refresh_timeout_and_settings(
         registry: Arc<ProviderRegistry>,
         storage: Arc<Storage>,
         refresh_timeout: Duration,
+        settings: Option<Arc<SettingsService>>,
+    ) -> Self {
+        Self::with_refresh_timeouts_and_settings(
+            registry,
+            storage,
+            refresh_timeout,
+            default_drain_grace(refresh_timeout),
+            settings,
+        )
+    }
+
+    fn with_refresh_timeouts_and_settings(
+        registry: Arc<ProviderRegistry>,
+        storage: Arc<Storage>,
+        refresh_timeout: Duration,
+        drain_grace_base: Duration,
         settings: Option<Arc<SettingsService>>,
     ) -> Self {
         let mut states = BTreeMap::new();
@@ -104,6 +152,7 @@ impl ProviderService {
             last_failed_refresh: Mutex::new(HashMap::new()),
             last_full_refresh_at: RwLock::new(None),
             refresh_timeout,
+            drain_grace_base,
             settings,
         }
     }
@@ -287,7 +336,9 @@ impl ProviderService {
                     error.kind()
                 ),
             }
-            let state = self.apply_refresh_result(&provider_id, refresh_result);
+            let state = self
+                .apply_refresh_result(&provider_id, refresh_result)
+                .await;
             if state.error.is_none() {
                 if let Ok(mut last) = self.last_live_refresh.lock() {
                     last.insert(provider_id.clone(), Instant::now());
@@ -300,30 +351,51 @@ impl ProviderService {
             }
 
             let run_follow_up = if let Some(worker) = late_worker {
-                let completed_generation = if let Ok(mut flight_state) = flight.state.lock() {
-                    let completed = flight_state.requested_generation.max(generation);
-                    flight_state.completed_generation = completed;
-                    flight_state.attempt_generation = None;
-                    completed
-                } else {
-                    generation.saturating_add(1)
-                };
+                let (completed_generation, drain_grace) =
+                    if let Ok(mut flight_state) = flight.state.lock() {
+                        let completed = flight_state.requested_generation.max(generation);
+                        flight_state.completed_generation = completed;
+                        flight_state.attempt_generation = None;
+                        let grace = self.worker_drain_grace(flight_state.consecutive_abandons);
+                        (completed, grace)
+                    } else {
+                        (generation.saturating_add(1), self.drain_grace_base)
+                    };
                 flight.completed_tx.send_replace(completed_generation);
 
-                match worker.await {
-                    Ok(_) => crate::app_debug!(
+                match tokio::time::timeout(drain_grace, worker).await {
+                    Ok(Ok(_)) => crate::app_debug!(
                         &tag,
                         "timed-out refresh worker finished; discarded late result"
                     ),
-                    Err(_) => crate::app_debug!(
+                    Ok(Err(_)) => crate::app_debug!(
                         &tag,
                         "timed-out refresh worker stopped; discarded late failure"
                     ),
+                    Err(_) => {
+                        // The blocking worker is wedged past its grace period (for example a
+                        // keyring D-Bus call with no daemon). Abandon it — the leaked blocking
+                        // thread is the lesser evil against serving stale data forever — and
+                        // release the flight so the next refresh can start a replacement.
+                        crate::app_error!(
+                            &tag,
+                            "timed-out refresh worker is still stuck after {}ms; abandoning it so the next refresh can start a replacement",
+                            drain_grace.as_millis()
+                        );
+                        if let Ok(mut flight_state) = flight.state.lock() {
+                            flight_state.consecutive_abandons =
+                                flight_state.consecutive_abandons.saturating_add(1);
+                            flight_state.runner_active = false;
+                            flight_state.requested_generation = flight_state.completed_generation;
+                        }
+                        return;
+                    }
                 }
 
                 if let Ok(mut flight_state) = flight.state.lock() {
                     flight_state.runner_active = false;
                     flight_state.requested_generation = flight_state.completed_generation;
+                    flight_state.consecutive_abandons = 0;
                 }
                 false
             } else {
@@ -435,31 +507,49 @@ impl ProviderService {
         state
     }
 
-    fn apply_refresh_result(
+    fn worker_drain_grace(&self, consecutive_abandons: u32) -> Duration {
+        let multiplier = 2_u32.saturating_pow(consecutive_abandons.min(DRAIN_BACKOFF_STEPS));
+        self.drain_grace_base.saturating_mul(multiplier)
+    }
+
+    /// Account activation and snapshot persistence are blocking SQLite round-trips; running them
+    /// on a blocking worker keeps slow disks off the async runtime and outside the settings lock.
+    async fn apply_refresh_result(
         &self,
         provider_id: &str,
         result: Result<ProviderRefresh, ProviderError>,
     ) -> ProviderViewState {
-        let account_error = result
-            .as_ref()
-            .ok()
-            .and_then(|refresh| refresh.account.as_ref())
-            .is_some_and(|account| {
-                self.settings.as_ref().is_some_and(|settings| {
-                    settings
-                        .activate_account(account.family, account.provider_id, &account.identity)
-                        .is_err()
-                })
+        let (account_error, cache_error) = if let Ok(refresh) = &result {
+            let account = refresh.account.as_ref().map(|account| {
+                (
+                    account.family.to_owned(),
+                    account.provider_id.to_owned(),
+                    account.identity.clone(),
+                )
             });
-        let cache_error = !account_error
-            && result.as_ref().ok().is_some_and(|refresh| {
-                self.storage
-                    .save_snapshot_for_identity(
-                        &refresh.snapshot,
-                        refresh.cache_identity.as_deref(),
-                    )
-                    .is_err()
-            });
+            let snapshot = refresh.snapshot.clone();
+            let cache_identity = refresh.cache_identity.clone();
+            let settings = self.settings.clone();
+            let storage = self.storage.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let account_error = settings.as_ref().is_some_and(|settings| {
+                    account.as_ref().is_some_and(|account| {
+                        settings
+                            .activate_account(&account.0, &account.1, &account.2)
+                            .is_err()
+                    })
+                });
+                let cache_error = !account_error
+                    && storage
+                        .save_snapshot_for_identity(&snapshot, cache_identity.as_deref())
+                        .is_err();
+                (account_error, cache_error)
+            })
+            .await
+            .unwrap_or((true, false))
+        } else {
+            (false, false)
+        };
         if account_error {
             crate::app_warn!(
                 "config",
@@ -524,6 +614,7 @@ struct RefreshFlightState {
     attempt_generation: Option<u64>,
     requested_generation: u64,
     completed_generation: u64,
+    consecutive_abandons: u32,
 }
 
 fn settle_completed_generation(state: &mut RefreshFlightState, generation: u64) -> bool {
@@ -1327,6 +1418,86 @@ mod tests {
                 .and_then(|snapshot| snapshot.plan.as_deref()),
             Some("live-2")
         );
+    }
+
+    #[test]
+    fn stuck_refresh_worker_is_abandoned_after_the_drain_grace() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let provider = Arc::new(GatedProvider {
+            id: "stuck",
+            calls: calls.clone(),
+            active: active.clone(),
+            maximum: maximum.clone(),
+            gate: gate.clone(),
+        }) as Arc<dyn UsageProvider>;
+        let registry = Arc::new(ProviderRegistry::new(vec![provider]).unwrap());
+        let service = Arc::new(ProviderService::with_refresh_timeouts(
+            registry,
+            storage,
+            Duration::from_millis(100),
+            Duration::from_millis(250),
+        ));
+
+        let first_service = service.clone();
+        let first =
+            tauri::async_runtime::spawn(async move { first_service.refresh("stuck", true).await });
+        wait_until("first refresh worker should start", || {
+            active.load(Ordering::SeqCst) == 1
+        });
+        let timed_out = tauri::async_runtime::block_on(async {
+            tokio::time::timeout(TEST_WAIT_TIMEOUT, first)
+                .await
+                .expect("timed-out refresh should release its waiter")
+                .unwrap()
+        });
+        assert_eq!(
+            timed_out.error.as_deref(),
+            Some("Provider refresh timed out.")
+        );
+        assert!(!refresh_runner_is_idle(&service, "stuck"));
+
+        wait_until(
+            "stuck worker should be abandoned after the drain grace",
+            || refresh_runner_is_idle(&service, "stuck"),
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(active.load(Ordering::SeqCst), 1);
+
+        // With the flight released, a forced refresh must be able to start a replacement even
+        // though the abandoned worker is still blocking.
+        let second_service = service.clone();
+        let second =
+            tauri::async_runtime::spawn(async move { second_service.refresh("stuck", true).await });
+        wait_until("replacement refresh worker should start", || {
+            calls.load(Ordering::SeqCst) == 2
+        });
+        let (released, signal) = &*gate;
+        *released.lock().unwrap() = true;
+        signal.notify_all();
+
+        let recovered = tauri::async_runtime::block_on(async {
+            tokio::time::timeout(TEST_WAIT_TIMEOUT, second)
+                .await
+                .expect("replacement refresh should finish")
+                .unwrap()
+        });
+        assert!(recovered.error.is_none());
+        assert_eq!(
+            recovered
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.plan.as_deref()),
+            Some("live-2")
+        );
+        wait_until("both workers should drain after release", || {
+            active.load(Ordering::SeqCst) == 0
+        });
+        assert!(refresh_runner_is_idle(&service, "stuck"));
     }
 
     #[test]

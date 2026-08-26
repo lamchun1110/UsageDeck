@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { t } from './i18n.svelte';
   import { usageSourceNote, type ProviderCatalogIndex } from './metrics';
   import QuotaMetric from './QuotaMetric.svelte';
   import StatusMetric from './StatusMetric.svelte';
   import UsageMetric from './UsageMetric.svelte';
   import UsageTrend from './UsageTrend.svelte';
   import ValueMetric from './ValueMetric.svelte';
-  import type { AppSettings, MetricLayout, ProviderSnapshot } from './types';
+  import type { AppSettings, MetricLayout, ProviderSnapshot, QuotaHistorySample } from './types';
 
   interface Props {
     layout: MetricLayout;
@@ -13,14 +14,23 @@
     settings: AppSettings;
     now: number;
     catalog: ProviderCatalogIndex;
+    quotaHistory?: QuotaHistorySample[];
     onSettingsChange: (settings: AppSettings) => void;
   }
-  let { layout, snapshot, settings, now, catalog, onSettingsChange }: Props = $props();
+  let { layout, snapshot, settings, now, catalog, quotaHistory, onSettingsChange }: Props =
+    $props();
   const definition = $derived(catalog.metric(layout.id));
   const quota = $derived.by(() => {
     const source = definition?.source;
     if (source?.kind !== 'quota' && source?.kind !== 'quotaOrValue') return undefined;
     return snapshot.quotas.find((item) => item.id === source.sourceId);
+  });
+  const quotaHistoryValues = $derived.by(() => {
+    if (quotaHistory === undefined || quota === undefined) return undefined;
+    const series = quotaHistory
+      .filter((sample) => sample.quotaId === quota.id)
+      .map((sample) => sample.usedPercent);
+    return series.length >= 2 ? series : undefined;
   });
   const isSessionWindow = $derived(
     (definition?.source.kind === 'quota' || definition?.source.kind === 'quotaOrValue') &&
@@ -54,6 +64,7 @@
     timeFormat={settings.timeFormat}
     alwaysShowPacing={settings.alwaysShowPacing}
     {isSessionWindow}
+    history={quotaHistoryValues}
     onToggleUsage={() =>
       onSettingsChange({
         ...settings,
@@ -74,19 +85,24 @@
     timeFormat={settings.timeFormat}
   />
 {:else if definition?.source.kind === 'quota' || definition?.source.kind === 'quotaOrValue'}
-  <section class="metric metric--no-data" aria-label={`${definition.label} quota`}>
+  <section
+    class="metric metric--no-data"
+    aria-label={t('quota.sectionAria', { label: definition.label })}
+  >
     <div class="metric__heading"><h2>{definition.label}</h2></div>
     <div class="meter-shell">
       <div
         class="meter"
         role="progressbar"
-        aria-label={`${definition.label} used`}
+        aria-label={t('quota.usedAria', { label: definition.label })}
         aria-valuemin="0"
         aria-valuemax="100"
         aria-valuenow="0"
       ></div>
     </div>
-    <div class="metric__reading"><span>No data</span><span>Reset unavailable</span></div>
+    <div class="metric__reading">
+      <span>{t('quota.noData')}</span><span>{t('quota.resetUnavailable')}</span>
+    </div>
   </section>
 {:else if definition?.source.kind === 'trend'}
   <UsageTrend daily={snapshot.usage.daily} sourceNote={resolvedUsageSourceNote} />

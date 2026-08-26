@@ -38,6 +38,7 @@
   import Dashboard from './lib/Dashboard.svelte';
   import Icon from './lib/Icon.svelte';
   import { createListenerRegistry } from './lib/listenerRegistry';
+  import { setLanguage, t } from './lib/i18n.svelte';
   import { emptyProviderCatalog, ProviderCatalogIndex } from './lib/metrics';
   import { springMotion } from './lib/motion';
   import UsageDeckMark from './lib/UsageDeckMark.svelte';
@@ -45,14 +46,9 @@
   import { desktopPlatform, shortcutLabels } from './lib/platform';
   import { withProviderName } from './lib/providerNames';
   import RenameProviderSheet from './lib/RenameProviderSheet.svelte';
-  import {
-    buildProviderShareRows,
-    renderProviderShareCard,
-    renderTotalSpendShareCard,
-  } from './lib/shareCard';
+  import { buildProviderShareRows, renderProviderShareCard } from './lib/shareCard';
   import SettingsScreen from './lib/SettingsScreen.svelte';
   import { SettingsController } from './lib/settingsController.svelte';
-  import type { SpendProjection } from './lib/totalSpend';
   import type { AppSettings, UsageViewState } from './lib/types';
   import { nextUpdateLabel, UpdateController } from './lib/updateController.svelte';
   import { automaticUpdateDelay, UPDATE_CHECK_INTERVAL_MS } from './lib/updateSchedule';
@@ -70,6 +66,12 @@
   let screen = $state<Screen>('dashboard');
   let now = $state(Date.now());
   let settingsError = $state<string | null>(null);
+  let bootstrapFailed = $state(false);
+  // Refresh liveness lives outside viewState: progressive usage-state events replace viewState
+  // wholesale and would otherwise wipe optimistic refreshing flags mid-flight, re-enabling the
+  // button and allowing a second concurrent refresh.
+  let activeRefreshCount = $state(0);
+  let providerRefreshCounts = $state<Record<string, number>>({});
   let automaticUpdatesReady = $state(false);
   let systemReducedMotion = $state(false);
   let slideDirection = $state(1);
@@ -91,7 +93,9 @@
   let shareMenuElement = $state<HTMLDetailsElement>();
   let shareTimer: ReturnType<typeof setTimeout> | undefined;
   const providerStates = $derived(Object.values(viewState.providers));
-  const anyRefreshing = $derived(providerStates.some((state) => state.refreshing));
+  const anyRefreshing = $derived(
+    activeRefreshCount > 0 || providerStates.some((state) => state.refreshing),
+  );
   const lastFullRefresh = $derived(viewState.lastFullRefreshAt ?? undefined);
   const platform = desktopPlatform();
   const shortcuts = shortcutLabels(platform);
@@ -129,6 +133,7 @@
     const root = document.documentElement;
     root.toggleAttribute('data-reduced-motion', reducedMotion);
     if (!settingsState) return;
+    setLanguage(settingsState.settings.language);
     if (settingsState.settings.theme === 'system') delete root.dataset.theme;
     else root.dataset.theme = settingsState.settings.theme;
     if (settingsState.settings.accent === 'iris') delete root.dataset.accent;
@@ -298,6 +303,7 @@
   }
   async function refresh() {
     if (anyRefreshing) return;
+    activeRefreshCount += 1;
     viewState = {
       ...viewState,
       providers: Object.fromEntries(
@@ -309,6 +315,7 @@
     };
     try {
       viewState = await refreshUsage();
+      settingsError = null;
     } catch {
       viewState = {
         ...viewState,
@@ -319,12 +326,18 @@
           ]),
         ),
       };
-      settingsError = 'UsageDeck could not start a provider refresh.';
+      settingsError = t('app.refreshStartFailed');
+    } finally {
+      activeRefreshCount -= 1;
     }
   }
   async function refreshProvider(providerId: string) {
     const current = viewState.providers[providerId];
-    if (!current || current.refreshing) return;
+    if (!current || current.refreshing || (providerRefreshCounts[providerId] ?? 0) > 0) return;
+    providerRefreshCounts = {
+      ...providerRefreshCounts,
+      [providerId]: (providerRefreshCounts[providerId] ?? 0) + 1,
+    };
     viewState = {
       ...viewState,
       providers: {
@@ -334,6 +347,7 @@
     };
     try {
       viewState = await refreshProviderUsage(providerId);
+      settingsError = null;
     } catch {
       const failed = viewState.providers[providerId];
       if (failed) {
@@ -345,7 +359,14 @@
           },
         };
       }
-      settingsError = `${providerDisplayName(providerId)} usage could not be refreshed.`;
+      settingsError = t('app.refreshProviderFailed', {
+        provider: providerDisplayName(providerId),
+      });
+    } finally {
+      providerRefreshCounts = {
+        ...providerRefreshCounts,
+        [providerId]: Math.max(0, (providerRefreshCounts[providerId] ?? 1) - 1),
+      };
     }
   }
   function openProviderLink(providerId: string, linkIndex: number) {
@@ -450,25 +471,6 @@
       await copyCanvas(canvas, snapshot);
     } catch {
       settingsError = 'Provider screenshot could not be copied.';
-    }
-  }
-  async function shareTotalSpend(projection: SpendProjection) {
-    const current = settingsState;
-    if (!current) return false;
-    const card = document.querySelector<HTMLElement>('[data-total-spend]');
-    if (!card) return false;
-    try {
-      const canvas = renderTotalSpendShareCard(catalog, {
-        projection,
-        providerNames: current.settings.providerNames,
-        metric: current.settings.totalSpendMetric,
-        period: current.settings.totalSpendPeriod,
-      });
-      await copyCanvas(canvas, card.innerText.trim());
-      return true;
-    } catch {
-      settingsError = 'Total Spend screenshot could not be copied.';
-      return false;
     }
   }
   async function copyLogPath() {
@@ -726,6 +728,21 @@
     );
   }
 
+  function loadBootstrapState() {
+    bootstrapFailed = false;
+    void getBootstrapState()
+      .then((state) => {
+        catalog = new ProviderCatalogIndex(state.catalog);
+        viewState = state.usage;
+        settingsController.setState(state.settings);
+        automaticUpdatesReady = true;
+      })
+      .catch(() => {
+        bootstrapFailed = true;
+        settingsError = t('app.backendUnavailable');
+      });
+  }
+
   onMount(() => {
     const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     const updateMotionPreference = () => {
@@ -735,6 +752,7 @@
     updateMotionPreference();
     motionQuery.addEventListener('change', updateMotionPreference);
     const refreshWindowState = () => {
+      if (bootstrapFailed) loadBootstrapState();
       void settingsController.refreshIfIdle();
       updatePanelResizeEdge();
       updatePanelHeightMode();
@@ -822,14 +840,7 @@
         updates.setProgress(progress);
       }),
     );
-    void getBootstrapState()
-      .then((state) => {
-        catalog = new ProviderCatalogIndex(state.catalog);
-        viewState = state.usage;
-        settingsController.setState(state.settings);
-        automaticUpdatesReady = true;
-      })
-      .catch(() => (settingsError = 'UsageDeck backend is unavailable.'));
+    loadBootstrapState();
     return () => {
       document.removeEventListener('keydown', handleKeydown);
       window.clearInterval(clock);
@@ -920,6 +931,12 @@
     <div class="content" class:content--chrome={screen !== 'dashboard'}>
       {#if settingsError}<div class="notice notice--blocking" role="alert">
           {settingsError}
+          <button
+            type="button"
+            class="notice__dismiss"
+            aria-label={t('app.dismiss')}
+            onclick={() => (settingsError = null)}>×</button
+          >
         </div>{/if}
       <div class="screen-stage">
         {#key screen}
@@ -950,7 +967,6 @@
                 onOpenProviderCustomize={(id) => void openProviderCustomization(id, true)}
                 onRenameProvider={openRenameProvider}
                 onShare={shareProvider}
-                onShareTotal={shareTotalSpend}
                 onRefresh={refreshProvider}
                 onOpenProviderLink={openProviderLink}
                 onContentMorph={beginContentMorph}
@@ -1181,10 +1197,25 @@
     {/if}
   {:else}
     <div class="content">
-      {#if settingsError}
-        <div class="notice notice--blocking" role="alert">{settingsError}</div>
+      {#if bootstrapFailed}
+        <div class="notice notice--blocking" role="alert">
+          {t('app.backendUnavailable')}
+          <button type="button" class="notice__retry" onclick={loadBootstrapState}>
+            {t('app.retry')}
+          </button>
+        </div>
+      {:else if settingsError}
+        <div class="notice notice--blocking" role="alert">
+          {settingsError}
+          <button
+            type="button"
+            class="notice__dismiss"
+            aria-label={t('app.dismiss')}
+            onclick={() => (settingsError = null)}>×</button
+          >
+        </div>
       {:else}
-        <p class="empty-row">Loading UsageDeck…</p>
+        <p class="empty-row">{t('app.loading')}</p>
       {/if}
     </div>
   {/if}
@@ -1935,8 +1966,32 @@
     }
 
     .notice--blocking {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       color: var(--error);
       background: var(--error-bg);
+    }
+
+    .notice--blocking .notice__dismiss,
+    .notice--blocking .notice__retry {
+      flex: none;
+      padding: 2px 8px;
+      border: 0;
+      border-radius: 6px;
+      color: inherit;
+      background: color-mix(in srgb, currentColor 10%, transparent);
+      font: inherit;
+      font-size: 12px;
+      line-height: 16px;
+      cursor: pointer;
+    }
+
+    .notice--blocking .notice__dismiss:focus-visible,
+    .notice--blocking .notice__retry:focus-visible {
+      outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
+      outline-offset: 1px;
     }
 
     .popover {

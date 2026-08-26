@@ -347,8 +347,8 @@ export const settingsState: SettingsViewState = {
     providerNames: {},
     providerOptions: {},
     knownProviderIds: ['claude', 'codex', 'antigravity'],
-    showTotalSpend: true,
     theme: 'system',
+    language: 'system',
     accent: 'iris',
     density: 'default',
     reduceAnimations: false,
@@ -365,8 +365,6 @@ export const settingsState: SettingsViewState = {
     globalShortcut: null,
     logLevel: 'info',
     notifications: { almostOut: false, cuttingItClose: false, willRunOut: false },
-    totalSpendMetric: 'cost',
-    totalSpendPeriod: 'today',
     detectionNoticeDismissed: true,
     providers: [
       {

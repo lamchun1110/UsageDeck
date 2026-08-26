@@ -1,3 +1,4 @@
+import { formattingLocale, t } from './i18n.svelte';
 import type { QuotaWindow } from './types';
 
 export type PaceSeverity = 'level' | 'healthy' | 'close' | 'runningOut' | 'spent';
@@ -58,13 +59,14 @@ export function isFreshSessionWindow(window: QuotaWindow, now: number, isSession
 
 export function paceTooltip(value: PaceProjection) {
   if (value.severity === 'level') return null;
-  if (value.severity === 'spent') return 'Limit reached';
+  if (value.severity === 'spent') return t('quota.limitReached');
   const projected = value.projectedUsedPercent;
   if (projected === null) return null;
-  if (value.severity === 'healthy') return `~${Math.round(100 - projected)}% left at reset`;
-  if (value.severity === 'close') return `~${Math.round(projected)}% used at reset`;
-  if (projected <= 100) return '~100% used at reset';
-  return `~${Math.max(1, Math.round(projected - 100))}% over limit at reset`;
+  if (value.severity === 'healthy')
+    return t('pace.leftAtReset', { percent: Math.round(100 - projected) });
+  if (value.severity === 'close') return t('pace.usedAtReset', { percent: Math.round(projected) });
+  if (projected <= 100) return t('pace.fullAtReset');
+  return t('pace.overAtReset', { percent: Math.max(1, Math.round(projected - 100)) });
 }
 
 type TimeFormat = 'system' | 'twelveHour' | 'twentyFourHour';
@@ -75,10 +77,22 @@ export function formatReset(
   mode: 'countdown' | 'exact',
   timeFormat: TimeFormat = 'system',
 ) {
-  if (!value) return 'Reset unavailable';
+  if (!value) return t('quota.resetUnavailable');
   const reset = new Date(value).getTime();
-  if (!Number.isFinite(reset)) return 'Reset unavailable';
-  return formatDeadline('Resets', reset, now, mode, timeFormat);
+  if (!Number.isFinite(reset)) return t('quota.resetUnavailable');
+  return formatDeadline('deadline.resets', reset, now, mode, timeFormat);
+}
+
+/** The reset deadline without its "Resets" prefix ("in 2h", "today at 3:04 PM", "soon"). */
+export function formatResetDetail(
+  value: string,
+  now: number,
+  mode: 'countdown' | 'exact',
+  timeFormat: TimeFormat = 'system',
+) {
+  const reset = new Date(value).getTime();
+  if (!Number.isFinite(reset)) return null;
+  return renderDeadlineParts(deadlineParts(reset, now, mode, timeFormat));
 }
 
 export function formatLimit(
@@ -87,40 +101,100 @@ export function formatLimit(
   mode: 'countdown' | 'exact',
   timeFormat: TimeFormat = 'system',
 ) {
-  if (value === null) return 'Limit reached';
-  return formatDeadline('Limit', value, now, mode, timeFormat);
+  if (value === null) return t('quota.limitReached');
+  return formatDeadline('deadline.limit', value, now, mode, timeFormat);
 }
 
 function formatDeadline(
-  prefix: string,
+  prefixKey: string,
   value: number,
   now: number,
   mode: 'countdown' | 'exact',
   timeFormat: TimeFormat,
 ) {
+  const prefix = t(prefixKey);
+  const parts = deadlineParts(value, now, mode, timeFormat);
+  switch (parts.kind) {
+    case 'soon':
+      return t('deadline.soon', { prefix });
+    case 'countdown':
+      return parts.duration === undefined
+        ? t('deadline.soon', { prefix })
+        : t('deadline.countdown', { prefix, duration: parts.duration });
+    case 'today':
+      return parts.time === undefined
+        ? t('deadline.soon', { prefix })
+        : t('deadline.today', { prefix, time: parts.time });
+    case 'tomorrow':
+      return parts.time === undefined
+        ? t('deadline.soon', { prefix })
+        : t('deadline.tomorrow', { prefix, time: parts.time });
+    case 'date':
+      return parts.time === undefined || parts.date === undefined
+        ? t('deadline.soon', { prefix })
+        : t('deadline.date', { prefix, date: parts.date, time: parts.time });
+  }
+}
+
+interface DeadlineParts {
+  kind: 'soon' | 'countdown' | 'today' | 'tomorrow' | 'date';
+  duration?: string;
+  time?: string;
+  date?: string;
+}
+
+function deadlineParts(
+  value: number,
+  now: number,
+  mode: 'countdown' | 'exact',
+  timeFormat: TimeFormat,
+): DeadlineParts {
   const remaining = value - now;
   if (remaining <= 0 || (mode === 'countdown' && remaining <= 5 * 60_000)) {
-    return `${prefix} soon`;
+    return { kind: 'soon' };
   }
-  if (mode === 'countdown') return `${prefix} in ${formatDuration(remaining)}`;
+  if (mode === 'countdown') return { kind: 'countdown', duration: formatDuration(remaining) };
 
   const date = new Date(value);
   const current = new Date(now);
   const currentDay = Date.UTC(current.getFullYear(), current.getMonth(), current.getDate());
   const targetDay = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
   const dayDifference = Math.round((targetDay - currentDay) / 86_400_000);
-  const time = date.toLocaleTimeString([], {
+  const time = date.toLocaleTimeString([formattingLocale()], {
     hour: 'numeric',
     minute: '2-digit',
     hour12: timeFormat === 'system' ? undefined : timeFormat === 'twelveHour',
   });
-  if (dayDifference <= 0) return `${prefix} today at ${time}`;
-  if (dayDifference === 1) return `${prefix} tomorrow at ${time}`;
-  const monthDay = new Intl.DateTimeFormat(undefined, {
+  if (dayDifference <= 0) return { kind: 'today', time };
+  if (dayDifference === 1) return { kind: 'tomorrow', time };
+  const monthDay = new Intl.DateTimeFormat(formattingLocale(), {
     month: 'short',
     day: 'numeric',
   }).format(date);
-  return `${prefix} ${monthDay} at ${time}`;
+  return { kind: 'date', time, date: monthDay };
+}
+
+function renderDeadlineParts(parts: DeadlineParts) {
+  switch (parts.kind) {
+    case 'soon':
+      return t('deadline.soonDetail');
+    case 'countdown':
+      return parts.duration === undefined
+        ? t('deadline.soonDetail')
+        : t('deadline.countdownDetail', { duration: parts.duration });
+    case 'today':
+      return parts.time === undefined
+        ? t('deadline.soonDetail')
+        : t('deadline.todayDetail', { time: parts.time });
+    case 'tomorrow':
+      return parts.time === undefined
+        ? t('deadline.soonDetail')
+        : t('deadline.tomorrowDetail', { time: parts.time });
+    case 'date':
+      return parts.time === undefined || parts.date === undefined
+        ? t('deadline.soonDetail')
+        : t('deadline.dateDetail', { date: parts.date, time: parts.time });
+  }
 }
 
 function formatDuration(milliseconds: number) {

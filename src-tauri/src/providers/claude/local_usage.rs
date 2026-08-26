@@ -141,6 +141,7 @@ fn discover_files_in_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
                     entry.file_type().is_file()
                         && entry.path().extension().and_then(|value| value.to_str())
                             == Some("jsonl")
+                        && crate::providers::log_usage::log_file_can_contribute(entry.path())
                 })
                 .map(|entry| entry.into_path())
         })

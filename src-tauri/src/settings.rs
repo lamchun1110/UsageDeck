@@ -200,16 +200,23 @@ impl SettingsService {
         provider_id: &str,
         identity: &str,
     ) -> Result<bool, StorageError> {
-        let mut settings = self.settings.write().map_err(|_| StorageError::Poisoned)?;
-        let mut active_accounts = self
+        // Storage round-trips run without holding the settings locks so slow disks cannot stall
+        // readers; the commit re-checks under the write lock and defers to a concurrent activation.
+        let previous_identity = self
             .active_account_identities
-            .write()
-            .map_err(|_| StorageError::Poisoned)?;
-        let previous_identity = active_accounts.get(provider_id).cloned();
+            .read()
+            .map_err(|_| StorageError::Poisoned)?
+            .get(provider_id)
+            .cloned();
         if previous_identity.as_deref() == Some(identity) {
             return Ok(false);
         }
 
+        let settings = self
+            .settings
+            .read()
+            .map_err(|_| StorageError::Poisoned)?
+            .clone();
         let records = self.storage.load_provider_account_records(family)?;
         let (record_id, mut payload) = account_record(&records, family, identity);
         let current_name = settings.provider_names.get(provider_id).map(String::as_str);
@@ -245,7 +252,7 @@ impl SettingsService {
             set_account_custom_name(&mut payload, current_name);
         }
 
-        let mut next = settings.clone();
+        let mut next = settings;
         match account_custom_name(&payload) {
             Some(name) => {
                 next.provider_names.insert(provider_id.to_owned(), name);
@@ -263,6 +270,16 @@ impl SettingsService {
         });
         self.storage
             .save_settings_with_account_updates(&next, &account_updates)?;
+
+        let mut settings = self.settings.write().map_err(|_| StorageError::Poisoned)?;
+        let mut active_accounts = self
+            .active_account_identities
+            .write()
+            .map_err(|_| StorageError::Poisoned)?;
+        if active_accounts.get(provider_id) != previous_identity.as_ref() {
+            // A concurrent activation for this provider already committed; keep its outcome.
+            return Ok(false);
+        }
         settings.clone_from(&next);
         active_accounts.insert(provider_id.to_owned(), identity.to_owned());
         self.settings_revision.fetch_add(1, Ordering::SeqCst);

@@ -58,7 +58,6 @@ describe('native UI language contract', () => {
   it('uses the shared Settings labels and single-line control rows', () => {
     for (const label of [
       'General',
-      'Show Total Spend',
       'Launch at Login',
       'Global Shortcut',
       'Icon Style',

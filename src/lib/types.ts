@@ -12,6 +12,15 @@ export interface QuotaWindow {
   sourceNote?: string | null;
 }
 
+/** One persisted quota-level sample; `sampledAt` is an hour bucket, at most one per day. */
+export interface QuotaHistorySample {
+  quotaId: string;
+  sampledAt: string;
+  usedPercent: number;
+}
+
+export type QuotaHistoryByProvider = Record<string, QuotaHistorySample[]>;
+
 export interface MetricValue {
   number: number;
   kind: 'count' | 'dollars';
@@ -222,7 +231,6 @@ export interface AppSettings {
   knownProviderIds: string[];
   providerNames: Record<string, string>;
   providerOptions: Record<string, Record<string, string>>;
-  showTotalSpend: boolean;
   theme: 'system' | 'light' | 'dark';
   accent: 'iris' | 'ocean' | 'forest' | 'rose' | 'amber';
   density: 'default' | 'compact';
@@ -232,6 +240,7 @@ export interface AppSettings {
   usageDisplay: 'used' | 'left';
   resetDisplay: 'countdown' | 'exact';
   timeFormat: 'system' | 'twelveHour' | 'twentyFourHour';
+  language: 'system' | 'en' | 'zh-CN' | 'zh-TW' | 'ja' | 'ko';
   alwaysShowPacing: boolean;
   launchAtLogin: boolean;
   autoCheckUpdates: boolean;
@@ -240,8 +249,6 @@ export interface AppSettings {
   globalShortcut: string | null;
   logLevel: 'error' | 'warn' | 'info' | 'debug';
   notifications: NotificationPreferences;
-  totalSpendMetric: 'cost' | 'costPerMillion' | 'tokens';
-  totalSpendPeriod: 'today' | 'yesterday' | 'last30Days';
   detectionNoticeDismissed: boolean;
 }
 

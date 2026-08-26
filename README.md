@@ -21,28 +21,27 @@
 
 Thirteen coding assistants, thirteen billing dashboards, thirteen different words for "you are out
 of quota." UsageDeck is a small desktop app that reads the credentials already sitting on your
-machine and answers the only questions that matter: how much is left, when does it reset, and what
-has this cost so far.
+machine and answers the only questions that matter: how much is left and when does it reset.
 
 It lives in your tray or menu bar. There is no account to create and nothing to sign in to.
 
 ## What it tracks
 
-| Provider                                          | Credentials | What you get                                                                        |
-| ------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------- |
-| **[Claude Code](docs/providers/claude.md)**       | Local       | Multiple accounts, session and weekly limits, per-model usage, token history, spend |
-| **[Codex](docs/providers/codex.md)**              | Local       | Session and weekly limits, credits, token history, model breakdown, spend           |
-| **[Command Code](docs/providers/commandcode.md)** | Local       | Session, weekly, and monthly limits, plus extra credits                             |
-| **[Cursor](docs/providers/cursor.md)**            | Local       | Total, Auto, and API usage, credits, token history, spend                           |
-| **[Antigravity](docs/providers/antigravity.md)**  | Local       | Shared Gemini and Claude quota pools                                                |
-| **[Copilot](docs/providers/copilot.md)**          | Local       | Premium requests, extra usage, chat and completion quotas, org billing              |
-| **[Devin](docs/providers/devin.md)**              | Local       | Daily and weekly limits, reset times, extra usage balance                           |
-| **[Grok](docs/providers/grok.md)**                | Local       | Weekly allowance, extra usage status, token history, spend                          |
-| **[OpenCode](docs/providers/opencode.md)**        | Local       | Go session, weekly, and monthly spend caps, plus local usage history                |
-| **[OpenRouter](docs/providers/openrouter.md)**    | API key     | Credit balance and daily, weekly, monthly spend                                     |
-| **[Z.ai](docs/providers/zai.md)**                 | API key     | GLM Coding Plan session, weekly, and web-search quotas                              |
-| **[Kimi](docs/providers/kimi.md)**                | API key     | Kimi Code session and weekly quotas, on the domain you choose                       |
-| **[MiniMax](docs/providers/minimax.md)**          | API key     | Token Plan session and weekly quotas                                                |
+| Provider                                          | Credentials | What you get                                                                                 |
+| ------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------- |
+| **[Claude Code](docs/providers/claude.md)**       | Local       | Multiple accounts, session and weekly limits, per-model usage, token history, spend          |
+| **[Codex](docs/providers/codex.md)**              | Local       | Session and weekly limits, rate limit resets, credits, token history, model breakdown, spend |
+| **[Command Code](docs/providers/commandcode.md)** | Local       | Session, weekly, and monthly limits, plus extra credits                                      |
+| **[Cursor](docs/providers/cursor.md)**            | Local       | Total, Auto, and API usage, credits, token history, spend                                    |
+| **[Antigravity](docs/providers/antigravity.md)**  | Local       | Shared Gemini and Claude quota pools                                                         |
+| **[Copilot](docs/providers/copilot.md)**          | Local       | Premium requests, extra usage, chat and completion quotas, org billing                       |
+| **[Devin](docs/providers/devin.md)**              | Local       | Daily and weekly limits, reset times, extra usage balance                                    |
+| **[Grok](docs/providers/grok.md)**                | Local       | Weekly allowance, extra usage status, token history, spend                                   |
+| **[OpenCode](docs/providers/opencode.md)**        | Local       | Go session, weekly, and monthly quotas, plus local usage and estimated spend                 |
+| **[OpenRouter](docs/providers/openrouter.md)**    | API key     | Credits, balance, today, this week, this month, key limit                                    |
+| **[Z.ai](docs/providers/zai.md)**                 | API key     | GLM Coding Plan session, weekly, and web-search quotas                                       |
+| **[Kimi](docs/providers/kimi.md)**                | API key     | Kimi Code session and weekly quotas, on the domain you choose                                |
+| **[MiniMax](docs/providers/minimax.md)**          | API key     | Token Plan session and weekly quotas                                                         |
 
 **Local** providers reuse the login your CLI or editor already created — nothing to configure.
 **API key** providers need a key you paste into Customize once; it goes straight into your operating
@@ -65,10 +64,10 @@ key, which is a separate thing from operating-system package signing.
 
 ### Release signatures
 
-- **macOS:** official releases are signed with an Apple Developer ID certificate issued to
-  **Madness Technology Limited**, use the bundle ID `com.lamchun1110.usagedeck`, and are notarized
-  and stapled by Apple. The release workflow verifies the code signature, Gatekeeper assessment,
-  notarization ticket, and hardened runtime before publishing.
+- **macOS:** official releases are signed with an Apple Developer ID certificate and notarized by
+  Apple when the `ENABLE_MACOS_NATIVE_SIGNING` repository variable is set to `true`. Signed releases
+  use the bundle ID `com.lamchun1110.usagedeck` and are stapled. The release workflow verifies the
+  code signature, Gatekeeper assessment, notarization ticket, and hardened runtime before publishing.
 - **Linux:** every `.AppImage` and `.deb` has a matching ASCII-armored detached signature named
   `<file>.asc`. Releases also include `SHA256SUMS`, its GPG-signed copy `SHA256SUMS.asc`, and
   `usagedeck-gpg-public.asc`, the public key needed for verification.
@@ -83,16 +82,18 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 
 > [!IMPORTANT]
 > Windows installers are not currently Authenticode-signed, so SmartScreen may ask you to confirm.
-> Only download UsageDeck from this repository's releases page. Every release states its exact
-> signing status in the notes.
+> On macOS, builds produced without `ENABLE_MACOS_NATIVE_SIGNING` are ad-hoc-signed and unnotarized;
+> Gatekeeper will block the first launch unless you right-click → Open. Only download UsageDeck from
+> this repository's releases page. Every release states its exact signing status in the notes.
 
 ## Coming from OpenQuota?
 
 UsageDeck began as the OpenQuota fork and is now an independent project. Your data comes with you:
-on first launch, UsageDeck migrates settings, usage history, and the pricing cache from an existing
-OpenQuota installation automatically, and API keys saved in your system credential store are moved
-to UsageDeck's own entry. Nothing is deleted from the old location. Keys stored in
-`~/.config/openquota/<provider>.json` are still read; new keys live in `~/.config/usagedeck/`.
+on first launch, UsageDeck migrates settings, usage history, the pricing cache, and Antigravity's
+local data from an existing OpenQuota installation automatically, and API keys saved in your system
+credential store are moved to UsageDeck's own entry. Nothing is deleted from the old location. Keys
+stored in `~/.config/openquota/{kimi,minimax,zai}.json` are still read; new keys live in
+`~/.config/usagedeck/`. OpenRouter reads its own legacy path at `~/.config/openrouter/key.json`.
 
 ## Living with it
 

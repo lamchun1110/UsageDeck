@@ -18,6 +18,9 @@ const RELEASE_URL: &str = "https://github.com/lamchun1110/UsageDeck/releases/lat
 #[derive(Default)]
 pub struct UpdateCoordinator {
     operation: Mutex<()>,
+    /// The update validated by the most recent check, so installing does not re-query GitHub
+    /// (avoiding a second rate-limited request and a check-to-install version swap).
+    pending: std::sync::Mutex<Option<Update>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -204,6 +207,9 @@ pub async fn check_for_updates(
             "up to date"
         }
     );
+    if let Ok(mut pending) = coordinator.pending.lock() {
+        *pending = update.clone();
+    }
     Ok(match update {
         Some(update) => UpdateStatus {
             available: true,
@@ -246,27 +252,37 @@ pub async fn install_update(
             true,
         )
     })?;
-    let update = app
-        .updater()
-        .map_err(|_| {
-            UpdateFailure::new(
-                "not_configured",
-                "Automatic updates are not configured in this build.",
-                "Download the latest version from the release page.",
-                false,
-            )
-        })?
-        .check()
-        .await
-        .map_err(|error| classify_updater_error(&error, "check for updates"))?
-        .ok_or_else(|| {
-            UpdateFailure::new(
-                "up_to_date",
-                "UsageDeck is already up to date.",
-                "No action is needed.",
-                false,
-            )
-        })?;
+    // Prefer the update the user just saw validated by check_for_updates; fall back to a fresh
+    // check only when no check has run since launch.
+    let pending = coordinator
+        .pending
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take());
+    let update = match pending {
+        Some(update) => Some(update),
+        None => app
+            .updater()
+            .map_err(|_| {
+                UpdateFailure::new(
+                    "not_configured",
+                    "Automatic updates are not configured in this build.",
+                    "Download the latest version from the release page.",
+                    false,
+                )
+            })?
+            .check()
+            .await
+            .map_err(|error| classify_updater_error(&error, "check for updates"))?,
+    }
+    .ok_or_else(|| {
+        UpdateFailure::new(
+            "up_to_date",
+            "UsageDeck is already up to date.",
+            "No action is needed.",
+            false,
+        )
+    })?;
 
     let _ = app.emit("update-progress", progress(0, None, "downloading"));
     if let Err(first_error) = download_and_install_once(&app, &update).await {

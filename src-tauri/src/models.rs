@@ -58,6 +58,16 @@ pub enum MetricValueKind {
     Dollars,
 }
 
+/// One persisted quota-level sample for the history sparkline. `sampled_at` is an hour bucket
+/// (samples inside the same hour replace each other), returned at most once per day.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaHistorySample {
+    pub quota_id: String,
+    pub sampled_at: String,
+    pub used_percent: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MetricValue {
@@ -697,6 +707,26 @@ pub enum TimeFormatPreference {
     TwentyFourHour,
 }
 
+/// UI language. `System` follows the OS locale at render time; the explicit values map to the
+/// message catalogs shipped in the webview. Unknown stored values fall back to `System` via
+/// `#[serde(other)]` so settings files stay portable across versions.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum LanguagePreference {
+    #[default]
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "zh-CN")]
+    ChineseSimplified,
+    #[serde(rename = "zh-TW")]
+    ChineseTraditional,
+    #[serde(rename = "ja")]
+    Japanese,
+    #[serde(rename = "ko")]
+    Korean,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[repr(u8)]
@@ -727,14 +757,6 @@ impl LogLevel {
             Self::Debug => "DEBUG",
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum TotalSpendMetric {
-    Cost,
-    CostPerMillion,
-    Tokens,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -772,7 +794,6 @@ pub struct AppSettings {
     /// Provider id -> option id -> selected choice id. Values are validated against the
     /// provider's declared options on load, so an unknown selection can never reach a provider.
     pub provider_options: BTreeMap<String, BTreeMap<String, String>>,
-    pub show_total_spend: bool,
     pub theme: ThemePreference,
     pub accent: AccentPreference,
     pub density: DensityPreference,
@@ -782,6 +803,8 @@ pub struct AppSettings {
     pub usage_display: UsageDisplay,
     pub reset_display: ResetDisplay,
     pub time_format: TimeFormatPreference,
+    #[serde(default)]
+    pub language: LanguagePreference,
     pub always_show_pacing: bool,
     pub launch_at_login: bool,
     pub auto_check_updates: bool,
@@ -790,8 +813,6 @@ pub struct AppSettings {
     pub global_shortcut: Option<String>,
     pub log_level: LogLevel,
     pub notifications: NotificationPreferences,
-    pub total_spend_metric: TotalSpendMetric,
-    pub total_spend_period: UsagePeriodSelection,
     pub detection_notice_dismissed: bool,
 }
 
@@ -803,7 +824,6 @@ impl Default for AppSettings {
             known_provider_ids: Vec::new(),
             provider_names: BTreeMap::new(),
             provider_options: BTreeMap::new(),
-            show_total_spend: true,
             theme: ThemePreference::System,
             accent: AccentPreference::Iris,
             density: DensityPreference::Default,
@@ -813,6 +833,7 @@ impl Default for AppSettings {
             usage_display: UsageDisplay::Left,
             reset_display: ResetDisplay::Countdown,
             time_format: TimeFormatPreference::System,
+            language: LanguagePreference::System,
             always_show_pacing: false,
             launch_at_login: false,
             auto_check_updates: true,
@@ -821,8 +842,6 @@ impl Default for AppSettings {
             global_shortcut: None,
             log_level: LogLevel::Info,
             notifications: NotificationPreferences::default(),
-            total_spend_metric: TotalSpendMetric::Cost,
-            total_spend_period: UsagePeriodSelection::Today,
             detection_notice_dismissed: false,
         }
     }

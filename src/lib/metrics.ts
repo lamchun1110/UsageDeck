@@ -45,10 +45,6 @@ export class ProviderCatalogIndex {
     return this.provider(id)?.displayName ?? id;
   }
 
-  supportsSpend(id: string) {
-    return this.provider(id)?.metrics.some((metric) => metric.source.kind === 'usage') ?? false;
-  }
-
   supportsApiKeyConfiguration(id: string) {
     return this.#apiKeyProviderIds.has(id);
   }

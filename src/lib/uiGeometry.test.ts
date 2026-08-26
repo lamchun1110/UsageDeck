@@ -53,7 +53,7 @@ describe('popover geometry contract', () => {
       /\.provider-warning::after,[\s\S]*right: 0;[\s\S]*left: auto;[\s\S]*transform-origin: top right;/,
     );
     expect(css).toMatch(
-      /\.total-card__info::after,[\s\S]*right: auto;[\s\S]*left: 0;[\s\S]*transform-origin: top left;/,
+      /\.usage-label-warning::after,[\s\S]*right: auto;[\s\S]*left: 0;[\s\S]*transform-origin: top left;/,
     );
     expect(css).toContain('max-width: min(190px, calc(100vw - 24px))');
     expect(css).toMatch(/\.metric\s*{[^}]*padding: 10px 14px;/s);
@@ -93,9 +93,6 @@ describe('popover geometry contract', () => {
     );
     expect(css).toMatch(
       /:root\[data-density='compact'\] \.screen-cross-link\s*{[^}]*min-height: 42px;/s,
-    );
-    expect(css).toMatch(
-      /:root\[data-density='compact'\] \.spend-ring\s*{[^}]*width: 88px;[^}]*height: 88px;/s,
     );
   });
 

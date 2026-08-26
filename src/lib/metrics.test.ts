@@ -12,8 +12,6 @@ describe('provider catalog index', () => {
       label: 'Session',
       source: { kind: 'quota', sourceId: 'session', sessionWindow: true },
     });
-    expect(catalog.supportsSpend('claude')).toBe(true);
-    expect(catalog.supportsSpend('antigravity')).toBe(false);
     expect(catalog.supportsApiKeyConfiguration('openrouter')).toBe(true);
     expect(catalog.supportsApiKeyConfiguration('codex')).toBe(false);
     expect(catalog.metric('openrouter.balance')).toMatchObject({

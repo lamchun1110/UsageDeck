@@ -1,18 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { codexState, providerCatalogIndex, settingsState } from '../test/appFixtures';
 import { ProviderCatalogIndex } from './metrics';
-import totalSpendSource from './TotalSpend.svelte?raw';
 import {
   buildProviderShareRows as buildProviderShareRowsWithCatalog,
   providerIconPlacement,
   providerShareCardHeight,
-  renderTotalSpendShareCard as renderTotalSpendShareCardWithCatalog,
   SHARE_CARD_SCALE,
   SHARE_CARD_WIDTH,
-  TOTAL_SPEND_GEOMETRY,
-  TOTAL_SPEND_OUTER_PADDING,
-  TOTAL_SPEND_PERIOD_LABELS,
-  totalSpendShareCardHeight,
 } from './shareCard';
 import type { AppSettings, ProviderLayout, ProviderSnapshot } from './types';
 
@@ -24,12 +18,6 @@ function buildProviderShareRows(
   now: number,
 ) {
   return buildProviderShareRowsWithCatalog(providerCatalogIndex, snapshot, layout, settings, now);
-}
-
-function renderTotalSpendShareCard(
-  options: Parameters<typeof renderTotalSpendShareCardWithCatalog>[1],
-) {
-  return renderTotalSpendShareCardWithCatalog(providerCatalogIndex, options);
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -291,88 +279,5 @@ describe('share card layout', () => {
       providerShareCardHeight(rows.slice(0, 1)),
     );
     expect(providerShareCardHeight([])).toBeLessThan(providerShareCardHeight(rows));
-  });
-
-  it('keeps Total Spend to the period switcher and usage body', () => {
-    expect(TOTAL_SPEND_PERIOD_LABELS).toEqual(['Today', 'Yesterday', '30 Days']);
-    expect(TOTAL_SPEND_OUTER_PADDING).toBe(10);
-    expect(TOTAL_SPEND_GEOMETRY).toMatchObject({
-      width: 320,
-      switcherHeight: 27,
-      ringDiameter: 104,
-      legendGap: 18,
-    });
-    expect(totalSpendShareCardHeight()).toBe(187);
-  });
-
-  it('shares the same geometry source with the live Total Spend card', () => {
-    expect(totalSpendSource).toContain("import { TOTAL_SPEND_GEOMETRY } from './shareCard';");
-    expect(totalSpendSource).toContain('--total-switcher-height:');
-    expect(totalSpendSource).toContain('--total-ring-size:');
-    expect(totalSpendSource).toContain('ringSectorPath(segment, TOTAL_SPEND_GEOMETRY)');
-  });
-
-  it('does not add a title, selected-period caption, or marketing footer to Total Spend', () => {
-    const drawn: string[] = [];
-    const context = {
-      scale: vi.fn(),
-      fillRect: vi.fn(),
-      beginPath: vi.fn(),
-      roundRect: vi.fn(),
-      fill: vi.fn(),
-      arc: vi.fn(),
-      moveTo: vi.fn(),
-      lineTo: vi.fn(),
-      quadraticCurveTo: vi.fn(),
-      closePath: vi.fn(),
-      stroke: vi.fn(),
-      measureText: (value: string) => ({ width: value.length * 6 }),
-      fillText: (value: string) => drawn.push(value),
-      textAlign: 'left',
-      textBaseline: 'alphabetic',
-      fillStyle: '',
-      strokeStyle: '',
-      font: '',
-      lineWidth: 1,
-      lineCap: 'butt',
-    };
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
-      context as unknown as CanvasRenderingContext2D,
-    );
-
-    const canvas = renderTotalSpendShareCard({
-      projection: {
-        slices: [
-          {
-            id: 'codex',
-            value: 12,
-            period: {
-              tokens: 1_000_000,
-              estimatedCostUsd: 12,
-              costEstimated: true,
-              estimateComplete: true,
-            },
-          },
-        ],
-        centerValue: 12,
-        costEstimated: true,
-        estimateComplete: true,
-      },
-      metric: 'cost',
-      period: 'last30Days',
-    });
-
-    expect(canvas.width).toBe(TOTAL_SPEND_GEOMETRY.width * SHARE_CARD_SCALE);
-    expect(canvas.height).toBe(totalSpendShareCardHeight() * SHARE_CARD_SCALE);
-    expect(drawn).toEqual(
-      expect.arrayContaining(['Today', 'Yesterday', '30 Days', 'Codex', 'dollars']),
-    );
-    expect(drawn).not.toEqual(
-      expect.arrayContaining([
-        'Cost',
-        'Last 30 Days',
-        'Monitor Your AI Subscriptions with UsageDeck',
-      ]),
-    );
   });
 });

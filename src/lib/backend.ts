@@ -5,6 +5,7 @@ import type {
   AppSettings,
   BootstrapState,
   ProviderApiKeyState,
+  QuotaHistoryByProvider,
   ResetClaimOutcome,
   SettingsViewState,
   UpdateProgress,
@@ -27,6 +28,10 @@ export function getBootstrapState() {
 
 export function refreshUsage() {
   return invoke<UsageViewState>('refresh_usage');
+}
+
+export function quotaHistory() {
+  return invoke<QuotaHistoryByProvider>('quota_history');
 }
 
 export function refreshProviderUsage(providerId: string) {

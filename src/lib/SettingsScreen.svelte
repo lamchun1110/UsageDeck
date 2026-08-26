@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PanelHeightMode } from './backend';
+  import { LANGUAGE_PREFERENCES } from './i18n.svelte';
   import Icon from './Icon.svelte';
   import type { DesktopPlatform } from './platform';
   import SelectMenu from './SelectMenu.svelte';
@@ -139,13 +140,6 @@
   <div class="settings-section">
     <h2>General</h2>
     <label class="setting-row"
-      ><span><b>Show Total Spend</b></span><input
-        type="checkbox"
-        checked={settings.showTotalSpend}
-        onchange={(event) => patch({ showTotalSpend: event.currentTarget.checked })}
-      /></label
-    >
-    <label class="setting-row"
       ><span><b>Launch at Login</b></span><input
         type="checkbox"
         checked={settings.launchAtLogin}
@@ -272,6 +266,14 @@
           { value: 'twentyFourHour', label: '24-hour' },
         ]}
         onChange={(value) => patch({ timeFormat: value as AppSettings['timeFormat'] })}
+      />
+    </div>
+    <div class="setting-row">
+      <span><b>Language</b></span><SelectMenu
+        label="Language"
+        value={settings.language}
+        options={LANGUAGE_PREFERENCES.map(({ value, label }) => ({ value, label }))}
+        onChange={(value) => patch({ language: value as AppSettings['language'] })}
       />
     </div>
   </div>

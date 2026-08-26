@@ -7,6 +7,8 @@
     paceTooltip,
     projectPace,
   } from './pacing';
+  import { sparklinePoints } from './sparkline';
+  import { t } from './i18n.svelte';
   import type { QuotaWindow } from './types';
 
   interface Props {
@@ -17,6 +19,7 @@
     timeFormat: 'system' | 'twelveHour' | 'twentyFourHour';
     alwaysShowPacing: boolean;
     isSessionWindow?: boolean;
+    history?: number[];
     onToggleUsage: () => void;
     onToggleReset: () => void;
   }
@@ -29,42 +32,47 @@
     timeFormat,
     alwaysShowPacing,
     isSessionWindow = false,
+    history,
     onToggleUsage,
     onToggleReset,
   }: Props = $props();
   const used = $derived(Math.min(100, Math.max(0, quota.usedPercent)));
   const remaining = $derived(Math.max(0, 100 - used));
-  const countUnit = $derived(quota.unit?.trim() || 'requests');
-  const estimateNote = $derived(
-    quota.sourceNote?.trim() || 'Estimated from local usage data and may differ from billed usage.',
-  );
+  const countUnit = $derived(quota.unit?.trim() || t('quota.requests'));
+  const usedWord = $derived(t('quota.used'));
+  const leftWord = $derived(t('quota.left'));
+  const estimateNote = $derived(quota.sourceNote?.trim() || t('quota.estimateNote'));
   const reading = $derived.by(() => {
     if (quota.format === 'count' && quota.usedValue !== null && quota.limitValue !== null) {
       const value =
         usageDisplay === 'left' ? Math.max(0, quota.limitValue - quota.usedValue) : quota.usedValue;
-      return `${value.toFixed(0)} ${countUnit} ${usageDisplay}`;
+      return `${value.toFixed(0)} ${countUnit} ${usageDisplay === 'used' ? usedWord : leftWord}`;
     }
     if (quota.format === 'dollars' && quota.usedValue !== null) {
       if (usageDisplay === 'left' && quota.limitValue !== null) {
-        return `$${Math.max(0, quota.limitValue - quota.usedValue).toFixed(2)} left`;
+        return `$${Math.max(0, quota.limitValue - quota.usedValue).toFixed(2)} ${leftWord}`;
       }
-      return `$${quota.usedValue.toFixed(2)} spent`;
+      return `$${quota.usedValue.toFixed(2)} ${t('quota.spent')}`;
     }
-    return `${(usageDisplay === 'used' ? used : remaining).toFixed(0)}% ${usageDisplay}`;
+    return `${(usageDisplay === 'used' ? used : remaining).toFixed(0)}% ${
+      usageDisplay === 'used' ? usedWord : leftWord
+    }`;
   });
   const readingTooltip = $derived.by(() => {
     if (quota.format === 'count' && quota.usedValue !== null && quota.limitValue !== null) {
       const opposite =
         usageDisplay === 'left' ? quota.usedValue : Math.max(0, quota.limitValue - quota.usedValue);
-      return `${opposite.toFixed(0)} ${countUnit} ${usageDisplay === 'left' ? 'used' : 'left'}`;
+      return `${opposite.toFixed(0)} ${countUnit} ${usageDisplay === 'left' ? usedWord : leftWord}`;
     }
     if (quota.format === 'dollars' && quota.usedValue !== null) {
-      if (usageDisplay === 'left') return `$${quota.usedValue.toFixed(2)} spent`;
+      if (usageDisplay === 'left') return `$${quota.usedValue.toFixed(2)} ${t('quota.spent')}`;
       if (quota.limitValue !== null)
-        return `$${Math.max(0, quota.limitValue - quota.usedValue).toFixed(2)} left`;
+        return `$${Math.max(0, quota.limitValue - quota.usedValue).toFixed(2)} ${leftWord}`;
       return null;
     }
-    return usageDisplay === 'left' ? `${used.toFixed(0)}% used` : `${remaining.toFixed(0)}% left`;
+    return usageDisplay === 'left'
+      ? `${used.toFixed(0)}% ${usedWord}`
+      : `${remaining.toFixed(0)}% ${leftWord}`;
   });
   const fillPercent = $derived.by(() => {
     if (
@@ -106,14 +114,16 @@
       (alwaysShowPacing && pace.severity === 'healthy'),
   );
   const paceLabel = $derived.by(() => {
-    if (pace.severity === 'spent') return 'Limit reached';
+    if (pace.severity === 'spent') return t('quota.limitReached');
     if (pace.severity === 'runningOut')
       return pace.runOutAt === null
         ? null
         : formatLimit(pace.runOutAt, now, resetDisplay, timeFormat);
     if (pace.projectedUsedPercent === null) return null;
     const left = Math.max(0, 100 - pace.projectedUsedPercent);
-    return pace.severity === 'close' ? `~${Math.max(1, Math.round(left))}% spare` : paceDetail;
+    return pace.severity === 'close'
+      ? t('quota.spare', { percent: Math.max(1, Math.round(left)) })
+      : paceDetail;
   });
   const paceTickPercent = $derived(
     pace.evenPacePercent === null
@@ -134,7 +144,7 @@
   );
 </script>
 
-<section class="metric" aria-label={`${quota.label} quota`}>
+<section class="metric" aria-label={t('quota.sectionAria', { label: quota.label })}>
   <div class="metric__heading">
     <h2>
       {quota.label}
@@ -142,7 +152,7 @@
         <span
           class="metric-estimate"
           data-tooltip={estimateNote}
-          aria-label="Estimated quota"
+          aria-label={t('quota.estimated')}
           role="img"><Icon name="about" size={11} strokeWidth={1.9} /></span
         >
       {/if}
@@ -164,7 +174,9 @@
           <span
             class="pace-warning"
             data-tooltip={paceDetail ?? undefined}
-            aria-label={pace.severity === 'spent' ? 'Limit reached' : 'Will reach limit'}
+            aria-label={pace.severity === 'spent'
+              ? t('quota.limitReached')
+              : t('quota.willReachLimit')}
             ><span class="pace-warning__icon"
               ><Icon name="flame-filled" size={11} strokeWidth={1.8} /></span
             >{paceLabel ?? ''}</span
@@ -182,7 +194,7 @@
     <div
       class="meter meter--{severity}"
       role="progressbar"
-      aria-label={`${quota.label} used`}
+      aria-label={t('quota.usedAria', { label: quota.label })}
       aria-valuemin="0"
       aria-valuemax="100"
       aria-valuenow={used}
@@ -207,11 +219,22 @@
       {reading}
     </button>
     {#if freshSession}
-      <span data-tooltip="Sessions start after you send your first message.">Not started</span>
+      <span data-tooltip={t('quota.sessionHint')}>{t('quota.notStarted')}</span>
     {:else}
       <button type="button" data-tooltip={resetTooltip ?? undefined} onclick={onToggleReset}>
         {formatReset(quota.resetsAt, now, resetDisplay, timeFormat)}
       </button>
+    {/if}
+    {#if history && history.length >= 2}
+      <span
+        class="metric__sparkline"
+        data-tooltip={t('quota.historyTooltip', { days: history.length })}
+        aria-hidden="true"
+      >
+        <svg viewBox="0 0 56 16" preserveAspectRatio="none">
+          <polyline points={sparklinePoints(history)} />
+        </svg>
+      </span>
     {/if}
   </div>
 </section>
@@ -293,6 +316,28 @@
     .metric__reading strong {
       color: var(--text);
       font-weight: 450;
+    }
+
+    .metric__reading .metric__sparkline {
+      display: inline-flex;
+      width: 56px;
+      height: 16px;
+      color: var(--secondary);
+    }
+
+    .metric__reading .metric__sparkline svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .metric__reading .metric__sparkline polyline {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.25;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+      opacity: 0.85;
     }
 
     .metric__reading button {

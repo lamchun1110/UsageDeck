@@ -29,6 +29,19 @@ impl LogFileFingerprint {
     }
 }
 
+/// Aggregation keeps only the trailing 30 days, so a log untouched for longer cannot contribute
+/// any event; discovery skips it so long-lived installs do not re-parse years of session files on
+/// every refresh. The slack covers clock skew and timezone drift; unreadable metadata keeps the
+/// file (and its cached history) in play rather than silently dropping it.
+pub fn log_file_can_contribute(path: &Path) -> bool {
+    let cutoff = SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(35 * 24 * 60 * 60))
+        .unwrap_or(UNIX_EPOCH);
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map_or(true, |modified| modified >= cutoff)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum LogCacheError {
     #[error(transparent)]
@@ -256,6 +269,17 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         }
+    }
+
+    #[test]
+    fn log_file_freshness_keeps_fresh_and_unreadable_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let fresh = directory.path().join("fresh.jsonl");
+        std::fs::write(&fresh, "{}").unwrap();
+        assert!(super::log_file_can_contribute(&fresh));
+        assert!(super::log_file_can_contribute(
+            &directory.path().join("missing.jsonl")
+        ));
     }
 
     #[test]

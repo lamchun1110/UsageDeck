@@ -14,15 +14,13 @@
   }
 
   .provider-section + .provider-section,
-  .provider-reorder-shell + .provider-reorder-shell,
-  .total-spend-section + .provider-section,
-  .total-spend-section + .provider-reorder-shell {
+  .provider-reorder-shell + .provider-reorder-shell {
     margin-top: 14px;
   }
 
   /* Floating window only grows wider than the tray popup. When it does, lay the dashboard out as a
      responsive two-column grid so many subscriptions stay visible without scrolling. Banners and
-     the total-spend summary still span the full width. */
+     the usage summary still span the full width. */
   @media (min-width: 480px) {
     .screen-page[data-screen='dashboard'] {
       display: grid;
@@ -114,7 +112,6 @@
   }
 
   .provider-warning::after,
-  .total-card__share::after,
   .screen-header > :last-child[data-tooltip]::after {
     right: 0;
     left: auto;
@@ -124,14 +121,11 @@
 
   .provider-warning:hover::after,
   .provider-warning:focus-visible::after,
-  .total-card__share:hover::after,
-  .total-card__share:focus-visible::after,
   .screen-header > :last-child[data-tooltip]:hover::after,
   .screen-header > :last-child[data-tooltip]:focus-visible::after {
     transform: translate(0, 0) scale(1);
   }
 
-  .total-card__info::after,
   .usage-label-warning::after,
   .screen-header > :first-child[data-tooltip]::after {
     right: auto;
@@ -140,8 +134,6 @@
     transform-origin: top left;
   }
 
-  .total-card__info:hover::after,
-  .total-card__info:focus-visible::after,
   .usage-label-warning:hover::after,
   .usage-label-warning:focus-visible::after,
   .screen-header > :first-child[data-tooltip]:hover::after,
@@ -310,15 +302,12 @@
 
   :root[data-density='compact'] .provider-section + .provider-section,
   :root[data-density='compact'] .provider-reorder-shell + .provider-reorder-shell,
-  :root[data-density='compact'] .total-spend-section + .provider-section,
-  :root[data-density='compact'] .total-spend-section + .provider-reorder-shell,
   :root[data-density='compact'] .settings-section {
     margin-top: 0;
     margin-bottom: 8px;
   }
 
-  :root[data-density='compact'] .provider-header,
-  :root[data-density='compact'] .total-card__header {
+  :root[data-density='compact'] .provider-header {
     margin-bottom: 2px;
   }
 
@@ -360,7 +349,6 @@
 
   @media (prefers-reduced-motion: no-preference) {
     .provider-card,
-    .total-card,
     .detection-card,
     .settings-section,
     .customize-list,

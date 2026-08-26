@@ -65,20 +65,32 @@ use crate::{
 fn install_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     let menu = {
+        let refresh = MenuItem::with_id(app, "refresh", "Refresh Now", true, None::<&str>)?;
         let settings_item =
             MenuItem::with_id(app, "settings", "Settings", true, Some("CmdOrCtrl+,"))?;
         let separator = PredefinedMenuItem::separator(app)?;
         let quit = MenuItem::with_id(app, "quit", "Quit UsageDeck", true, Some("CmdOrCtrl+Q"))?;
-        Menu::with_items(app, &[&settings_item, &separator, &quit])?
+        Menu::with_items(app, &[&refresh, &settings_item, &separator, &quit])?
     };
     #[cfg(not(target_os = "macos"))]
     let menu = {
         let open = MenuItem::with_id(app, "open", "Open UsageDeck", true, None::<&str>)?;
+        let refresh = MenuItem::with_id(app, "refresh", "Refresh Now", true, None::<&str>)?;
         let customize = MenuItem::with_id(app, "customize", "Customize…", true, None::<&str>)?;
         let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
         let separator = PredefinedMenuItem::separator(app)?;
         let quit = MenuItem::with_id(app, "quit", "Quit UsageDeck", true, None::<&str>)?;
-        Menu::with_items(app, &[&open, &customize, &settings_item, &separator, &quit])?
+        Menu::with_items(
+            app,
+            &[
+                &open,
+                &refresh,
+                &customize,
+                &settings_item,
+                &separator,
+                &quit,
+            ],
+        )?
     };
 
     let icon = app
@@ -96,6 +108,21 @@ fn install_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
                 show_main_window(&window);
             }
+        }
+        "refresh" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let service = app.state::<Arc<ProviderService>>().inner().clone();
+                let settings = app.state::<Arc<SettingsService>>().inner().clone();
+                let notifications = app.state::<Arc<NotificationEvaluator>>().inner().clone();
+                crate::commands::usage::run_forced_refresh(
+                    &app,
+                    &service,
+                    &settings,
+                    &notifications,
+                )
+                .await;
+            });
         }
         "customize" => open_screen(app, "customize"),
         "settings" => open_screen(app, "settings"),
@@ -514,6 +541,7 @@ pub fn run() {
             commands::usage::refresh_usage,
             commands::usage::refresh_provider_usage,
             commands::usage::claim_codex_reset_credit,
+            commands::usage::quota_history,
             commands::settings::get_app_settings,
             commands::settings::save_app_settings,
             commands::settings::reset_customization,
