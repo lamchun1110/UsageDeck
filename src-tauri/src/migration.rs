@@ -8,6 +8,12 @@
 //! credentials in the OS credential store. The legacy locations are never
 //! modified beyond deleting migrated API-key entries after their replacement is
 //! confirmed written.
+//!
+//! Reading a credential-store entry owned by another application makes macOS ask
+//! the user to unlock it, so the API-key pass is guarded twice: it probes for the
+//! legacy service with a prompt-free metadata search first, and it records a
+//! marker file before touching the legacy entry so the consent prompt can appear
+//! at most once per data directory — a denied or failed attempt is never retried.
 
 use std::{
     fs,
@@ -15,12 +21,14 @@ use std::{
 };
 
 use crate::providers::credential_store::{
-    delete_owned_password, read_owned_password, write_owned_password,
+    delete_owned_password, generic_password_service_exists, read_owned_password,
+    write_owned_password,
 };
 
 const LEGACY_IDENTIFIER: &str = "io.github.deviffyy.openquota";
 const LEGACY_API_KEY_SERVICE: &str = "io.github.deviffyy.openquota.api-key";
 const API_KEY_SERVICE: &str = "com.lamchun1110.usagedeck.api-key";
+const LEGACY_KEY_MIGRATION_MARKER: &str = "legacy-api-key-migration.attempted";
 const DATABASE_FILE: &str = "openquota.db";
 const DATA_DIRECTORY_ITEMS: &[&str] = &["pricing", "antigravity"];
 /// Provider ids that can hold a saved API key. Keep in sync with the
@@ -168,6 +176,11 @@ pub(crate) trait CredentialMigrator: Sync {
     fn read(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, String>;
     fn write(&self, service: &str, account: &str, value: &[u8]) -> Result<(), String>;
     fn delete(&self, service: &str, account: &str) -> Result<(), String>;
+    /// Prompt-free probe for whether any entry exists under `service`. `None`
+    /// means the answer is unknown and the caller must not rely on it.
+    fn service_exists(&self, _service: &str) -> Option<bool> {
+        None
+    }
 }
 
 struct SystemCredentialMigrator;
@@ -184,15 +197,41 @@ impl CredentialMigrator for SystemCredentialMigrator {
     fn delete(&self, service: &str, account: &str) -> Result<(), String> {
         delete_owned_password(service, account)
     }
+
+    fn service_exists(&self, service: &str) -> Option<bool> {
+        generic_password_service_exists(service, std::time::Duration::from_secs(2))
+    }
 }
 
 /// Moves saved API keys from the legacy credential-store service to the new one.
-pub fn migrate_api_keys() -> ApiKeyMigrationOutcome {
-    migrate_api_keys_with(&SystemCredentialMigrator)
+pub fn migrate_api_keys(app_data_dir: &Path) -> ApiKeyMigrationOutcome {
+    migrate_api_keys_in(app_data_dir, &SystemCredentialMigrator)
+}
+
+fn migrate_api_keys_in(
+    app_data_dir: &Path,
+    migrator: &dyn CredentialMigrator,
+) -> ApiKeyMigrationOutcome {
+    let marker = app_data_dir.join(LEGACY_KEY_MIGRATION_MARKER);
+    if marker.is_file() {
+        return ApiKeyMigrationOutcome::default();
+    }
+    // Record the attempt before touching the legacy store: the consent prompt must
+    // be shown at most once, even if this pass is interrupted midway.
+    if let Some(parent) = marker.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&marker, b"attempted");
+    migrate_api_keys_with(migrator)
 }
 
 fn migrate_api_keys_with(migrator: &dyn CredentialMigrator) -> ApiKeyMigrationOutcome {
     let mut outcome = ApiKeyMigrationOutcome::default();
+    // Reading an entry owned by another application can ask the user for consent,
+    // so only go looking when the legacy service actually holds something.
+    if migrator.service_exists(LEGACY_API_KEY_SERVICE) == Some(false) {
+        return outcome;
+    }
     for account in API_KEY_ACCOUNTS {
         match migrator.read(API_KEY_SERVICE, account) {
             // Already present under the new service: nothing to do.
@@ -240,8 +279,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        migrate_api_keys_with, migrate_app_data_from, CredentialMigrator, API_KEY_ACCOUNTS,
-        API_KEY_SERVICE, LEGACY_API_KEY_SERVICE,
+        migrate_api_keys_in, migrate_api_keys_with, migrate_app_data_from, ApiKeyMigrationOutcome,
+        CredentialMigrator, API_KEY_ACCOUNTS, API_KEY_SERVICE, LEGACY_API_KEY_SERVICE,
+        LEGACY_KEY_MIGRATION_MARKER,
     };
 
     #[test]
@@ -311,6 +351,7 @@ mod tests {
     struct MemoryMigrator {
         store: Mutex<HashMap<(String, String), Vec<u8>>>,
         fail_writes_for: Vec<String>,
+        service_absent: bool,
     }
 
     impl MemoryMigrator {
@@ -346,6 +387,10 @@ mod tests {
                 .unwrap()
                 .remove(&(service.to_owned(), account.to_owned()));
             Ok(())
+        }
+
+        fn service_exists(&self, _service: &str) -> Option<bool> {
+            Some(!self.service_absent)
         }
     }
 
@@ -427,5 +472,61 @@ mod tests {
     #[test]
     fn every_known_account_is_considered() {
         assert_eq!(API_KEY_ACCOUNTS.len(), 4);
+    }
+
+    #[test]
+    fn a_prior_attempt_marker_prevents_any_legacy_access() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join(LEGACY_KEY_MIGRATION_MARKER), b"attempted").unwrap();
+        let migrator = MemoryMigrator::default();
+        migrator.put(LEGACY_API_KEY_SERVICE, "kimi", b"legacy");
+
+        let outcome = migrate_api_keys_in(dir.path(), &migrator);
+
+        assert_eq!(outcome, ApiKeyMigrationOutcome::default());
+        let store = migrator.store.lock().unwrap();
+        assert!(store.contains_key(&(LEGACY_API_KEY_SERVICE.to_owned(), "kimi".to_owned())));
+        assert!(!store.contains_key(&(API_KEY_SERVICE.to_owned(), "kimi".to_owned())));
+    }
+
+    #[test]
+    fn a_failed_attempt_is_recorded_and_never_retried() {
+        let dir = tempdir().unwrap();
+        let mut migrator = MemoryMigrator::default();
+        migrator.put(LEGACY_API_KEY_SERVICE, "minimax", b"precious");
+        migrator.fail_writes_for.push("minimax".to_owned());
+
+        let first = migrate_api_keys_in(dir.path(), &migrator);
+        assert_eq!(first.failures.len(), 1);
+        assert!(dir.path().join(LEGACY_KEY_MIGRATION_MARKER).is_file());
+
+        migrator.fail_writes_for.clear();
+        let second = migrate_api_keys_in(dir.path(), &migrator);
+        assert_eq!(second, ApiKeyMigrationOutcome::default());
+        let store = migrator.store.lock().unwrap();
+        assert_eq!(
+            store
+                .get(&(LEGACY_API_KEY_SERVICE.to_owned(), "minimax".to_owned()))
+                .map(Vec::as_slice),
+            Some(b"precious".as_slice())
+        );
+    }
+
+    #[test]
+    fn does_not_read_accounts_when_the_legacy_service_is_missing() {
+        let dir = tempdir().unwrap();
+        let migrator = MemoryMigrator {
+            service_absent: true,
+            ..MemoryMigrator::default()
+        };
+        migrator.put(LEGACY_API_KEY_SERVICE, "kimi", b"legacy");
+
+        let outcome = migrate_api_keys_in(dir.path(), &migrator);
+
+        assert_eq!(outcome, ApiKeyMigrationOutcome::default());
+        assert!(dir.path().join(LEGACY_KEY_MIGRATION_MARKER).is_file());
+        let store = migrator.store.lock().unwrap();
+        assert!(store.contains_key(&(LEGACY_API_KEY_SERVICE.to_owned(), "kimi".to_owned())));
+        assert!(!store.contains_key(&(API_KEY_SERVICE.to_owned(), "kimi".to_owned())));
     }
 }

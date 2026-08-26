@@ -368,7 +368,7 @@ pub fn run() {
             for error in &data_migration.errors {
                 app_warn!("lifecycle", "legacy data migration issue: {error}");
             }
-            let key_migration = migration::migrate_api_keys();
+            let key_migration = migration::migrate_api_keys(&app_data_dir);
             if !key_migration.migrated.is_empty() {
                 app_info!(
                     "lifecycle",
