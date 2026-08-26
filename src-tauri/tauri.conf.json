@@ -60,7 +60,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklERTFNell3TkRNNU9EUXpPVEZETnpZS1VsZFNNa2hFYlVWUFVWRXlSbVJTWlZOa00yMVVUbGg1TjBwNFMyOW5ZMk5QV0ZveVQxVm9lVmh1ZDJScGFsaGhkemxDYlRCRE1WY0s=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE1MzYwNDM5ODQzOTFDNzYKUldSMkhEbUVPUVEyRmRSZVNkM21UTlh5N0p4S29nY2NPWFoyT1VoeVhud2RpalhhdzlCbTBDMVcK",
       "endpoints": ["https://github.com/lamchun1110/UsageDeck/releases/latest/download/latest.json"]
     }
   }
