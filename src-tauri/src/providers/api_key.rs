@@ -5,7 +5,10 @@ use zeroize::Zeroizing;
 
 use super::credential_store::{delete_owned_password, read_owned_password, write_owned_password};
 
-const SERVICE: &str = "com.lamchun1110.usagedeck.api-key";
+/// The credential-store service the saved keys live under. This is the name macOS
+/// shows in its keychain consent prompt and Keychain Access, so it is a friendly
+/// product name rather than a reverse-DNS identifier.
+pub(crate) const SERVICE: &str = "UsageDeck";
 
 pub struct SecretBytes(Zeroizing<Vec<u8>>);
 

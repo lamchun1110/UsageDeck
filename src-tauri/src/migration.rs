@@ -11,24 +11,32 @@
 //!
 //! Reading a credential-store entry owned by another application makes macOS ask
 //! the user to unlock it, so the API-key pass is guarded twice: it probes for the
-//! legacy service with a prompt-free metadata search first, and it records a
-//! marker file before touching the legacy entry so the consent prompt can appear
-//! at most once per data directory — a denied or failed attempt is never retried.
+//! legacy services with a prompt-free metadata search first, and it records a
+//! marker file before touching any legacy entry so the consent prompt can appear
+//! at most once per marker version — a denied or failed attempt is never retried.
 
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-use crate::providers::credential_store::{
-    delete_owned_password, generic_password_service_exists, read_owned_password,
-    write_owned_password,
+use crate::providers::{
+    api_key::SERVICE as API_KEY_SERVICE,
+    credential_store::{
+        delete_owned_password, generic_password_service_exists, read_owned_password,
+        write_owned_password,
+    },
 };
 
 const LEGACY_IDENTIFIER: &str = "io.github.deviffyy.openquota";
 const LEGACY_API_KEY_SERVICE: &str = "io.github.deviffyy.openquota.api-key";
-const API_KEY_SERVICE: &str = "com.lamchun1110.usagedeck.api-key";
-const LEGACY_KEY_MIGRATION_MARKER: &str = "legacy-api-key-migration.attempted";
+/// The service name UsageDeck itself used before it was renamed to the friendly
+/// display name it shows today. Keys saved under it fold into `API_KEY_SERVICE`.
+const PRIOR_API_KEY_SERVICE: &str = "com.lamchun1110.usagedeck.api-key";
+const LEGACY_API_KEY_SERVICES: &[&str] = &[LEGACY_API_KEY_SERVICE, PRIOR_API_KEY_SERVICE];
+/// v2 re-runs the pass once on installs that already recorded the v1 marker, so
+/// keys saved under the reverse-DNS service name are folded into the renamed one.
+const LEGACY_KEY_MIGRATION_MARKER: &str = "legacy-api-key-migration.v2.attempted";
 const DATABASE_FILE: &str = "openquota.db";
 const DATA_DIRECTORY_ITEMS: &[&str] = &["pricing", "antigravity"];
 /// Provider ids that can hold a saved API key. Keep in sync with the
@@ -228,13 +236,16 @@ fn migrate_api_keys_in(
 fn migrate_api_keys_with(migrator: &dyn CredentialMigrator) -> ApiKeyMigrationOutcome {
     let mut outcome = ApiKeyMigrationOutcome::default();
     // Reading an entry owned by another application can ask the user for consent,
-    // so only go looking when the legacy service actually holds something.
-    if migrator.service_exists(LEGACY_API_KEY_SERVICE) == Some(false) {
+    // so only go looking when a legacy service actually holds something.
+    if LEGACY_API_KEY_SERVICES
+        .iter()
+        .all(|service| migrator.service_exists(service) == Some(false))
+    {
         return outcome;
     }
     for account in API_KEY_ACCOUNTS {
         match migrator.read(API_KEY_SERVICE, account) {
-            // Already present under the new service: nothing to do.
+            // Already present under the current service: nothing to do.
             Ok(Some(_)) => continue,
             Ok(None) => {}
             Err(error) => {
@@ -244,15 +255,29 @@ fn migrate_api_keys_with(migrator: &dyn CredentialMigrator) -> ApiKeyMigrationOu
                 continue;
             }
         }
-        let value = match migrator.read(LEGACY_API_KEY_SERVICE, account) {
-            Ok(Some(value)) => value,
-            Ok(None) => continue,
-            Err(error) => {
-                outcome
-                    .failures
-                    .push(((*account).to_owned(), format!("legacy read: {error}")));
-                continue;
+        // Walk the prior service names oldest-first and stop at the first hit or
+        // failure; probing another service after a denied read would only surface
+        // one more consent prompt.
+        let mut found: Option<(&str, Vec<u8>)> = None;
+        let mut read_failure: Option<String> = None;
+        for service in LEGACY_API_KEY_SERVICES {
+            match migrator.read(service, account) {
+                Ok(Some(value)) => {
+                    found = Some((service, value));
+                    break;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    read_failure = Some(format!("legacy read ({service}): {error}"));
+                    break;
+                }
             }
+        }
+        let Some((source_service, value)) = found else {
+            if let Some(error) = read_failure {
+                outcome.failures.push(((*account).to_owned(), error));
+            }
+            continue;
         };
         if let Err(error) = migrator.write(API_KEY_SERVICE, account, &value) {
             outcome
@@ -260,8 +285,8 @@ fn migrate_api_keys_with(migrator: &dyn CredentialMigrator) -> ApiKeyMigrationOu
                 .push(((*account).to_owned(), format!("write: {error}")));
             continue;
         }
-        // Only remove the legacy entry once its replacement is confirmed.
-        if let Err(error) = migrator.delete(LEGACY_API_KEY_SERVICE, account) {
+        // Only remove the source entry once its replacement is confirmed.
+        if let Err(error) = migrator.delete(source_service, account) {
             outcome
                 .failures
                 .push(((*account).to_owned(), format!("cleanup: {error}")));
@@ -281,7 +306,7 @@ mod tests {
     use super::{
         migrate_api_keys_in, migrate_api_keys_with, migrate_app_data_from, ApiKeyMigrationOutcome,
         CredentialMigrator, API_KEY_ACCOUNTS, API_KEY_SERVICE, LEGACY_API_KEY_SERVICE,
-        LEGACY_KEY_MIGRATION_MARKER,
+        LEGACY_KEY_MIGRATION_MARKER, PRIOR_API_KEY_SERVICE,
     };
 
     #[test]
@@ -528,5 +553,24 @@ mod tests {
         let store = migrator.store.lock().unwrap();
         assert!(store.contains_key(&(LEGACY_API_KEY_SERVICE.to_owned(), "kimi".to_owned())));
         assert!(!store.contains_key(&(API_KEY_SERVICE.to_owned(), "kimi".to_owned())));
+    }
+
+    #[test]
+    fn folds_keys_saved_under_the_prior_usagedeck_service() {
+        let migrator = MemoryMigrator::default();
+        migrator.put(PRIOR_API_KEY_SERVICE, "kimi", b"prior-key");
+
+        let outcome = migrate_api_keys_with(&migrator);
+
+        assert_eq!(outcome.migrated, vec!["kimi".to_owned()]);
+        assert!(outcome.failures.is_empty());
+        let store = migrator.store.lock().unwrap();
+        assert_eq!(
+            store
+                .get(&(API_KEY_SERVICE.to_owned(), "kimi".to_owned()))
+                .map(Vec::as_slice),
+            Some(b"prior-key".as_slice())
+        );
+        assert!(!store.contains_key(&(PRIOR_API_KEY_SERVICE.to_owned(), "kimi".to_owned())));
     }
 }
