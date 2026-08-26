@@ -47,7 +47,7 @@
 
   .meter {
     position: relative;
-    height: 5px;
+    height: 6px;
     margin: 6px 0 5px;
     overflow: hidden;
     border-radius: 999px;
@@ -56,7 +56,7 @@
 
   .meter-shell {
     position: relative;
-    height: 5px;
+    height: 6px;
     margin: 6px 0 5px;
   }
 
@@ -102,8 +102,10 @@
   .customize-list,
   .metric-list {
     overflow: hidden;
-    border-radius: 11px;
+    border: 1px solid var(--surface-border);
+    border-radius: 14px;
     background: var(--card);
+    box-shadow: var(--shadow-card);
   }
 
   .settings-section h2,

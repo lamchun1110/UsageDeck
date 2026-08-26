@@ -1239,6 +1239,23 @@
       background: color-mix(in srgb, var(--text) 3%, var(--tray));
     }
 
+    /* UsageDeck signature detail: an iris gradient hairline under the window chrome. */
+    .floating-chrome::after {
+      position: absolute;
+      right: 0;
+      bottom: -1px;
+      left: 0;
+      height: 1px;
+      background: linear-gradient(
+        90deg,
+        transparent,
+        color-mix(in srgb, var(--accent) 60%, transparent),
+        transparent
+      );
+      content: '';
+      pointer-events: none;
+    }
+
     .floating-chrome__drag {
       grid-row: 1;
       grid-column: 1 / -1;
@@ -1397,9 +1414,18 @@
     .identity {
       display: flex;
       flex-direction: column;
+      padding: 4px 7px;
+      margin: -4px -7px;
+      border-radius: 8px;
       color: var(--secondary);
       font-size: 10px;
       line-height: 14px;
+      transition: background-color 120ms ease;
+    }
+
+    .identity:hover:not(:disabled),
+    .identity:focus-visible {
+      background: var(--button-hover);
     }
 
     .identity small {
@@ -1822,7 +1848,7 @@
     }
 
     .transient-pill .symbol-icon {
-      color: #34c759;
+      color: var(--success);
     }
 
     .about-backdrop {

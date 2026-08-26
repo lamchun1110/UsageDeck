@@ -302,7 +302,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #34c759;
+    background: var(--success);
   }
 
   .api-key-summary i.missing {

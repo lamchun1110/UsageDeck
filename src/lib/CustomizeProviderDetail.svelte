@@ -326,7 +326,7 @@
     }
 
     .customization-pill .symbol-icon {
-      color: #34c759;
+      color: var(--success);
     }
 
     .customization-pill.denied {

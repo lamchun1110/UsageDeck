@@ -8,23 +8,34 @@
       BlinkMacSystemFont,
       'Segoe UI',
       sans-serif;
-    color: #171719;
+    color: #1a1a1f;
     background: transparent;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
-    --tray: #ffffff;
-    --card: color-mix(in srgb, var(--text) 5%, var(--tray));
-    --card-hover: color-mix(in srgb, var(--text) 8%, var(--tray));
-    --text: #171719;
-    --secondary: #727278;
-    --tertiary: #a5a5aa;
-    --meter-track: color-mix(in srgb, var(--text) 14%, var(--tray));
-    --meter-fill: #1689ef;
+    /* UsageDeck identity: layered surfaces with hairline borders instead of the
+       flat gray-on-gray cards shared with upstream projects. */
+    --tray: #f3f3f6;
+    --card: #ffffff;
+    --card-hover: #fafafb;
+    --surface-border: rgba(23, 23, 31, 0.08);
+    --text: #1a1a1f;
+    --secondary: #6e6e78;
+    --tertiary: #a4a4ae;
+    --meter-track: rgba(23, 23, 31, 0.09);
+    /* Iris accent ramp — UsageDeck's own signature, replacing upstream blue. */
+    --accent: #6d5ae6;
+    --accent-strong: #5b48d0;
+    --accent-soft: rgba(109, 90, 230, 0.12);
+    --meter-fill: var(--accent);
     --meter-warning: #e5a400;
     --meter-critical: #e3483f;
-    --provider: #10a37f;
+    --success: #1f9d61;
+    --provider: var(--accent);
     --provider-codex: #10a37f;
     --provider-claude: #de7356;
+    --provider-commandcode: #6a5cff;
+    --provider-kimi: #1783ff;
+    --provider-minimax: #e2167e;
     --provider-antigravity: #4285f4;
     --provider-copilot: #a855f7;
     --provider-cursor: #13120a;
@@ -32,8 +43,10 @@
     --provider-opencode: #6e6e73;
     --provider-openrouter: #6467f2;
     --provider-zai: #2d2d2d;
-    --separator: color-mix(in srgb, var(--text) 9%, transparent);
-    --button-hover: color-mix(in srgb, var(--text) 8%, transparent);
+    --separator: rgba(23, 23, 31, 0.09);
+    --button-hover: rgba(23, 23, 31, 0.07);
+    --shadow-card: 0 1px 2px rgba(16, 16, 24, 0.04), 0 4px 14px -8px rgba(16, 16, 24, 0.1);
+    --shadow-card-hover: 0 2px 4px rgba(16, 16, 24, 0.05), 0 10px 24px -10px rgba(16, 16, 24, 0.16);
     --warning: #a85d00;
     --warning-bg: #fff4df;
     --error: #b42318;
@@ -46,23 +59,30 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --tray: #1d1d1f;
-    --card: color-mix(in srgb, var(--text) 5%, var(--tray));
-    --card-hover: color-mix(in srgb, var(--text) 8%, var(--tray));
-    --text: #f4f4f5;
-    --secondary: #a7a7ad;
-    --tertiary: #707077;
-    --meter-track: color-mix(in srgb, var(--text) 14%, var(--tray));
-    --meter-fill: #2997ff;
+    --tray: #131316;
+    --card: #1c1c21;
+    --card-hover: #232329;
+    --surface-border: rgba(255, 255, 255, 0.09);
+    --text: #f2f2f5;
+    --secondary: #a7a7b0;
+    --tertiary: #6c6c75;
+    --meter-track: rgba(255, 255, 255, 0.1);
+    --accent: #8f7ff0;
+    --accent-strong: #a99bf5;
+    --accent-soft: rgba(143, 127, 240, 0.16);
+    --meter-fill: var(--accent);
     --meter-warning: #ffd54a;
     --meter-critical: #ff6961;
-    --provider: #19c39a;
+    --success: #4cc38a;
+    --provider: var(--accent);
     --provider-cursor: #f5f5f7;
     --provider-grok: #98989d;
     --provider-opencode: #aeaeb2;
     --provider-zai: #d1d1d6;
-    --separator: color-mix(in srgb, var(--text) 9%, transparent);
-    --button-hover: color-mix(in srgb, var(--text) 8%, transparent);
+    --separator: rgba(255, 255, 255, 0.09);
+    --button-hover: rgba(255, 255, 255, 0.08);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px -10px rgba(0, 0, 0, 0.5);
+    --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.35), 0 12px 28px -12px rgba(0, 0, 0, 0.6);
     --warning: #ffb95c;
     --warning-bg: #3b2e1e;
     --error: #ff8f86;
@@ -72,23 +92,30 @@
 }
 
 :root[data-theme='light'] {
-  --tray: #ffffff;
-  --card: color-mix(in srgb, var(--text) 5%, var(--tray));
-  --card-hover: color-mix(in srgb, var(--text) 8%, var(--tray));
-  --text: #171719;
-  --secondary: #727278;
-  --tertiary: #a5a5aa;
-  --meter-track: color-mix(in srgb, var(--text) 14%, var(--tray));
-  --meter-fill: #1689ef;
+  --tray: #f3f3f6;
+  --card: #ffffff;
+  --card-hover: #fafafb;
+  --surface-border: rgba(23, 23, 31, 0.08);
+  --text: #1a1a1f;
+  --secondary: #6e6e78;
+  --tertiary: #a4a4ae;
+  --meter-track: rgba(23, 23, 31, 0.09);
+  --accent: #6d5ae6;
+  --accent-strong: #5b48d0;
+  --accent-soft: rgba(109, 90, 230, 0.12);
+  --meter-fill: var(--accent);
   --meter-warning: #e5a400;
   --meter-critical: #e3483f;
-  --provider: #10a37f;
+  --success: #1f9d61;
+  --provider: var(--accent);
   --provider-cursor: #13120a;
   --provider-grok: #8e8e93;
   --provider-opencode: #6e6e73;
   --provider-zai: #2d2d2d;
-  --separator: color-mix(in srgb, var(--text) 9%, transparent);
-  --button-hover: color-mix(in srgb, var(--text) 8%, transparent);
+  --separator: rgba(23, 23, 31, 0.09);
+  --button-hover: rgba(23, 23, 31, 0.07);
+  --shadow-card: 0 1px 2px rgba(16, 16, 24, 0.04), 0 4px 14px -8px rgba(16, 16, 24, 0.1);
+  --shadow-card-hover: 0 2px 4px rgba(16, 16, 24, 0.05), 0 10px 24px -10px rgba(16, 16, 24, 0.16);
   --warning: #a85d00;
   --warning-bg: #fff4df;
   --error: #b42318;
@@ -97,23 +124,30 @@
 }
 
 :root[data-theme='dark'] {
-  --tray: #1d1d1f;
-  --card: color-mix(in srgb, var(--text) 5%, var(--tray));
-  --card-hover: color-mix(in srgb, var(--text) 8%, var(--tray));
-  --text: #f4f4f5;
-  --secondary: #a7a7ad;
-  --tertiary: #707077;
-  --meter-track: color-mix(in srgb, var(--text) 14%, var(--tray));
-  --meter-fill: #2997ff;
+  --tray: #131316;
+  --card: #1c1c21;
+  --card-hover: #232329;
+  --surface-border: rgba(255, 255, 255, 0.09);
+  --text: #f2f2f5;
+  --secondary: #a7a7b0;
+  --tertiary: #6c6c75;
+  --meter-track: rgba(255, 255, 255, 0.1);
+  --accent: #8f7ff0;
+  --accent-strong: #a99bf5;
+  --accent-soft: rgba(143, 127, 240, 0.16);
+  --meter-fill: var(--accent);
   --meter-warning: #ffd54a;
   --meter-critical: #ff6961;
-  --provider: #19c39a;
+  --success: #4cc38a;
+  --provider: var(--accent);
   --provider-cursor: #f5f5f7;
   --provider-grok: #98989d;
   --provider-opencode: #aeaeb2;
   --provider-zai: #d1d1d6;
-  --separator: color-mix(in srgb, var(--text) 9%, transparent);
-  --button-hover: color-mix(in srgb, var(--text) 8%, transparent);
+  --separator: rgba(255, 255, 255, 0.09);
+  --button-hover: rgba(255, 255, 255, 0.08);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px -10px rgba(0, 0, 0, 0.5);
+  --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.35), 0 12px 28px -12px rgba(0, 0, 0, 0.6);
   --warning: #ffb95c;
   --warning-bg: #3b2e1e;
   --error: #ff8f86;

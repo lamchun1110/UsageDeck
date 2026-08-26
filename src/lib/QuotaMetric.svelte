@@ -248,7 +248,11 @@
       inset: 0 auto 0 0;
       width: 0;
       border-radius: inherit;
-      background: var(--meter-fill);
+      background: linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--card-accent, var(--meter-fill)) 66%, transparent),
+        var(--card-accent, var(--meter-fill))
+      );
       transition:
         width var(--motion-switch),
         background-color var(--motion-switch);
@@ -259,11 +263,20 @@
     }
 
     .meter--warning .meter__fill {
-      background: var(--meter-warning);
+      background: linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--meter-warning) 66%, transparent),
+        var(--meter-warning)
+      );
     }
 
     .meter--critical .meter__fill {
-      background: var(--meter-critical);
+      background: linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--meter-critical) 66%, transparent),
+        var(--meter-critical)
+      );
+      box-shadow: 0 0 8px color-mix(in srgb, var(--meter-critical) 38%, transparent);
     }
 
     .meter__pace {

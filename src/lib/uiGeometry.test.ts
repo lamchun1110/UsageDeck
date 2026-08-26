@@ -47,7 +47,7 @@ describe('popover geometry contract', () => {
     expect(css).toMatch(/\.content\s*{[^}]*padding: 14px 14px 12px;/s);
     expect(css).toMatch(/\.content\s*{[^}]*overflow-y: auto;[^}]*scrollbar-width: none;/s);
     expect(css).toMatch(/\.content::-webkit-scrollbar\s*{[^}]*width: 0;[^}]*height: 0;/s);
-    expect(css).toMatch(/\.provider-card\s*{[^}]*border-radius: 12px;/s);
+    expect(css).toMatch(/\.provider-card\s*{[^}]*border-radius: 14px;/s);
     expect(css).not.toContain('.provider-card--pending');
     expect(css).toMatch(
       /\.provider-warning::after,[\s\S]*right: 0;[\s\S]*left: auto;[\s\S]*transform-origin: top right;/,
@@ -57,7 +57,7 @@ describe('popover geometry contract', () => {
     );
     expect(css).toContain('max-width: min(190px, calc(100vw - 24px))');
     expect(css).toMatch(/\.metric\s*{[^}]*padding: 10px 14px;/s);
-    expect(css).toMatch(/\.meter\s*{[^}]*height: 5px;/s);
+    expect(css).toMatch(/\.meter\s*{[^}]*height: 6px;/s);
     expect(css).toMatch(/\.app-top-bar\s*{[^}]*min-height: 44px;/s);
     expect(css).toMatch(/\.footer\s*{[^}]*min-height: 52px;/s);
   });

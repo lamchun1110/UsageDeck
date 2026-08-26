@@ -832,7 +832,7 @@
 
     .provider-card {
       padding: 5px 12px;
-      border-radius: 12px;
+      border-radius: 14px;
       background: var(--card);
     }
 
@@ -1138,6 +1138,48 @@
       margin: 9px 2px 0;
     }
 
+    /* UsageDeck signature: every provider card carries its own brand accent.
+       Meters, trend bars, and the icon chip all inherit --card-accent. */
+    .provider-section {
+      --card-accent: var(--accent);
+    }
+
+    .provider-section[data-provider-id^='claude'] {
+      --card-accent: var(--provider-claude);
+    }
+
+    .provider-section[data-provider-id='codex'] {
+      --card-accent: var(--provider-codex);
+    }
+
+    .provider-section[data-provider-id='commandcode'] {
+      --card-accent: var(--provider-commandcode);
+    }
+
+    .provider-section[data-provider-id='cursor'] {
+      --card-accent: var(--provider-cursor);
+    }
+
+    .provider-section[data-provider-id='antigravity'] {
+      --card-accent: var(--provider-antigravity);
+    }
+
+    .provider-section[data-provider-id='copilot'] {
+      --card-accent: var(--provider-copilot);
+    }
+
+    .provider-section[data-provider-id='openrouter'] {
+      --card-accent: var(--provider-openrouter);
+    }
+
+    .provider-section[data-provider-id='kimi'] {
+      --card-accent: var(--provider-kimi);
+    }
+
+    .provider-section[data-provider-id='minimax'] {
+      --card-accent: var(--provider-minimax);
+    }
+
     .provider-header {
       min-height: 24px;
       gap: 6px;
@@ -1153,23 +1195,39 @@
     .provider-header h1 {
       font-size: 14px;
       font-weight: 600;
-      letter-spacing: 0;
+      letter-spacing: -0.005em;
+    }
+
+    .plan {
+      padding: 1px 7px;
+      border: 1px solid var(--surface-border);
+      border-radius: 999px;
+      background: var(--card);
+      color: var(--secondary);
+      font-size: 10px;
+      font-weight: 550;
+      line-height: 15px;
+      white-space: nowrap;
     }
 
     .status-badge {
-      padding: 0;
-      color: var(--tertiary);
-      background: transparent;
-      font-size: 11px;
-      font-weight: 400;
-      text-transform: none;
-      letter-spacing: 0;
+      padding: 1px 6px;
+      border-radius: 999px;
+      color: var(--warning);
+      background: var(--warning-bg);
+      font-size: 9px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
 
     .provider-mark {
-      width: 16px;
-      height: 16px;
-      color: var(--text);
+      width: 22px;
+      height: 22px;
+      overflow: hidden;
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--card-accent, var(--accent)) 13%, transparent);
+      color: var(--card-accent, var(--text));
     }
 
     .drag-grip {
@@ -1187,8 +1245,19 @@
 
     .provider-card {
       padding: 5px 8px;
-      border: 0;
-      border-radius: 12px;
+      border: 1px solid var(--surface-border);
+      border-radius: 14px;
+      background: var(--card);
+      box-shadow: var(--shadow-card);
+    }
+
+    .provider-section:hover > .provider-card {
+      box-shadow: var(--shadow-card-hover);
+    }
+
+    .provider-section .trend-bars span,
+    .provider-section .trend-detail__bars i {
+      background: var(--card-accent, var(--meter-fill));
     }
 
     .detection-card {
