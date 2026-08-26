@@ -65,6 +65,63 @@ This enables the reviewed SSL.com CodeSignTool configuration. The workflow then 
 timestamped Authenticode signature on both the installer and installed executable. Missing or
 incorrect values stop the release rather than silently producing an unsigned Windows artifact.
 
+## Enabling Linux GPG signing
+
+Linux does not rely on a public CA. UsageDeck signs the Linux installer artifacts
+with a project-controlled GPG key and publishes the matching public key alongside
+the release, so users can verify first-install provenance even though no platform
+authority is involved.
+
+Add repository secrets:
+
+| Kind           | Name                | Value                                        |
+| -------------- | ------------------- | -------------------------------------------- |
+| Actions secret | `GPG_PRIVATE_KEY`   | Contents of an armored GPG private key       |
+| Actions secret | `GPG_PASSPHRASE`    | Key passphrase (omit/empty if unencrypted)   |
+
+Generate the keypair once:
+
+```sh
+gpg --batch --quick-generate-key 'UsageDeck Release Signing <[email protected]>' rsa4096 sign
+gpg --armor --export-secret-keys [email protected]   # paste into the GPG_PRIVATE_KEY secret
+gpg --armor --export [email protected]                  # publish this as the public key out of band
+```
+
+When enabled, also set the repository variable `ENABLE_LINUX_GPG_SIGNING` to `true`.
+The release workflow then:
+
+1. Detached-signs every `.deb` and `.AppImage` with the project key, verifies each
+   signature round-trip, and uploads the `.asc` files next to the artifacts.
+2. Builds a `SHA256SUMS` manifest covering every installer (Windows, macOS, Linux),
+   clearsigns it with the same key, and uploads `SHA256SUMS`, `SHA256SUMS.asc`, and
+   `usagedeck-gpg-public.asc` to the release.
+3. Refuses to publish when the secret is missing or the key has no fingerprint.
+
+Leaving `ENABLE_LINUX_GPG_SIGNING` unset (or set to `false`) keeps today's behavior:
+the workflow emits a warning and uploads only the updater-signed artifacts.
+
+### User-side verification
+
+```sh
+# 1. Trust the project key exactly once.
+curl -L -o usagedeck-release.asc \
+  https://github.com/lamchun1110/UsageDeck/releases/latest/download/usagedeck-gpg-public.asc
+gpg --import usagedeck-release.asc
+
+# 2. Verify the checksum manifest signature and the manifest itself.
+curl -L -O https://github.com/lamchun1110/UsageDeck/releases/latest/download/SHA256SUMS.asc
+curl -L -O https://github.com/lamchun1110/UsageDeck/releases/latest/download/SHA256SUMS
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum --strict --check SHA256SUMS
+
+# 3. Verify a specific installer before installing it.
+gpg --verify UsageDeck_0.5.2_amd64.deb.asc UsageDeck_0.5.2_amd64.deb
+```
+
+Cross-check the key fingerprint against the announcement published on the
+project's website before trusting the key — the `.asc` file alone only proves
+it was the same key as for the prior release.
+
 ## Enabling macOS native signing
 
 Set `ENABLE_MACOS_NATIVE_SIGNING` to `true` only after configuring all of the following Actions
