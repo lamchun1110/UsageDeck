@@ -1,0 +1,425 @@
+@layer shared {
+  /* Shared component geometry mapped to the semantic tokens above. */
+  html,
+  body,
+  #app,
+  .popover {
+    width: 100%;
+    min-width: 0;
+    max-width: 560px;
+  }
+
+  .screen {
+    min-height: 0;
+  }
+
+  .provider-section + .provider-section,
+  .provider-reorder-shell + .provider-reorder-shell,
+  .total-spend-section + .provider-section,
+  .total-spend-section + .provider-reorder-shell {
+    margin-top: 14px;
+  }
+
+  /* Floating window only grows wider than the tray popup. When it does, lay the dashboard out as a
+     responsive two-column grid so many subscriptions stay visible without scrolling. Banners and
+     the total-spend summary still span the full width. */
+  @media (min-width: 480px) {
+    .screen-page[data-screen='dashboard'] {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      column-gap: 12px;
+      row-gap: 14px;
+      align-content: start;
+    }
+
+    .screen-page[data-screen='dashboard'] > :not(.provider-reorder-shell) {
+      grid-column: 1 / -1;
+    }
+
+    .screen-page[data-screen='dashboard'] .provider-reorder-shell {
+      margin-top: 0;
+    }
+  }
+
+  .metric {
+    padding: 10px 14px;
+  }
+
+  .metric__heading,
+  .metric__reading,
+  .usage-row {
+    gap: 8px;
+  }
+
+  .metric__heading h2,
+  .metric__heading > span {
+    font-size: 13px;
+    line-height: 16px;
+  }
+
+  .metric__heading h2 {
+    font-weight: 600;
+  }
+
+  .meter {
+    height: 5px;
+    margin: 4px 0;
+  }
+
+  .meter-shell {
+    margin: 4px 0;
+  }
+
+  .metric__reading {
+    font-size: 12px;
+    line-height: 15px;
+  }
+
+  [data-tooltip] {
+    position: relative;
+  }
+
+  [data-tooltip]::after {
+    position: absolute;
+    top: calc(100% + 7px);
+    left: 50%;
+    z-index: 50;
+    width: max-content;
+    max-width: min(190px, calc(100vw - 24px));
+    padding: 5px 7px;
+    border: 1px solid var(--separator);
+    border-radius: 6px;
+    color: var(--text);
+    background: color-mix(in srgb, var(--tray) 96%, transparent);
+    box-shadow: 0 5px 18px rgba(0, 0, 0, 0.24);
+    content: attr(data-tooltip);
+    font-size: 10px;
+    font-weight: 400;
+    line-height: 13px;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -2px) scale(0.97);
+    transition:
+      opacity 120ms ease 180ms,
+      transform 120ms ease 180ms;
+  }
+
+  [data-tooltip]:hover::after,
+  [data-tooltip]:focus-visible::after {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+    transition-delay: 400ms;
+  }
+
+  .provider-warning::after,
+  .total-card__share::after,
+  .screen-header > :last-child[data-tooltip]::after {
+    right: 0;
+    left: auto;
+    transform: translate(0, -2px) scale(0.97);
+    transform-origin: top right;
+  }
+
+  .provider-warning:hover::after,
+  .provider-warning:focus-visible::after,
+  .total-card__share:hover::after,
+  .total-card__share:focus-visible::after,
+  .screen-header > :last-child[data-tooltip]:hover::after,
+  .screen-header > :last-child[data-tooltip]:focus-visible::after {
+    transform: translate(0, 0) scale(1);
+  }
+
+  .total-card__info::after,
+  .usage-label-warning::after,
+  .screen-header > :first-child[data-tooltip]::after {
+    right: auto;
+    left: 0;
+    transform: translate(0, -2px) scale(0.97);
+    transform-origin: top left;
+  }
+
+  .total-card__info:hover::after,
+  .total-card__info:focus-visible::after,
+  .usage-label-warning:hover::after,
+  .usage-label-warning:focus-visible::after,
+  .screen-header > :first-child[data-tooltip]:hover::after,
+  .screen-header > :first-child[data-tooltip]:focus-visible::after {
+    transform: translate(0, 0) scale(1);
+  }
+
+  .settings-section,
+  .customize-list,
+  .metric-list {
+    border-radius: 12px;
+  }
+
+  .settings-section h2,
+  .metric-section h2 {
+    padding: 0 8px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .drag-grip:focus-visible,
+  .reorder-grip:focus-visible,
+  .metric-reorder-handle:focus-visible {
+    border-radius: 6px;
+    outline: 2px solid color-mix(in srgb, var(--meter-fill) 72%, transparent);
+    outline-offset: 2px;
+    opacity: 1;
+  }
+
+  .reorder-source {
+    opacity: 0 !important;
+  }
+
+  .pointer-reorder-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    overflow: visible;
+    pointer-events: none;
+    isolation: isolate;
+  }
+
+  .pointer-reorder-lift {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    color: var(--text);
+    opacity: 1;
+    transform: scale(1.018);
+    transform-origin: center;
+    transition: none !important;
+  }
+
+  .pointer-reorder-lift.provider-section > .provider-card,
+  .pointer-reorder-lift.provider-list-row,
+  .pointer-reorder-lift.customize-metric-row,
+  .pointer-reorder-lift.metric-context-target {
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  }
+
+  .pointer-reorder-lift.provider-list-row,
+  .pointer-reorder-lift.customize-metric-row,
+  .pointer-reorder-lift.metric-context-target {
+    overflow: hidden;
+    border: 0;
+    border-radius: 12px;
+    background: var(--card);
+  }
+
+  [data-reorder-touch-handle] {
+    touch-action: none;
+  }
+
+  @media (hover: none), (pointer: coarse), (any-pointer: coarse) {
+    .metric-context-target {
+      cursor: default;
+    }
+
+    .metric-reorder-handle {
+      left: -18px;
+      width: 44px;
+      height: 44px;
+      background: transparent;
+      opacity: 0.72;
+    }
+
+    .drag-grip,
+    .reorder-grip {
+      position: relative;
+    }
+
+    .drag-grip::after,
+    .reorder-grip::after {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 44px;
+      height: 44px;
+      content: '';
+      transform: translate(-50%, -50%);
+    }
+  }
+
+  .pointer-reorder-lift * {
+    pointer-events: none !important;
+  }
+
+  :root.is-reordering,
+  :root.is-reordering * {
+    cursor: grabbing !important;
+    user-select: none !important;
+  }
+
+  .screen-cross-link {
+    display: flex;
+    width: 100%;
+    min-height: 48px;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+    padding: 9px 12px;
+    border: 0;
+    border-radius: 12px;
+    color: var(--text);
+    background: var(--card);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .screen-cross-link > span {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+
+  .screen-cross-link b {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .screen-cross-link small {
+    color: var(--secondary);
+    font-size: 11px;
+  }
+
+  .options-menu__panel hr,
+  .context-menu hr {
+    height: 1px;
+    margin: 5px 4px;
+    border: 0;
+    background: var(--separator);
+  }
+
+  .share-menu button:hover,
+  .share-menu > summary:hover {
+    background: var(--button-hover);
+  }
+
+  .share-menu > summary:focus,
+  .share-menu > summary:focus-visible {
+    outline: none;
+  }
+
+  :root[data-density='compact'] .provider-section + .provider-section,
+  :root[data-density='compact'] .provider-reorder-shell + .provider-reorder-shell,
+  :root[data-density='compact'] .total-spend-section + .provider-section,
+  :root[data-density='compact'] .total-spend-section + .provider-reorder-shell,
+  :root[data-density='compact'] .settings-section {
+    margin-top: 0;
+    margin-bottom: 8px;
+  }
+
+  :root[data-density='compact'] .provider-header,
+  :root[data-density='compact'] .total-card__header {
+    margin-bottom: 2px;
+  }
+
+  :root[data-density='compact'] .metric {
+    padding: 5px 14px;
+  }
+
+  :root[data-density='compact'] .meter {
+    height: 4px;
+  }
+
+  :root[data-density='compact'] .setting-row,
+  :root[data-density='compact'] .customize-metric-row {
+    min-height: 32px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  :root[data-density='compact'] .setting-row,
+  :root[data-density='compact'] .customize-metric-name {
+    font-size: 12px;
+  }
+
+  :root[data-density='compact'] .provider-list-row,
+  :root[data-density='compact'] .screen-cross-link {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  :root[data-density='compact'] .provider-list-main b,
+  :root[data-density='compact'] .screen-cross-link b {
+    font-size: 13px;
+  }
+
+  :root[data-density='compact'] .provider-list-main small,
+  :root[data-density='compact'] .screen-cross-link small {
+    font-size: 10px;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .provider-card,
+    .total-card,
+    .detection-card,
+    .settings-section,
+    .customize-list,
+    .metric-list {
+      transition:
+        background-color var(--motion-switch),
+        transform var(--motion-spring);
+    }
+
+    button:active {
+      transform: scale(0.96);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  :root[data-reduced-motion] *,
+  :root[data-reduced-motion] *::before,
+  :root[data-reduced-motion] *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  :root[data-reduced-motion] button:active {
+    transform: none !important;
+  }
+
+  @keyframes detail-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.97);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.96);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+}

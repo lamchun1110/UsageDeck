@@ -1,0 +1,414 @@
+use std::{collections::HashMap, time::Duration};
+
+use reqwest::{blocking::Client, header::HeaderMap, StatusCode};
+use serde::Deserialize;
+use serde_json::Value;
+
+use super::CodexError;
+
+const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
+const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const RESET_CREDITS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+const CONSUME_RESET_CREDIT_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
+
+#[derive(Debug, Clone)]
+pub struct UsageResponse {
+    pub status: StatusCode,
+    pub headers: HashMap<String, String>,
+    pub body: Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TokenRefresh {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub id_token: Option<String>,
+}
+
+pub struct CodexClient {
+    client: Client,
+    refresh_url: String,
+    usage_url: String,
+    reset_credits_url: String,
+    consume_reset_credit_url: String,
+}
+
+impl CodexClient {
+    pub fn new() -> Result<Self, CodexError> {
+        Self::with_endpoints(
+            USAGE_URL,
+            RESET_CREDITS_URL,
+            CONSUME_RESET_CREDIT_URL,
+            REFRESH_URL,
+            Duration::from_secs(15),
+        )
+    }
+
+    fn with_endpoints(
+        usage_url: &str,
+        reset_credits_url: &str,
+        consume_reset_credit_url: &str,
+        refresh_url: &str,
+        timeout: Duration,
+    ) -> Result<Self, CodexError> {
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(timeout)
+            .user_agent(concat!("UsageDeck/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|_| CodexError::ConnectionFailed)?;
+        Ok(Self {
+            client,
+            refresh_url: refresh_url.to_owned(),
+            usage_url: usage_url.to_owned(),
+            reset_credits_url: reset_credits_url.to_owned(),
+            consume_reset_credit_url: consume_reset_credit_url.to_owned(),
+        })
+    }
+
+    pub fn fetch_usage(
+        &self,
+        access_token: &str,
+        account_id: Option<&str>,
+    ) -> Result<UsageResponse, CodexError> {
+        let started = std::time::Instant::now();
+        let mut request = self
+            .client
+            .get(&self.usage_url)
+            .bearer_auth(access_token)
+            .header("Accept", "application/json");
+        if let Some(account_id) = account_id.filter(|value| !value.is_empty()) {
+            request = request.header("ChatGPT-Account-Id", account_id);
+        }
+        let response = request.send().map_err(|_| {
+            crate::app_warn!("http", "codex usage request failed (transport)");
+            CodexError::ConnectionFailed
+        })?;
+        let status = response.status();
+        crate::app_debug!(
+            "http",
+            "codex usage HTTP {} ({}ms)",
+            status.as_u16(),
+            started.elapsed().as_millis()
+        );
+        let headers = normalized_headers(response.headers());
+        let text = response.text().map_err(|_| CodexError::InvalidResponse)?;
+        let body = serde_json::from_str(&text).unwrap_or(Value::Null);
+        if status.is_success() && body.is_null() {
+            return Err(CodexError::InvalidResponse);
+        }
+        Ok(UsageResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    pub fn fetch_reset_credits(
+        &self,
+        access_token: &str,
+        account_id: Option<&str>,
+    ) -> Result<UsageResponse, CodexError> {
+        let started = std::time::Instant::now();
+        let mut request = self
+            .client
+            .get(&self.reset_credits_url)
+            .bearer_auth(access_token)
+            .header("Accept", "application/json")
+            .header("OpenAI-Beta", "codex-1")
+            .header("originator", "Codex Desktop");
+        if let Some(account_id) = account_id.filter(|value| !value.is_empty()) {
+            request = request.header("ChatGPT-Account-Id", account_id);
+        }
+        let response = request.send().map_err(|_| {
+            crate::app_warn!("http", "codex reset-credit request failed (transport)");
+            CodexError::ConnectionFailed
+        })?;
+        let status = response.status();
+        crate::app_debug!(
+            "http",
+            "codex reset-credit HTTP {} ({}ms)",
+            status.as_u16(),
+            started.elapsed().as_millis()
+        );
+        let headers = normalized_headers(response.headers());
+        let text = response.text().map_err(|_| CodexError::InvalidResponse)?;
+        let body = serde_json::from_str(&text).unwrap_or(Value::Null);
+        if status.is_success() && body.is_null() {
+            return Err(CodexError::InvalidResponse);
+        }
+        Ok(UsageResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    pub fn consume_reset_credit(
+        &self,
+        access_token: &str,
+        account_id: Option<&str>,
+        credit_id: &str,
+        redeem_request_id: &str,
+    ) -> Result<UsageResponse, CodexError> {
+        let started = std::time::Instant::now();
+        let mut request = self
+            .client
+            .post(&self.consume_reset_credit_url)
+            .bearer_auth(access_token)
+            .header("Accept", "application/json")
+            .header("OpenAI-Beta", "codex-1")
+            .header("originator", "Codex Desktop")
+            .json(&serde_json::json!({
+                "credit_id": credit_id,
+                "redeem_request_id": redeem_request_id,
+            }));
+        if let Some(account_id) = account_id.filter(|value| !value.is_empty()) {
+            request = request.header("ChatGPT-Account-Id", account_id);
+        }
+        let response = request.send().map_err(|_| {
+            crate::app_warn!("http", "codex reset-credit consume failed (transport)");
+            CodexError::ConnectionFailed
+        })?;
+        let status = response.status();
+        crate::app_debug!(
+            "http",
+            "codex reset-credit consume HTTP {} ({}ms)",
+            status.as_u16(),
+            started.elapsed().as_millis()
+        );
+        let headers = normalized_headers(response.headers());
+        let text = response.text().map_err(|_| CodexError::InvalidResponse)?;
+        let body = serde_json::from_str(&text).unwrap_or(Value::Null);
+        Ok(UsageResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    pub fn refresh_token(&self, refresh_token: &str) -> Result<TokenRefresh, CodexError> {
+        let started = std::time::Instant::now();
+        crate::app_info!("auth:codex", "token refresh attempt");
+        let response = self
+            .client
+            .post(&self.refresh_url)
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", CLIENT_ID),
+                ("refresh_token", refresh_token),
+            ])
+            .send()
+            .map_err(|_| {
+                crate::app_warn!("auth:codex", "token refresh failed (transport)");
+                CodexError::ConnectionFailed
+            })?;
+        let status = response.status();
+        crate::app_debug!(
+            "http",
+            "codex token refresh HTTP {} ({}ms)",
+            status.as_u16(),
+            started.elapsed().as_millis()
+        );
+        let body: Value = response.json().map_err(|_| {
+            if status.is_success() {
+                CodexError::InvalidResponse
+            } else {
+                CodexError::RequestFailed(status.as_u16())
+            }
+        })?;
+
+        if !status.is_success() {
+            let code = oauth_error_code(&body);
+            return Err(match code.as_deref() {
+                Some("refresh_token_expired") => CodexError::SessionExpired,
+                Some("refresh_token_reused") => CodexError::TokenConflict,
+                Some("refresh_token_invalidated") => CodexError::TokenRevoked,
+                _ => CodexError::RequestFailed(status.as_u16()),
+            });
+        }
+        let refreshed: TokenRefresh =
+            serde_json::from_value(body).map_err(|_| CodexError::InvalidResponse)?;
+        if refreshed.access_token.is_empty() {
+            return Err(CodexError::SessionExpired);
+        }
+        crate::app_info!("auth:codex", "token refresh succeeded");
+        Ok(refreshed)
+    }
+}
+
+fn normalized_headers(headers: &HeaderMap) -> HashMap<String, String> {
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_ascii_lowercase(), value.to_owned()))
+        })
+        .collect()
+}
+
+fn oauth_error_code(body: &Value) -> Option<String> {
+    body.get("error")
+        .and_then(|error| {
+            error
+                .as_str()
+                .or_else(|| error.get("code").and_then(Value::as_str))
+                .or_else(|| error.get("error").and_then(Value::as_str))
+        })
+        .or_else(|| body.get("code").and_then(Value::as_str))
+        .map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        sync::mpsc,
+        thread,
+        time::Duration,
+    };
+
+    use reqwest::StatusCode;
+
+    use super::CodexClient;
+    use crate::providers::{codex::CodexError, test_http};
+
+    fn client(base: &str) -> CodexClient {
+        CodexClient::with_endpoints(
+            &format!("{base}/usage"),
+            &format!("{base}/reset-credits"),
+            &format!("{base}/reset-credits/consume"),
+            &format!("{base}/token"),
+            Duration::from_secs(1),
+        )
+        .unwrap()
+    }
+
+    fn capture_once(body: &str) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = body.to_owned();
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 1024];
+                let count = stream.read(&mut chunk).unwrap();
+                request.extend_from_slice(&chunk[..count]);
+                let text = String::from_utf8_lossy(&request);
+                let Some(header_end) = text.find("\r\n\r\n") else {
+                    continue;
+                };
+                let content_length = text[..header_end]
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length: ")
+                            .and_then(|value| value.parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                if request.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+            sender
+                .send(String::from_utf8_lossy(&request).into_owned())
+                .unwrap();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        (format!("http://{address}"), receiver)
+    }
+
+    #[test]
+    fn usage_success_preserves_status_headers_and_json() {
+        let base = test_http::serve_once(200, &[("x-test-quota", "42")], r#"{"plan":"plus"}"#);
+        let response = client(&base)
+            .fetch_usage("secret-token", Some("account-id"))
+            .unwrap();
+
+        assert_eq!(response.status, StatusCode::OK);
+        assert_eq!(
+            response.headers.get("x-test-quota").map(String::as_str),
+            Some("42")
+        );
+        assert_eq!(response.body["plan"], "plus");
+    }
+
+    #[test]
+    fn malformed_success_body_is_rejected_without_exposing_it() {
+        let base = test_http::serve_once(200, &[], "secret-token: not-json");
+        let error = client(&base).fetch_usage("secret-token", None).unwrap_err();
+
+        assert!(matches!(error, CodexError::InvalidResponse));
+        assert!(!error.to_string().contains("secret-token"));
+    }
+
+    #[test]
+    fn reset_credit_consume_targets_one_credit_with_an_idempotency_key() {
+        let (base, request) = capture_once(r#"{"code":"reset"}"#);
+        let response = client(&base)
+            .consume_reset_credit("secret-token", Some("account-id"), "credit-1", "redeem-1")
+            .unwrap();
+        assert_eq!(response.body["code"], "reset");
+
+        let request = request.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(request.starts_with("POST /reset-credits/consume HTTP/1.1"));
+        assert!(request.contains("\"credit_id\":\"credit-1\""));
+        assert!(request.contains("\"redeem_request_id\":\"redeem-1\""));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("openai-beta: codex-1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("chatgpt-account-id: account-id"));
+    }
+
+    #[test]
+    fn refresh_maps_expired_login_and_rate_limits() {
+        let expired =
+            test_http::serve_once(401, &[], r#"{"error":{"code":"refresh_token_expired"}}"#);
+        assert!(matches!(
+            client(&expired).refresh_token("secret-refresh"),
+            Err(CodexError::SessionExpired)
+        ));
+
+        let limited = test_http::serve_once(429, &[], r#"{"error":"rate_limited"}"#);
+        assert!(matches!(
+            client(&limited).refresh_token("secret-refresh"),
+            Err(CodexError::RequestFailed(429))
+        ));
+    }
+
+    #[test]
+    fn request_timeout_becomes_a_safe_connection_error() {
+        let base = test_http::serve_once_after(
+            test_http::TIMEOUT_TEST_RESPONSE_DELAY,
+            200,
+            &[],
+            r#"{"plan":"plus"}"#,
+        );
+        let client = CodexClient::with_endpoints(
+            &format!("{base}/usage"),
+            &format!("{base}/reset-credits"),
+            &format!("{base}/reset-credits/consume"),
+            &format!("{base}/token"),
+            test_http::TIMEOUT_TEST_CLIENT_LIMIT,
+        )
+        .unwrap();
+        let error = client.fetch_usage("secret-token", None).unwrap_err();
+
+        assert!(matches!(error, CodexError::ConnectionFailed));
+        assert!(!error.to_string().contains("secret-token"));
+    }
+}

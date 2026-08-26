@@ -1,0 +1,183 @@
+@layer shared {
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .metric {
+    padding: 10px 0;
+  }
+
+  .metric__heading,
+  .metric__reading,
+  .usage-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .metric__heading h2,
+  .metric__heading > span {
+    margin: 0;
+    font-size: 13px;
+    line-height: 17px;
+  }
+
+  .metric__heading h2 {
+    font-weight: 650;
+  }
+
+  .metric__heading > span {
+    color: var(--secondary);
+    font-weight: 450;
+  }
+
+  .metric__heading > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .meter {
+    position: relative;
+    height: 5px;
+    margin: 6px 0 5px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--meter-track);
+  }
+
+  .meter-shell {
+    position: relative;
+    height: 5px;
+    margin: 6px 0 5px;
+  }
+
+  .meter-shell .meter {
+    margin: 0;
+  }
+
+  .metric__reading {
+    color: var(--secondary);
+    font-size: 12px;
+    line-height: 16px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .empty-row {
+    margin: 0;
+    color: var(--secondary);
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .empty-row {
+    padding: 14px 0;
+  }
+
+  .notice,
+  .warning {
+    margin: 0 0 9px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    color: var(--warning);
+    background: var(--warning-bg);
+    font-size: 11px;
+    line-height: 15px;
+    user-select: text;
+  }
+
+  .screen {
+    min-height: 100%;
+  }
+
+  .settings-section,
+  .customize-list,
+  .metric-list {
+    overflow: hidden;
+    border-radius: 11px;
+    background: var(--card);
+  }
+
+  .settings-section h2,
+  .metric-section h2 {
+    margin: 0;
+    padding: 7px 10px 4px;
+    color: var(--secondary);
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .chevron,
+  .pin-button {
+    padding: 3px 5px;
+    border: 0;
+    border-radius: 5px;
+    color: var(--secondary);
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .switch input {
+    position: absolute;
+    opacity: 0;
+  }
+
+  .switch span {
+    display: block;
+    width: 28px;
+    height: 16px;
+    padding: 2px;
+    border-radius: 10px;
+    background: var(--meter-track);
+  }
+
+  .switch span::after {
+    display: block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    content: '';
+    transition: transform 120ms ease;
+  }
+
+  .switch input:checked + span {
+    background: var(--meter-fill);
+  }
+
+  .switch input:focus-visible + span {
+    outline: 2px solid var(--meter-fill);
+    outline-offset: 2px;
+  }
+
+  .switch input:checked + span::after {
+    transform: translateX(12px);
+  }
+
+  :root[data-density='compact'] .metric {
+    padding: 6px 0;
+  }
+
+  :root[data-density='compact'] .metric__heading h2,
+  :root[data-density='compact'] .metric__heading > span {
+    font-size: 13px;
+  }
+
+  :root[data-density='compact'] .setting-row,
+  :root[data-density='compact'] .customize-metric-row {
+    min-height: 32px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+  }
+}

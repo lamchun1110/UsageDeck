@@ -1,0 +1,59 @@
+name: UsageDeck platform smoke
+description: Starts a packaged UsageDeck build with the native platform smoke harness.
+
+inputs:
+  artifact-root:
+    description: Tauri bundle directory containing the platform's packaged artifacts.
+    required: false
+    default: src-tauri/target/release/bundle
+  release-validation:
+    description: Require native release trust checks in addition to packaged startup checks.
+    required: false
+    default: 'false'
+  windows-signer-subject:
+    description: Exact Authenticode signer subject required for Windows release artifacts.
+    required: false
+    default: ''
+  apple-team-id:
+    description: Apple Developer team required for macOS release artifacts.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install, start, and uninstall the Windows NSIS package
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        USAGEDECK_SMOKE_ARTIFACT_ROOT: ${{ inputs.artifact-root }}
+        USAGEDECK_SMOKE_RELEASE_VALIDATION: ${{ inputs.release-validation }}
+        USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ inputs.windows-signer-subject }}
+      run: >-
+        & "$env:GITHUB_ACTION_PATH/scripts/windows.ps1"
+        -InstallerDirectory "$env:USAGEDECK_SMOKE_ARTIFACT_ROOT/nsis"
+        -ReleaseValidation "$env:USAGEDECK_SMOKE_RELEASE_VALIDATION"
+
+    - name: Smoke test macOS tray startup
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        USAGEDECK_SMOKE_ARTIFACT_ROOT: ${{ inputs.artifact-root }}
+        USAGEDECK_SMOKE_RELEASE_VALIDATION: ${{ inputs.release-validation }}
+        USAGEDECK_EXPECTED_APPLE_TEAM_ID: ${{ inputs.apple-team-id }}
+      run: >-
+        bash "$GITHUB_ACTION_PATH/scripts/macos.sh"
+        "$USAGEDECK_SMOKE_ARTIFACT_ROOT/dmg"
+        "$USAGEDECK_SMOKE_RELEASE_VALIDATION"
+
+    - name: Exercise Linux AppImage and Debian packages
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        USAGEDECK_SMOKE_ARTIFACT_ROOT: ${{ inputs.artifact-root }}
+        USAGEDECK_SMOKE_RELEASE_VALIDATION: ${{ inputs.release-validation }}
+      run: >-
+        bash "$GITHUB_ACTION_PATH/scripts/linux-packages.sh"
+        "$USAGEDECK_SMOKE_ARTIFACT_ROOT/appimage"
+        "$USAGEDECK_SMOKE_ARTIFACT_ROOT/deb"
+        "$USAGEDECK_SMOKE_RELEASE_VALIDATION"

@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            dbus-tests \
+            dbus-x11 \
+            gnome-keyring \
+            libayatana-appindicator3-dev \
+            libsecret-tools \
+            libwebkit2gtk-4.1-dev \
+            openbox \
+            librsvg2-dev \
+            patchelf \
+            weston \
+            xdotool \
+            xvfb
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.11.0
+          run_install: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify application versions
+        run: pnpm verify:versions
+
+      - name: Verify frontend-backend command contract
+        run: pnpm verify:contracts
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm check
+
+      - name: Test frontend
+        run: pnpm test
+
+      - name: Format Rust
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Lint Rust
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Test Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+
+      - name: Test Windows Credential Manager integration
+        if: runner.os == 'Windows'
+        env:
+          USAGEDECK_TEST_CREDENTIAL_STORE: '1'
+        run: >-
+          cargo test --manifest-path src-tauri/Cargo.toml
+          providers::credential_store::tests::system_credential_store_round_trip_when_requested
+          -- --exact --nocapture
+
+      - name: Test macOS Keychain integration
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          original_keychain="$(security default-keychain -d user | tr -d '"')"
+          test_keychain="${RUNNER_TEMP}/usagedeck-credential-test.keychain-db"
+          cleanup() {
+            security default-keychain -d user -s "${original_keychain}" || true
+            security list-keychains -d user -s "${original_keychain}" || true
+            security delete-keychain "${test_keychain}" || true
+          }
+          trap cleanup EXIT
+          security create-keychain -p usagedeck-test "${test_keychain}"
+          security set-keychain-settings -lut 21600 "${test_keychain}"
+          security unlock-keychain -p usagedeck-test "${test_keychain}"
+          security list-keychains -d user -s "${test_keychain}" "${original_keychain}"
+          security default-keychain -d user -s "${test_keychain}"
+          export USAGEDECK_TEST_CREDENTIAL_STORE=1
+          cargo test --manifest-path src-tauri/Cargo.toml \
+            providers::credential_store::tests::system_credential_store_round_trip_when_requested \
+            -- --exact --nocapture
+
+      - name: Test Linux Secret Service integration
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
+            original_home="${HOME}"
+            export RUSTUP_HOME="${RUSTUP_HOME:-${original_home}/.rustup}"
+            export HOME="${RUNNER_TEMP}/usagedeck-secret-service-home"
+            mkdir -p "${HOME}/.local/share/keyrings"
+            eval "$(printf "\n" | gnome-keyring-daemon --unlock --components=secrets)"
+            export USAGEDECK_TEST_CREDENTIAL_STORE=1
+            cargo test --manifest-path src-tauri/Cargo.toml \
+              providers::credential_store::tests::system_credential_store_round_trip_when_requested \
+              -- --exact --nocapture
+          '
+
+      - name: Prepare Linux AppImage bundler
+        if: runner.os == 'Linux'
+        run: bash .github/scripts/setup-linuxdeploy.sh
+
+      - name: Build Linux packages
+        if: runner.os == 'Linux'
+        run: pnpm build:linux
+
+      - name: Build macOS DMG
+        if: runner.os == 'macOS'
+        run: pnpm tauri build --bundles dmg
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        run: pnpm build:installer
+
+      - name: Smoke test packaged application
+        uses: ./.github/actions/platform-smoke
+
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: UsageDeck-Windows-installer
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Upload macOS DMG
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: UsageDeck-macOS-DMG
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+      - name: Upload Linux AppImage
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: UsageDeck-Linux-AppImage
+          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+      - name: Upload Linux Debian package
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: UsageDeck-Linux-deb
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error

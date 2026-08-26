@@ -1,0 +1,540 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (for example v0.1.0)
+        required: true
+        type: string
+      verify_only:
+        description: Verify and publish an existing draft without rebuilding
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  checks: read
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-22.04
+    outputs:
+      release_commit: ${{ steps.trusted_tag.outputs.release_commit }}
+      windows_signing: ${{ steps.signing_policy.outputs.windows_signing }}
+      macos_signing: ${{ steps.signing_policy.outputs.macos_signing }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Validate trusted release tag
+        id: trusted_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          git fetch --force --no-tags origin \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" \
+            '+refs/heads/main:refs/remotes/origin/main'
+          git show-ref --verify --quiet "refs/tags/${RELEASE_TAG}"
+          tag_commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main || {
+            echo "Release tag is not on origin/main: $RELEASE_TAG" >&2
+            exit 1
+          }
+          git checkout --detach "$tag_commit"
+          test "$(git rev-parse HEAD)" = "$tag_commit"
+          echo "release_commit=$tag_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve release signing policy
+        id: signing_policy
+        env:
+          ENABLE_WINDOWS_NATIVE_SIGNING: ${{ vars.ENABLE_WINDOWS_NATIVE_SIGNING || 'false' }}
+          ENABLE_MACOS_NATIVE_SIGNING: ${{ vars.ENABLE_MACOS_NATIVE_SIGNING || 'false' }}
+        run: |
+          set -euo pipefail
+          normalize_policy() {
+            local name="$1"
+            local value="$2"
+            case "$value" in
+              true | false) printf '%s' "$value" ;;
+              *)
+                echo "::error::$name must be either true or false." >&2
+                return 1
+                ;;
+            esac
+          }
+
+          windows_signing="$(normalize_policy ENABLE_WINDOWS_NATIVE_SIGNING "$ENABLE_WINDOWS_NATIVE_SIGNING")"
+          macos_signing="$(normalize_policy ENABLE_MACOS_NATIVE_SIGNING "$ENABLE_MACOS_NATIVE_SIGNING")"
+          echo "windows_signing=$windows_signing" >> "$GITHUB_OUTPUT"
+          echo "macos_signing=$macos_signing" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release signing credentials
+        if: ${{ !inputs.verify_only }}
+        env:
+          WINDOWS_SIGNING_ENABLED: ${{ steps.signing_policy.outputs.windows_signing }}
+          MACOS_SIGNING_ENABLED: ${{ steps.signing_policy.outputs.macos_signing }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          ES_USERNAME: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_USERNAME || '' }}
+          ES_PASSWORD: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_PASSWORD || '' }}
+          ES_CREDENTIAL_ID: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_CREDENTIAL_ID || '' }}
+          ES_TOTP_SECRET: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_TOTP_SECRET || '' }}
+          WINDOWS_SIGNER_SUBJECT: ${{ steps.signing_policy.outputs.windows_signing == 'true' && vars.WINDOWS_SIGNER_SUBJECT || '' }}
+          APPLE_CERTIFICATE: ${{ steps.signing_policy.outputs.macos_signing == 'true' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ steps.signing_policy.outputs.macos_signing == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_ID: ${{ steps.signing_policy.outputs.macos_signing == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ steps.signing_policy.outputs.macos_signing == 'true' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ steps.signing_policy.outputs.macos_signing == 'true' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          required=(TAURI_SIGNING_PRIVATE_KEY)
+          if [[ "$WINDOWS_SIGNING_ENABLED" = true ]]; then
+            required+=(ES_USERNAME ES_PASSWORD ES_CREDENTIAL_ID ES_TOTP_SECRET WINDOWS_SIGNER_SUBJECT)
+          else
+            echo '::warning::Windows artifacts will not be Authenticode-signed.'
+          fi
+          if [[ "$MACOS_SIGNING_ENABLED" = true ]]; then
+            required+=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
+          else
+            echo '::warning::macOS artifacts will use ad-hoc signing and will not be notarized.'
+          fi
+          for name in "${required[@]}"; do
+            test -n "${!name:-}" || {
+              echo "Missing required release signing value: $name" >&2
+              exit 1
+            }
+          done
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libayatana-appindicator3-dev \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            xdg-utils \
+            patchelf
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.11.0
+          run_install: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Validate release tag
+        run: node scripts/verify/verify-versions.js "$RELEASE_TAG"
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify frontend-backend contracts
+        run: pnpm verify:contracts
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm check
+
+      - name: Test frontend
+        run: pnpm test
+
+      - name: Test Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+
+      - name: Lint Rust
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+  prepare-release:
+    name: Prepare draft release
+    needs: validate
+    if: ${{ !inputs.verify_only && needs.validate.result == 'success' }}
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.release_commit }}
+
+      - name: Verify immutable release tag
+        run: >-
+          bash .github/scripts/verify-release-tag.sh
+          "$RELEASE_TAG"
+          "${{ needs.validate.outputs.release_commit }}"
+
+      - name: Create or reuse draft release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+            test "$is_draft" = true || {
+              echo "Release $RELEASE_TAG already exists and is not a draft." >&2
+              exit 1
+            }
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --verify-tag \
+              --title "UsageDeck ${RELEASE_TAG#v}" \
+              --generate-notes \
+              --notes $'UsageDeck desktop release for Windows and Linux on x64/ARM64, plus a macOS Universal build.\n\nAutomatic updates are cryptographically signed. Linux in-app updates are supported by AppImage builds; Debian packages update through the package installer.'
+          fi
+
+          release_id="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId --jq '.databaseId')"
+          test -n "$release_id"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+  publish-artifacts:
+    name: Build and smoke ${{ matrix.name }}
+    needs: [validate, prepare-release]
+    if: ${{ always() && !inputs.verify_only && needs.validate.result == 'success' && needs.prepare-release.result == 'success' }}
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            platform: windows-latest
+            args: --bundles nsis --config src-tauri/tauri.release.conf.json
+            windows-signing-args: --config src-tauri/tauri.windows-signing.conf.json
+            rust-targets: ''
+            smoke-artifact-root: src-tauri/target/release/bundle
+          - name: Windows ARM64
+            platform: windows-11-arm
+            args: --target aarch64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.release.conf.json
+            windows-signing-args: --config src-tauri/tauri.windows-signing.conf.json
+            rust-targets: aarch64-pc-windows-msvc
+            smoke-artifact-root: src-tauri/target/aarch64-pc-windows-msvc/release/bundle
+          - name: Linux x64
+            platform: ubuntu-22.04
+            args: --bundles deb,appimage --config src-tauri/tauri.release.conf.json
+            windows-signing-args: ''
+            rust-targets: ''
+            smoke-artifact-root: src-tauri/target/release/bundle
+          - name: Linux ARM64
+            platform: ubuntu-22.04-arm
+            args: --target aarch64-unknown-linux-gnu --bundles deb,appimage --config src-tauri/tauri.release.conf.json
+            windows-signing-args: ''
+            rust-targets: aarch64-unknown-linux-gnu
+            smoke-artifact-root: src-tauri/target/aarch64-unknown-linux-gnu/release/bundle
+          - name: macOS Universal
+            platform: macos-latest
+            args: --target universal-apple-darwin --bundles app,dmg --config src-tauri/tauri.release.conf.json
+            windows-signing-args: ''
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            smoke-artifact-root: src-tauri/target/universal-apple-darwin/release/bundle
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.release_commit }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            dbus-tests \
+            dbus-x11 \
+            libayatana-appindicator3-dev \
+            libwebkit2gtk-4.1-dev \
+            openbox \
+            librsvg2-dev \
+            xdg-utils \
+            patchelf \
+            weston \
+            xdotool \
+            xvfb
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.11.0
+          run_install: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare Linux AppImage bundler
+        if: runner.os == 'Linux'
+        run: bash .github/scripts/setup-linuxdeploy.sh
+
+      - name: Prepare Windows code signing
+        if: runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true'
+        shell: pwsh
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: .github/scripts/setup-windows-signing.ps1
+
+      - name: Configure ad-hoc macOS signing
+        if: runner.os == 'macOS' && needs.validate.outputs.macos_signing != 'true'
+        shell: bash
+        run: echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
+
+      - name: Configure native macOS signing
+        if: runner.os == 'macOS' && needs.validate.outputs.macos_signing == 'true'
+        shell: bash
+        env:
+          USAGEDECK_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          USAGEDECK_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          USAGEDECK_APPLE_ID: ${{ secrets.APPLE_ID }}
+          USAGEDECK_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          USAGEDECK_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          write_env() {
+            local name="$1"
+            local value="$2"
+            local delimiter="USAGEDECK_$(uuidgen)"
+            {
+              printf '%s<<%s\n' "$name" "$delimiter"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delimiter"
+            } >> "$GITHUB_ENV"
+          }
+
+          write_env APPLE_CERTIFICATE "$USAGEDECK_APPLE_CERTIFICATE"
+          write_env APPLE_CERTIFICATE_PASSWORD "$USAGEDECK_APPLE_CERTIFICATE_PASSWORD"
+          write_env APPLE_ID "$USAGEDECK_APPLE_ID"
+          write_env APPLE_PASSWORD "$USAGEDECK_APPLE_PASSWORD"
+          write_env APPLE_TEAM_ID "$USAGEDECK_APPLE_TEAM_ID"
+
+      - name: Build and upload platform artifacts
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          ES_USERNAME: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && secrets.ES_USERNAME || '' }}
+          ES_PASSWORD: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && secrets.ES_PASSWORD || '' }}
+          ES_CREDENTIAL_ID: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && secrets.ES_CREDENTIAL_ID || '' }}
+          ES_TOTP_SECRET: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && secrets.ES_TOTP_SECRET || '' }}
+          USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && vars.WINDOWS_SIGNER_SUBJECT || '' }}
+        with:
+          releaseId: ${{ needs.prepare-release.outputs.release_id }}
+          releaseDraft: true
+          uploadUpdaterJson: false
+          updaterJsonPreferNsis: true
+          uploadUpdaterSignatures: true
+          retryAttempts: 2
+          args: >-
+            ${{ matrix.args }}
+            ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && matrix.windows-signing-args || '' }}
+
+      - name: Check out release smoke tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-workflow
+          sparse-checkout: .github/actions/platform-smoke
+
+      - name: Smoke test release artifact
+        uses: ./.release-workflow/.github/actions/platform-smoke
+        with:
+          artifact-root: ${{ matrix.smoke-artifact-root }}
+          release-validation: ${{ (runner.os == 'Linux' || (runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true') || (runner.os == 'macOS' && needs.validate.outputs.macos_signing == 'true')) && 'true' || 'false' }}
+          windows-signer-subject: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && vars.WINDOWS_SIGNER_SUBJECT || '' }}
+          apple-team-id: ${{ runner.os == 'macOS' && needs.validate.outputs.macos_signing == 'true' && secrets.APPLE_TEAM_ID || '' }}
+
+  publish-release:
+    name: Verify and publish release
+    needs: [validate, prepare-release, publish-artifacts]
+    if: ${{ always() && needs.validate.result == 'success' && (inputs.verify_only || (needs.prepare-release.result == 'success' && needs.publish-artifacts.result == 'success')) }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.release_commit }}
+
+      - name: Verify release smoke checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERIFY_ONLY: ${{ inputs.verify_only }}
+        run: |
+          mkdir -p release-check
+          required=(
+            'Build and smoke Windows x64'
+            'Build and smoke Windows ARM64'
+            'Build and smoke Linux x64'
+            'Build and smoke Linux ARM64'
+            'Build and smoke macOS Universal'
+          )
+          verified=false
+          for attempt in 1 2 3 4 5; do
+            if [[ "$VERIFY_ONLY" = true ]]; then
+              commit="$(git rev-parse HEAD)"
+              gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/$GITHUB_REPOSITORY/commits/$commit/check-runs?filter=all&per_page=100" \
+                > release-check/smoke-checks.json
+              jobs_key=check_runs
+            else
+              gh api \
+                "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" \
+                > release-check/smoke-checks.json
+              jobs_key=jobs
+            fi
+            missing=0
+            for name in "${required[@]}"; do
+              if ! jq -e --arg key "$jobs_key" --arg name "$name" \
+                '.[$key] | any(.name == $name and .conclusion == "success")' \
+                release-check/smoke-checks.json >/dev/null; then
+                echo "Required release smoke check is not successful: $name"
+                missing=1
+              fi
+            done
+            if test "$missing" -eq 0; then
+              verified=true
+              break
+            fi
+            echo "Release smoke checks are not ready yet (attempt $attempt/5)."
+            sleep 3
+          done
+          test "$verified" = true
+
+      - name: Download and verify release metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p release-check
+          release_id="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId --jq '.databaseId')"
+          test -n "$release_id" || {
+            echo "Draft release not found for $RELEASE_TAG" >&2
+            exit 1
+          }
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            > release-check/release.json
+          jq -r '.assets[]
+            | select(
+                .name | test("(-setup\\.exe|\\.AppImage|\\.deb|\\.app\\.tar\\.gz)(\\.sig)?$")
+              )
+            | [.id, .name]
+            | @tsv' release-check/release.json |
+          while IFS=$'\t' read -r asset_id asset_name; do
+            gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+              -H 'Accept: application/octet-stream' \
+              > "release-check/$asset_name"
+          done
+          node .github/scripts/create-updater-json.mjs \
+            release-check/release.json \
+            release-check \
+            "$GITHUB_REPOSITORY" \
+            "$RELEASE_TAG" \
+            "${RELEASE_TAG#v}" \
+            release-check/latest.json
+          gh release upload "$RELEASE_TAG" release-check/latest.json --clobber
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            > release-check/release.json
+          jq -r '.assets[].name' release-check/release.json \
+            > release-check/assets.txt
+          grep -Fxq 'latest.json' release-check/assets.txt
+
+      - name: Verify updater signatures with the bundled public key
+        run: |
+          curl --fail --location --silent --show-error \
+            --output /tmp/minisign.tar.gz \
+            https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+          echo '9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73  /tmp/minisign.tar.gz' \
+            | sha256sum --check --strict
+          tar --extract --gzip --file /tmp/minisign.tar.gz --directory /tmp \
+            minisign-linux/x86_64/minisign
+          sudo install -m 0755 /tmp/minisign-linux/x86_64/minisign \
+            /usr/local/bin/minisign
+          node <<'NODE'
+          const fs = require('node:fs');
+          const config = require('./src-tauri/tauri.conf.json');
+          const encoded = config.plugins?.updater?.pubkey;
+          if (!encoded) throw new Error('Missing updater public key');
+          fs.writeFileSync('release-check/updater-public.key', Buffer.from(encoded, 'base64'));
+          NODE
+          verified=0
+          for signature in release-check/*.sig; do
+            artifact="${signature%.sig}"
+            test -f "$artifact"
+            base64 --decode "$signature" > "$signature.minisig"
+            minisign -Vm "$artifact" \
+              -p release-check/updater-public.key \
+              -x "$signature.minisig"
+            verified=$((verified + 1))
+          done
+          test "$verified" -eq 7
+
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash .github/scripts/verify-release-tag.sh \
+            "$RELEASE_TAG" \
+            "${{ needs.validate.outputs.release_commit }}"
+          release_id="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId --jq '.databaseId')"
+          test -n "$release_id"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false \
+            -f make_latest=true
+
+      - name: Verify public release downloads
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          release_id="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId --jq '.databaseId')"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            > release-check/release.json
+          urls="$(jq -r '.assets[].browser_download_url' release-check/release.json | sort -u)"
+          while IFS= read -r url; do
+            downloaded=false
+            for attempt in 1 2 3 4 5; do
+              if curl --fail --location --silent --show-error \
+                --range 0-0 --output /dev/null "$url"; then
+                downloaded=true
+                break
+              fi
+              echo "Public download is not ready yet (attempt $attempt/5): $url"
+              sleep 3
+            done
+            test "$downloaded" = true
+          done <<< "$urls"

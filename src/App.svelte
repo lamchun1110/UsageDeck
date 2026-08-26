@@ -1,0 +1,1920 @@
+<script lang="ts">
+  import { onMount, tick } from 'svelte';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import {
+    beginPanelResize,
+    dismissMainWindow,
+    getBootstrapState,
+    getLogPath,
+    getPanelHeightMode,
+    getPanelResizeEdge,
+    lockPanelResizeAxis,
+    onOpenScreen,
+    onMainWindowHidden,
+    onSettingsState,
+    onUpdateProgress,
+    onUsageState,
+    openProviderLink as openProviderLinkCommand,
+    openNotificationSettings as openSystemNotificationSettings,
+    openLogFolder as openSystemLogFolder,
+    quitApplication,
+    refreshProviderUsage,
+    refreshUsage,
+    requestNotificationPermission,
+    resetAllSettings as resetAllSettingsCommand,
+    resetCustomization as resetCustomizationCommand,
+    resetProviderCustomization as resetProviderCustomizationCommand,
+    setPanelHeightAutomatic,
+    setPanelHeightManual,
+    setPanelWidth,
+    currentPanelWidth,
+    type PanelHeightMode,
+    type PanelResizeEdge,
+  } from './lib/backend';
+  import CustomizeProviderDetail from './lib/CustomizeProviderDetail.svelte';
+  import CustomizeProviderList from './lib/CustomizeProviderList.svelte';
+  import ConfirmationSheet from './lib/ConfirmationSheet.svelte';
+  import { restoreCustomization } from './lib/customizationHistory';
+  import Dashboard from './lib/Dashboard.svelte';
+  import Icon from './lib/Icon.svelte';
+  import { createListenerRegistry } from './lib/listenerRegistry';
+  import { emptyProviderCatalog, ProviderCatalogIndex } from './lib/metrics';
+  import { springMotion } from './lib/motion';
+  import UsageDeckMark from './lib/UsageDeckMark.svelte';
+  import { horizontalPageTransition, shouldSlideBetweenScreens } from './lib/pageTransition';
+  import { desktopPlatform, shortcutLabels } from './lib/platform';
+  import { withProviderName } from './lib/providerNames';
+  import RenameProviderSheet from './lib/RenameProviderSheet.svelte';
+  import {
+    buildProviderShareRows,
+    renderProviderShareCard,
+    renderTotalSpendShareCard,
+  } from './lib/shareCard';
+  import SettingsScreen from './lib/SettingsScreen.svelte';
+  import { SettingsController } from './lib/settingsController.svelte';
+  import type { SpendProjection } from './lib/totalSpend';
+  import type { AppSettings, UsageViewState } from './lib/types';
+  import { nextUpdateLabel, UpdateController } from './lib/updateController.svelte';
+  import { automaticUpdateDelay, UPDATE_CHECK_INTERVAL_MS } from './lib/updateSchedule';
+  import { createWindowController, type AppScreen } from './lib/windowController';
+
+  type Screen = AppScreen;
+  const appVersion = import.meta.env.APP_VERSION;
+  const emptyView: UsageViewState = { providers: {} };
+  const PANEL_MIN_WIDTH = 320;
+  const PANEL_MAX_WIDTH = 560;
+  const PANEL_WIDTH_STEP = 16;
+
+  let viewState = $state<UsageViewState>(emptyView);
+  let catalog = $state<ProviderCatalogIndex>(emptyProviderCatalog);
+  let screen = $state<Screen>('dashboard');
+  let now = $state(Date.now());
+  let settingsError = $state<string | null>(null);
+  let automaticUpdatesReady = $state(false);
+  let systemReducedMotion = $state(false);
+  let slideDirection = $state(1);
+  let slidePageTransition = $state(true);
+  let customizationHistory = $state<AppSettings[]>([]);
+  let customizationGestureStart: AppSettings | null = null;
+  let reordering = $state(false);
+  let confirmationMessage = $state<string | null>(null);
+  let resetConfirmationOpen = $state(false);
+  let settingsResetConfirmationOpen = $state(false);
+  let resettingCustomization = $state(false);
+  let resettingAllSettings = $state(false);
+  let resettingProviderId = $state<string | null>(null);
+  let showAbout = $state(false);
+  let aboutTrigger: HTMLElement | null = null;
+  let aboutCloseButton = $state<HTMLButtonElement>();
+  let shareMenuOpen = $state(false);
+  let optionsMenuElement = $state<HTMLDetailsElement>();
+  let shareMenuElement = $state<HTMLDetailsElement>();
+  let shareTimer: ReturnType<typeof setTimeout> | undefined;
+  const providerStates = $derived(Object.values(viewState.providers));
+  const anyRefreshing = $derived(providerStates.some((state) => state.refreshing));
+  const lastFullRefresh = $derived(viewState.lastFullRefreshAt ?? undefined);
+  const platform = desktopPlatform();
+  const shortcuts = shortcutLabels(platform);
+  const settingsController = new SettingsController((message) => (settingsError = message));
+  const settingsState = $derived(settingsController.state);
+  const reducedMotion = $derived(
+    systemReducedMotion || Boolean(settingsState?.settings.reduceAnimations),
+  );
+  const floatingWindow = $derived(
+    !!settingsState &&
+      (!settingsState.trayAvailable || settingsState.settings.windowMode === 'floating'),
+  );
+  const providerDisplayName = (id: string) =>
+    catalog.displayName(id, settingsState?.settings.providerNames);
+  const updates = new UpdateController();
+  let resizeEdge = $state<PanelResizeEdge>(platform === 'windows' ? 'top' : 'bottom');
+  const renderedResizeEdge = $derived(floatingWindow ? 'bottom' : resizeEdge);
+  let panelHeightMode = $state<PanelHeightMode>('automatic');
+  let panelWidth = $state(380);
+  let panelHeightModeRequest = 0;
+  let panelHeightModeMutation: Promise<void> = Promise.resolve();
+  let renameCard = $state<{ id: string; initialValue: string } | null>(null);
+  let lastResizeGripPointerAt = Number.NEGATIVE_INFINITY;
+  let panelResizeOperation: Promise<void> | null = null;
+  const windowController = createWindowController({
+    screen: () => screen,
+    refreshing: () => anyRefreshing,
+    reordering: () => reordering,
+    automatic: () => panelHeightMode === 'automatic',
+    reducedMotion: () => reducedMotion,
+    onError: (message) => (settingsError = message),
+  });
+
+  $effect(() => {
+    const root = document.documentElement;
+    root.toggleAttribute('data-reduced-motion', reducedMotion);
+    if (!settingsState) return;
+    if (settingsState.settings.theme === 'system') delete root.dataset.theme;
+    else root.dataset.theme = settingsState.settings.theme;
+    root.dataset.density = settingsState.settings.density;
+  });
+
+  $effect(() => {
+    if (!automaticUpdatesReady || !settingsState?.settings.autoCheckUpdates) return;
+    const delay = automaticUpdateDelay(settingsState.settings.lastUpdateCheckAt);
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const timer = setTimeout(() => {
+      void checkForUpdates();
+      interval = setInterval(() => void checkForUpdates(), UPDATE_CHECK_INTERVAL_MS);
+    }, delay);
+    return () => {
+      clearTimeout(timer);
+      if (interval) clearInterval(interval);
+    };
+  });
+
+  function scheduleWindowFit() {
+    windowController.scheduleFit();
+  }
+
+  function beginContentMorph() {
+    windowController.beginContentMorph();
+  }
+
+  function closeMainWindow() {
+    resetTransientUi();
+    navigate('dashboard');
+    void dismissMainWindow();
+  }
+  function resetTransientUi() {
+    closeOptionsMenu();
+    showAbout = false;
+    resetConfirmationOpen = false;
+    settingsResetConfirmationOpen = false;
+    renameCard = null;
+    resettingCustomization = false;
+    resettingAllSettings = false;
+    resettingProviderId = null;
+    confirmationMessage = null;
+    const content = document.querySelector<HTMLElement>('.content');
+    if (content && typeof content.scrollTo === 'function') content.scrollTo({ top: 0 });
+    else if (content) content.scrollTop = 0;
+  }
+  function quitApp() {
+    void quitApplication();
+  }
+  function screenRank(value: Screen) {
+    if (value.startsWith('provider:')) return 2;
+    return value === 'dashboard' ? 0 : 1;
+  }
+  function navigate(next: Screen) {
+    if (next === screen) return;
+    slidePageTransition = shouldSlideBetweenScreens(screen, next);
+    slideDirection = screenRank(next) >= screenRank(screen) ? 1 : -1;
+    screen = next;
+  }
+  async function openProviderCustomization(providerId: string, focusBack = false) {
+    navigate(`provider:${providerId}`);
+    if (!focusBack) return;
+    await tick();
+    document.querySelector<HTMLButtonElement>('.screen-header button[aria-label="Back"]')?.focus();
+  }
+  function back() {
+    if (screen.startsWith('provider:')) navigate('customize');
+    else if (screen !== 'dashboard') navigate('dashboard');
+    else closeMainWindow();
+  }
+  function saveSettings(next: AppSettings) {
+    settingsError = null;
+    const windowModeChanged = settingsState?.settings.windowMode !== next.windowMode;
+    if (windowModeChanged) beginContentMorph();
+    const save = settingsController.save(next);
+    if (windowModeChanged) void save.finally(updatePanelResizeEdge);
+  }
+
+  function toggleFloatingWindow() {
+    const current = settingsState;
+    if (!current?.trayAvailable) return;
+    saveSettings({
+      ...current.settings,
+      windowMode: floatingWindow ? 'popup' : 'floating',
+    });
+  }
+
+  function cloneSettings(value: AppSettings): AppSettings {
+    return JSON.parse(JSON.stringify(value)) as AppSettings;
+  }
+  function showConfirmation(message: string) {
+    confirmationMessage = message;
+    if (shareTimer) clearTimeout(shareTimer);
+    shareTimer = setTimeout(() => (confirmationMessage = null), 1800);
+  }
+  function saveCustomization(next: AppSettings) {
+    const current = settingsState;
+    if (!current) return;
+    if (customizationGestureStart) {
+      settingsController.setDraftSettings(next);
+      settingsError = null;
+      return;
+    }
+    customizationHistory = [...customizationHistory.slice(-19), cloneSettings(current.settings)];
+    saveSettings(next);
+  }
+  function openRenameProvider(providerId: string) {
+    const current = settingsState;
+    if (!current) return;
+    renameCard = {
+      id: providerId,
+      initialValue: current.settings.providerNames[providerId] ?? '',
+    };
+  }
+  async function closeRenameProvider() {
+    const providerId = renameCard?.id;
+    renameCard = null;
+    if (!providerId) return;
+    await tick();
+    const provider = [...document.querySelectorAll<HTMLElement>('[data-provider-id]')].find(
+      (element) => element.dataset.providerId === providerId,
+    );
+    provider?.querySelector<HTMLElement>('[data-reorder-touch-handle]')?.focus();
+  }
+  function renameProvider(name: string) {
+    const current = settingsState;
+    if (!current || !renameCard) return;
+    const changed = withProviderName(current.settings, renameCard.id, name);
+    if (changed !== current.settings) saveSettings(changed);
+    void closeRenameProvider();
+  }
+  function beginCustomizationGesture() {
+    if (!settingsState) return;
+    if (!customizationGestureStart) {
+      customizationGestureStart = cloneSettings(settingsState.settings);
+      settingsController.beginDraft();
+    }
+    reordering = true;
+    scheduleWindowFit();
+  }
+  function endCustomizationGesture(moved: boolean, cancelled = false) {
+    const current = settingsState;
+    if (!current) {
+      settingsController.endDraft();
+      return;
+    }
+    const start = customizationGestureStart;
+    const final = current.settings;
+    customizationGestureStart = null;
+    reordering = false;
+    if (start && moved && cancelled) settingsController.setDraftSettings(start);
+    else if (start && moved) {
+      customizationHistory = [...customizationHistory.slice(-19), start];
+      saveSettings(final);
+    }
+    settingsController.endDraft();
+    queueMicrotask(scheduleWindowFit);
+  }
+  function undoCustomization() {
+    const current = settingsState;
+    const previous = customizationHistory.at(-1);
+    if (!current || !previous) return;
+    customizationHistory = customizationHistory.slice(0, -1);
+    saveSettings(restoreCustomization(current.settings, previous));
+  }
+  async function refresh() {
+    if (anyRefreshing) return;
+    viewState = {
+      ...viewState,
+      providers: Object.fromEntries(
+        Object.entries(viewState.providers).map(([id, state]) => [
+          id,
+          { ...state, refreshing: true },
+        ]),
+      ),
+    };
+    try {
+      viewState = await refreshUsage();
+    } catch {
+      viewState = {
+        ...viewState,
+        providers: Object.fromEntries(
+          Object.entries(viewState.providers).map(([id, state]) => [
+            id,
+            { ...state, refreshing: false },
+          ]),
+        ),
+      };
+      settingsError = 'UsageDeck could not start a provider refresh.';
+    }
+  }
+  async function refreshProvider(providerId: string) {
+    const current = viewState.providers[providerId];
+    if (!current || current.refreshing) return;
+    viewState = {
+      ...viewState,
+      providers: {
+        ...viewState.providers,
+        [providerId]: { ...current, refreshing: true },
+      },
+    };
+    try {
+      viewState = await refreshProviderUsage(providerId);
+    } catch {
+      const failed = viewState.providers[providerId];
+      if (failed) {
+        viewState = {
+          ...viewState,
+          providers: {
+            ...viewState.providers,
+            [providerId]: { ...failed, refreshing: false },
+          },
+        };
+      }
+      settingsError = `${providerDisplayName(providerId)} usage could not be refreshed.`;
+    }
+  }
+  function openProviderLink(providerId: string, linkIndex: number) {
+    void openProviderLinkCommand(providerId, linkIndex).catch(() => {});
+  }
+  function requestCustomizationReset() {
+    resetConfirmationOpen = true;
+  }
+  async function confirmCustomizationReset() {
+    const current = settingsState;
+    if (!current || resettingCustomization) return;
+    resettingCustomization = true;
+    const previous = cloneSettings(current.settings);
+    try {
+      await settingsController.runMutation((expectedSettingsRevision, expectedAccountRevision) =>
+        resetCustomizationCommand(expectedSettingsRevision, expectedAccountRevision),
+      );
+      customizationHistory = [...customizationHistory.slice(-19), previous];
+    } catch {
+      settingsError = 'Customization could not be reset.';
+    } finally {
+      resettingCustomization = false;
+      resetConfirmationOpen = false;
+    }
+  }
+  async function resetProviderCustomization(providerId: string) {
+    const current = settingsState;
+    if (!current || resettingProviderId) return;
+    const provider = current.settings.providers.find((item) => item.id === providerId);
+    if (!provider) return;
+    const previous = cloneSettings(current.settings);
+    resettingProviderId = providerId;
+    try {
+      await settingsController.runMutation((expectedSettingsRevision, expectedAccountRevision) =>
+        resetProviderCustomizationCommand(
+          providerId,
+          expectedSettingsRevision,
+          expectedAccountRevision,
+        ),
+      );
+      customizationHistory = [...customizationHistory.slice(-19), previous];
+    } catch {
+      settingsError = `${providerDisplayName(providerId)} customization could not be reset.`;
+    } finally {
+      resettingProviderId = null;
+    }
+  }
+  async function confirmAllSettingsReset() {
+    if (!settingsState || resettingAllSettings) return;
+    const windowModeChanged = settingsState.settings.windowMode !== 'popup';
+    if (windowModeChanged) beginContentMorph();
+    resettingAllSettings = true;
+    try {
+      await panelHeightModeMutation;
+      await settingsController.runMutation((expectedSettingsRevision, expectedAccountRevision) =>
+        resetAllSettingsCommand(expectedSettingsRevision, expectedAccountRevision),
+      );
+      customizationHistory = [];
+      updatePanelHeightMode();
+      updatePanelResizeEdge();
+      settingsError = null;
+      showConfirmation('All settings restored');
+    } catch {
+      settingsError = 'Settings could not be reset.';
+      updatePanelHeightMode();
+    } finally {
+      resettingAllSettings = false;
+      settingsResetConfirmationOpen = false;
+    }
+  }
+  async function copyCanvas(canvas: HTMLCanvasElement, fallback: string) {
+    const blob = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob(
+        (value) => (value ? resolve(value) : reject(new Error('PNG unavailable'))),
+        'image/png',
+      ),
+    );
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard.write) {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    } else {
+      await navigator.clipboard.writeText(fallback);
+    }
+    showConfirmation('Copied to clipboard');
+  }
+  async function shareProvider(providerId: string) {
+    const current = settingsState;
+    if (!current) return;
+    const card = document.querySelector<HTMLElement>(`[data-provider-id="${providerId}"]`);
+    if (!card) return;
+    const provider = viewState.providers[providerId]?.snapshot;
+    const layout = current.settings.providers.find((item) => item.id === providerId);
+    if (!provider || !layout) return;
+    const snapshot = [providerDisplayName(providerId), card.innerText.trim()].join('\n');
+    try {
+      const rows = buildProviderShareRows(catalog, provider, layout, current.settings, now);
+      const canvas = renderProviderShareCard(catalog, {
+        providerId,
+        providerNames: current.settings.providerNames,
+        plan: provider.plan,
+        rows,
+      });
+      await copyCanvas(canvas, snapshot);
+    } catch {
+      settingsError = 'Provider screenshot could not be copied.';
+    }
+  }
+  async function shareTotalSpend(projection: SpendProjection) {
+    const current = settingsState;
+    if (!current) return false;
+    const card = document.querySelector<HTMLElement>('[data-total-spend]');
+    if (!card) return false;
+    try {
+      const canvas = renderTotalSpendShareCard(catalog, {
+        projection,
+        providerNames: current.settings.providerNames,
+        metric: current.settings.totalSpendMetric,
+        period: current.settings.totalSpendPeriod,
+      });
+      await copyCanvas(canvas, card.innerText.trim());
+      return true;
+    } catch {
+      settingsError = 'Total Spend screenshot could not be copied.';
+      return false;
+    }
+  }
+  async function copyLogPath() {
+    const path = await getLogPath();
+    await navigator.clipboard.writeText(path);
+    showConfirmation('Log path copied');
+  }
+  async function openLogFolder() {
+    await openSystemLogFolder();
+  }
+  function topBarTitle() {
+    if (screen.startsWith('provider:')) return providerDisplayName(screen.slice(9));
+    return screen === 'settings' ? 'Settings' : 'Customize';
+  }
+  async function openAbout() {
+    aboutTrigger = optionsMenuElement?.querySelector<HTMLElement>(':scope > summary') ?? null;
+    showAbout = true;
+    await tick();
+    aboutCloseButton?.focus();
+  }
+  async function closeAbout() {
+    showAbout = false;
+    await tick();
+    aboutTrigger?.focus();
+    aboutTrigger = null;
+  }
+  function closeAboutFromBackdrop(event: MouseEvent) {
+    if (event.target === event.currentTarget) void closeAbout();
+  }
+  function handleAboutKeydown(event: KeyboardEvent) {
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      void closeAbout();
+    } else if (event.key === 'Tab') {
+      event.preventDefault();
+      aboutCloseButton?.focus();
+    }
+  }
+  function ownsEnterKey(target: EventTarget | null) {
+    if (!(target instanceof Element)) return false;
+    return (
+      target.closest(
+        'button, a, input, select, textarea, summary, [contenteditable], [role="button"], [role="menuitem"], [role="option"], [role="combobox"]',
+      ) !== null
+    );
+  }
+  function handleOptionsKey(event: KeyboardEvent) {
+    const menu = (event.currentTarget as HTMLElement).closest<HTMLDetailsElement>(
+      'details.options-menu',
+    );
+    if (!menu) return;
+    if (event.key !== 'Escape' || !menu.open) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeOptionsMenu(true);
+  }
+  function closeOptionsMenu(restoreFocus = false) {
+    if (shareMenuElement?.open) shareMenuElement.open = false;
+    shareMenuOpen = false;
+    if (!optionsMenuElement?.open) return;
+    optionsMenuElement.open = false;
+    if (restoreFocus) optionsMenuElement.querySelector<HTMLElement>('summary')?.focus();
+  }
+  function handleWindowPointerDown(event: PointerEvent) {
+    if (
+      optionsMenuElement?.open &&
+      event.target instanceof Node &&
+      !optionsMenuElement.contains(event.target)
+    ) {
+      closeOptionsMenu();
+    }
+  }
+  function updatePanelResizeEdge() {
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    void getPanelResizeEdge()
+      .then((edge) => (resizeEdge = edge))
+      .catch(() => undefined);
+  }
+  function updatePanelHeightMode() {
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    const request = ++panelHeightModeRequest;
+    void getPanelHeightMode()
+      .then((mode) => {
+        if (request !== panelHeightModeRequest) return;
+        panelHeightMode = mode;
+        if (mode === 'automatic') scheduleWindowFit();
+      })
+      .catch(() => undefined);
+  }
+  function acceptPanelHeightMode(mode: PanelHeightMode) {
+    panelHeightModeRequest += 1;
+    panelHeightMode = mode;
+  }
+  function handlePanelResizePointerDown(event: PointerEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const pointerAt = event.timeStamp;
+    const repeatedPress = event.detail > 1 || pointerAt - lastResizeGripPointerAt <= 400;
+    lastResizeGripPointerAt = repeatedPress ? Number.NEGATIVE_INFINITY : pointerAt;
+    if (repeatedPress) {
+      const activeResize = panelResizeOperation;
+      void (async () => {
+        if (activeResize) await activeResize;
+        await changePanelHeightMode('automatic');
+      })();
+      return;
+    }
+    const operation = (async () => {
+      try {
+        await panelHeightModeMutation;
+        const edge = await beginPanelResize();
+        resizeEdge = edge;
+        // The native begin command has already persisted the current height as manual. Mirroring it
+        // here stops any in-flight frontend auto-fit without waiting for the first resize event.
+        acceptPanelHeightMode('manual');
+        // TODO(macOS): Tao 0.35 reports native resize dragging as unsupported and Tauri currently
+        // swallows that runtime error. Re-test after Tauri/Tao upgrades; add an AppKit fallback if
+        // upstream support is still unavailable.
+        await getCurrentWindow().startResizeDragging(edge === 'top' ? 'North' : 'South');
+      } catch {
+        settingsError = 'UsageDeck panel resize could not be started.';
+      } finally {
+        await lockPanelResizeAxis().catch(() => undefined);
+        updatePanelHeightMode();
+      }
+    })();
+    panelResizeOperation = operation;
+    void operation.finally(() => {
+      if (panelResizeOperation === operation) panelResizeOperation = null;
+    });
+  }
+  function handlePanelWidthResizePointerDown(event: PointerEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dragger = event.currentTarget as HTMLElement;
+    dragger.setPointerCapture(event.pointerId);
+    void (async () => {
+      try {
+        // Manual pointer-tracked resize: programmatic setSize on each move. Unlike the native
+        // startResizeDragging gesture (unreliable for borderless windows), this works everywhere.
+        const startWidth = await currentPanelWidth();
+        panelWidth = clampPanelWidth(startWidth);
+        const startX = event.clientX;
+        let latestWidth = startWidth;
+        let animationFrame: number | null = null;
+        let resizeOperation = Promise.resolve();
+        const queueLatestWidth = () => {
+          if (animationFrame !== null) return;
+          animationFrame = requestAnimationFrame(() => {
+            animationFrame = null;
+            const width = latestWidth;
+            resizeOperation = resizeOperation
+              .then(() => setPanelWidth(width))
+              .catch(() => undefined);
+          });
+        };
+        const onMove = (moveEvent: PointerEvent) => {
+          latestWidth = startWidth + (moveEvent.clientX - startX);
+          panelWidth = clampPanelWidth(latestWidth);
+          queueLatestWidth();
+        };
+        const finish = () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', finish);
+          window.removeEventListener('pointercancel', finish);
+          if (dragger.hasPointerCapture(event.pointerId)) {
+            dragger.releasePointerCapture(event.pointerId);
+          }
+          if (animationFrame !== null) {
+            cancelAnimationFrame(animationFrame);
+            animationFrame = null;
+            const width = latestWidth;
+            resizeOperation = resizeOperation
+              .then(() => setPanelWidth(width))
+              .catch(() => undefined);
+          }
+          void resizeOperation.finally(() => lockPanelResizeAxis().catch(() => undefined));
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', finish);
+        window.addEventListener('pointercancel', finish);
+      } catch {
+        settingsError = 'UsageDeck panel width could not be resized.';
+      }
+    })();
+  }
+  function clampPanelWidth(width: number) {
+    return Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, Math.round(width)));
+  }
+  async function handlePanelWidthKeydown(event: KeyboardEvent) {
+    if (!['Home', 'End', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      let target: number;
+      if (event.key === 'Home') target = PANEL_MIN_WIDTH;
+      else if (event.key === 'End') target = PANEL_MAX_WIDTH;
+      else {
+        const currentWidth = clampPanelWidth(await currentPanelWidth());
+        const direction = event.key === 'ArrowLeft' ? -1 : 1;
+        target = currentWidth + direction * PANEL_WIDTH_STEP * (event.shiftKey ? 2 : 1);
+      }
+      panelWidth = clampPanelWidth(target);
+      await setPanelWidth(panelWidth);
+      await lockPanelResizeAxis();
+    } catch {
+      settingsError = 'UsageDeck panel width could not be resized.';
+    }
+  }
+  async function changePanelHeightMode(mode: PanelHeightMode) {
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    const request = ++panelHeightModeRequest;
+    const operation = panelHeightModeMutation.then(() =>
+      mode === 'automatic' ? setPanelHeightAutomatic() : setPanelHeightManual(),
+    );
+    panelHeightModeMutation = operation.catch(() => undefined);
+    try {
+      await operation;
+      if (request === panelHeightModeRequest) updatePanelHeightMode();
+    } catch {
+      if (request !== panelHeightModeRequest) return;
+      settingsError = 'UsageDeck could not change the panel height mode.';
+      updatePanelHeightMode();
+    }
+  }
+  async function requestNotifications() {
+    if (!settingsState) return;
+    try {
+      const permissionState = await requestNotificationPermission();
+      settingsController.acceptExternalState(permissionState);
+    } catch {
+      settingsError = 'Notification permission could not be requested.';
+    }
+  }
+  async function openNotificationSettings() {
+    try {
+      await openSystemNotificationSettings();
+    } catch {
+      settingsError = 'Notification settings could not be opened on this system.';
+    }
+  }
+  async function checkForUpdates(manual = false) {
+    if (!settingsState) return;
+    await updates.check(
+      manual,
+      (checkedAt) => {
+        if (!settingsState) return;
+        saveSettings({ ...settingsState.settings, lastUpdateCheckAt: checkedAt });
+      },
+      showConfirmation,
+    );
+  }
+
+  onMount(() => {
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updateMotionPreference = () => {
+      systemReducedMotion = motionQuery.matches;
+      scheduleWindowFit();
+    };
+    updateMotionPreference();
+    motionQuery.addEventListener('change', updateMotionPreference);
+    const refreshWindowState = () => {
+      void settingsController.refreshIfIdle();
+      updatePanelResizeEdge();
+      updatePanelHeightMode();
+      scheduleWindowFit();
+    };
+    updatePanelResizeEdge();
+    updatePanelHeightMode();
+    window.addEventListener('focus', refreshWindowState);
+
+    const popover = document.querySelector<HTMLElement>('.popover');
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleWindowFit);
+    const observePanelParts = () => {
+      resizeObserver?.disconnect();
+      document
+        .querySelectorAll<HTMLElement>(
+          '.floating-chrome, .screen-page, .screen-header, .footer, .notice',
+        )
+        .forEach((element) => resizeObserver?.observe(element));
+      scheduleWindowFit();
+    };
+    const mutationObserver = new MutationObserver(observePanelParts);
+    if (popover) {
+      mutationObserver.observe(popover, { childList: true, subtree: true, characterData: true });
+    }
+    observePanelParts();
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (showAbout) {
+          void closeAbout();
+          return;
+        }
+        back();
+      } else if (event.key === 'Enter' && screen === 'dashboard' && !ownsEnterKey(event.target)) {
+        event.preventDefault();
+        navigate('customize');
+      } else if ((event.ctrlKey || event.metaKey) && event.key === ',') {
+        event.preventDefault();
+        navigate(screen === 'settings' ? 'dashboard' : 'settings');
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        void refresh();
+      } else if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === 'z' &&
+        !(event.target instanceof HTMLInputElement) &&
+        !(event.target instanceof HTMLTextAreaElement)
+      ) {
+        event.preventDefault();
+        undoCustomization();
+      } else if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === 'q' &&
+        !(event.target instanceof HTMLInputElement) &&
+        !(event.target instanceof HTMLTextAreaElement)
+      ) {
+        event.preventDefault();
+        quitApp();
+      }
+    };
+    document.addEventListener('keydown', handleKeydown);
+    const clock = window.setInterval(() => (now = Date.now()), 30_000);
+    const listeners = createListenerRegistry(() => {
+      settingsError ??= 'UsageDeck event bridge is unavailable.';
+    });
+    listeners.add(onUsageState((state) => (viewState = state)));
+    listeners.add(
+      onSettingsState((state) => {
+        settingsController.acceptExternalState(state);
+      }),
+    );
+    listeners.add(
+      onOpenScreen((target) => navigate(target === 'settings' ? 'settings' : 'customize')),
+    );
+    listeners.add(
+      onMainWindowHidden(() => {
+        resetTransientUi();
+        navigate('dashboard');
+      }),
+    );
+    listeners.add(
+      onUpdateProgress((progress) => {
+        updates.setProgress(progress);
+      }),
+    );
+    void getBootstrapState()
+      .then((state) => {
+        catalog = new ProviderCatalogIndex(state.catalog);
+        viewState = state.usage;
+        settingsController.setState(state.settings);
+        automaticUpdatesReady = true;
+      })
+      .catch(() => (settingsError = 'UsageDeck backend is unavailable.'));
+    return () => {
+      document.removeEventListener('keydown', handleKeydown);
+      window.clearInterval(clock);
+      windowController.dispose();
+      motionQuery.removeEventListener('change', updateMotionPreference);
+      window.removeEventListener('focus', refreshWindowState);
+      document.documentElement.removeAttribute('data-reduced-motion');
+      mutationObserver.disconnect();
+      resizeObserver?.disconnect();
+      listeners.dispose();
+    };
+  });
+</script>
+
+<svelte:head><meta name="color-scheme" content="light dark" /></svelte:head>
+<svelte:window onpointerdown={handleWindowPointerDown} />
+
+<main
+  class="popover"
+  class:popover--floating={floatingWindow}
+  class:popover--macos={floatingWindow && platform === 'macos'}
+  aria-label="UsageDeck usage dashboard"
+  oncontextmenu={(event) => event.preventDefault()}
+>
+  <p id="reorder-instructions" class="sr-only">
+    Drag to reorder. With a keyboard, use Alt plus Up Arrow or Alt plus Down Arrow.
+  </p>
+  {#if renderedResizeEdge === 'top'}
+    <div
+      class="panel-resize-dragger panel-resize-dragger--top"
+      role="separator"
+      aria-label="Resize panel height"
+      aria-orientation="horizontal"
+      onpointerdown={handlePanelResizePointerDown}
+    ></div>
+  {/if}
+  {#if floatingWindow}
+    <header class="floating-chrome" aria-label="UsageDeck window controls">
+      <div
+        class="floating-chrome__drag"
+        data-tauri-drag-region
+        title="Drag to reposition UsageDeck"
+      >
+        <UsageDeckMark size={14} />
+        <span>UsageDeck</span>
+      </div>
+      <button
+        class="floating-chrome__close"
+        type="button"
+        aria-label={settingsState?.trayAvailable ? 'Hide UsageDeck' : 'Close UsageDeck'}
+        onclick={closeMainWindow}
+      >
+        <Icon name="close" size={12} strokeWidth={2.1} />
+      </button>
+    </header>
+  {/if}
+  {#if settingsState}
+    {#if screen !== 'dashboard'}
+      <header class="screen-header app-top-bar">
+        <button type="button" onclick={back} aria-label="Back" data-tooltip="Back">
+          <Icon name="back" size={16} strokeWidth={2.2} />
+        </button>
+        <h1>{topBarTitle()}</h1>
+        {#if screen === 'customize'}
+          <button
+            class="text-button"
+            type="button"
+            onclick={requestCustomizationReset}
+            aria-label="Reset all customization"
+            data-tooltip="Reset All Customization"
+            ><Icon name="reset" size={15} strokeWidth={2} /></button
+          >
+        {:else if screen.startsWith('provider:')}
+          <button
+            class="text-button"
+            type="button"
+            disabled={resettingProviderId !== null}
+            onclick={() => resetProviderCustomization(screen.slice(9))}
+            aria-label={`Reset ${topBarTitle()}`}
+            data-tooltip={`Reset ${topBarTitle()}`}
+            ><Icon name="reset" size={15} strokeWidth={2} /></button
+          >
+        {:else}
+          <span></span>
+        {/if}
+      </header>
+    {/if}
+    <div class="content" class:content--chrome={screen !== 'dashboard'}>
+      {#if settingsError}<div class="notice notice--blocking" role="alert">
+          {settingsError}
+        </div>{/if}
+      <div class="screen-stage">
+        {#key screen}
+          <div
+            class="screen-page"
+            data-screen={screen}
+            in:horizontalPageTransition={{
+              direction: slideDirection,
+              ...springMotion(reducedMotion || !slidePageTransition),
+            }}
+            out:horizontalPageTransition={{
+              direction: -slideDirection,
+              ...springMotion(reducedMotion || !slidePageTransition),
+            }}
+          >
+            {#if screen === 'dashboard'}
+              <Dashboard
+                {viewState}
+                {catalog}
+                renamableProviderIds={settingsState.renamableProviderIds}
+                settings={settingsState.settings}
+                {now}
+                onSettingsChange={saveSettings}
+                onCustomizationChange={saveCustomization}
+                onReorderStart={beginCustomizationGesture}
+                onReorderEnd={endCustomizationGesture}
+                onCustomize={() => navigate('customize')}
+                onOpenProviderCustomize={(id) => void openProviderCustomization(id, true)}
+                onRenameProvider={openRenameProvider}
+                onShare={shareProvider}
+                onShareTotal={shareTotalSpend}
+                onRefresh={refreshProvider}
+                onOpenProviderLink={openProviderLink}
+                onContentMorph={beginContentMorph}
+                {reducedMotion}
+                updateStatus={updates.status}
+                installingUpdate={updates.installing}
+                updateProgress={updates.progress}
+                updateError={updates.error}
+                onInstallUpdate={() => updates.install()}
+                onOpenUpdatePage={() => updates.openDownloadPage()}
+              />
+            {:else if screen === 'settings'}
+              <SettingsScreen
+                settingsView={settingsState}
+                {platform}
+                {panelHeightMode}
+                onChange={saveSettings}
+                onPanelHeightModeChange={(mode) => void changePanelHeightMode(mode)}
+                onRequestNotifications={requestNotifications}
+                onOpenNotificationSettings={openNotificationSettings}
+                updateError={updates.error}
+                checkingUpdate={updates.checking}
+                onCheckForUpdates={() => void checkForUpdates(true)}
+                onCustomize={() => navigate('customize')}
+                onCopyLogPath={copyLogPath}
+                onOpenLogFolder={openLogFolder}
+                onResetAllSettings={() => (settingsResetConfirmationOpen = true)}
+              />
+            {:else if screen === 'customize'}
+              <CustomizeProviderList
+                settings={settingsState.settings}
+                {catalog}
+                onOpen={(id) => void openProviderCustomization(id)}
+                onChange={saveCustomization}
+                onReorderStart={beginCustomizationGesture}
+                onReorderEnd={endCustomizationGesture}
+                onSettings={() => navigate('settings')}
+                {reducedMotion}
+              />
+            {:else if screen.startsWith('provider:')}
+              <CustomizeProviderDetail
+                settings={settingsState.settings}
+                providerId={screen.slice(9)}
+                {catalog}
+                renamableProviderIds={settingsState.renamableProviderIds}
+                onChange={saveCustomization}
+                onNameChange={saveSettings}
+                onOptionChange={saveSettings}
+                onReorderStart={beginCustomizationGesture}
+                onReorderEnd={endCustomizationGesture}
+                {reducedMotion}
+              />
+            {/if}
+          </div>
+        {/key}
+      </div>
+    </div>
+
+    {#if screen === 'dashboard' || screen === 'settings'}
+      <footer class="footer">
+        <button
+          class="identity"
+          type="button"
+          onclick={refresh}
+          disabled={anyRefreshing}
+          aria-label="Refresh all provider usage"
+        >
+          <span>UsageDeck {appVersion}</span><small
+            >{anyRefreshing ? 'Updating…' : nextUpdateLabel(lastFullRefresh, now)}</small
+          >
+        </button>
+        {#if screen === 'dashboard'}
+          <div class="footer-actions">
+            {#if settingsState.trayAvailable}
+              <button
+                class="window-mode-toggle"
+                class:window-mode-toggle--active={floatingWindow}
+                type="button"
+                aria-label={floatingWindow ? 'Return to Tray Popup' : 'Keep Window Open'}
+                aria-pressed={floatingWindow}
+                data-tooltip={floatingWindow ? 'Return to Tray Popup' : 'Keep Window Open'}
+                onclick={toggleFloatingWindow}
+              >
+                <Icon name={floatingWindow ? 'pin-filled' : 'pin'} size={14} strokeWidth={1.9} />
+              </button>
+            {/if}
+            <details class="options-menu" bind:this={optionsMenuElement}>
+              <summary aria-label="Open options" onkeydown={handleOptionsKey}
+                ><span>Options</span><Icon
+                  name="chevron-down"
+                  size={11}
+                  strokeWidth={2.2}
+                /></summary
+              >
+              <div
+                class="options-menu__panel"
+                role="menu"
+                aria-label="Options menu"
+                tabindex="-1"
+                onkeydown={handleOptionsKey}
+                onclick={(event) => {
+                  if (event.target instanceof Element && event.target.closest('button')) {
+                    closeOptionsMenu();
+                  }
+                }}
+              >
+                <button
+                  class="menu-item"
+                  type="button"
+                  aria-label="Customize"
+                  onclick={() => navigate('customize')}
+                  ><Icon name="sliders" /><span>Customize</span><kbd>↩</kbd></button
+                >
+                <button
+                  class="menu-item"
+                  type="button"
+                  aria-label="Settings"
+                  onclick={() => navigate('settings')}
+                  ><Icon name="gear" /><span>Settings</span><kbd>{shortcuts.settings}</kbd></button
+                >
+                <hr />
+                <details
+                  bind:this={shareMenuElement}
+                  class="share-menu"
+                  ontoggle={(event) => (shareMenuOpen = event.currentTarget.open)}
+                >
+                  <summary
+                    ><span class="share-menu__direction"
+                      ><Icon name="chevron-left" size={12} /></span
+                    ><span>Share Screenshot</span></summary
+                  >
+                  <div>
+                    {#if shareMenuOpen}
+                      {#each settingsState.settings.providers.filter((provider) => provider.enabled && catalog.provider(provider.id)) as provider (provider.id)}
+                        <button type="button" onclick={() => shareProvider(provider.id)}
+                          >{providerDisplayName(provider.id)}</button
+                        >
+                      {/each}
+                    {/if}
+                  </div>
+                </details>
+                <button class="menu-item" type="button" onclick={() => void checkForUpdates(true)}
+                  ><Icon name="refresh" /><span>Check for Updates…</span></button
+                >
+                <hr />
+                <button class="menu-item" type="button" onclick={openAbout}
+                  ><Icon name="about" /><span>About UsageDeck</span></button
+                >
+                <button
+                  class="menu-item menu-item--danger"
+                  type="button"
+                  aria-label="Quit UsageDeck"
+                  onclick={quitApp}
+                  ><Icon name="power" /><span>Quit UsageDeck</span><kbd>{shortcuts.quit}</kbd
+                  ></button
+                >
+              </div>
+            </details>
+          </div>
+        {/if}
+      </footer>
+    {/if}
+
+    {#if confirmationMessage}
+      <div class="transient-pill" role="status">
+        <Icon name="check" size={15} strokeWidth={2.4} />{confirmationMessage}
+      </div>
+    {/if}
+
+    {#if resetConfirmationOpen}
+      <ConfirmationSheet
+        title="Reset All Customization?"
+        message="This turns installed providers back on and restores every provider's metric visibility and order."
+        confirmLabel="Reset All"
+        pending={resettingCustomization}
+        onConfirm={() => void confirmCustomizationReset()}
+        onCancel={() => (resetConfirmationOpen = false)}
+      />
+    {/if}
+
+    {#if settingsResetConfirmationOpen}
+      <ConfirmationSheet
+        title="Reset All Settings?"
+        message="This restores appearance, notifications, shortcuts, updates, panel sizing, provider names, and layout. Provider sign-ins, API keys, and usage history stay in place. This cannot be undone."
+        confirmLabel="Reset All"
+        pending={resettingAllSettings}
+        onConfirm={() => void confirmAllSettingsReset()}
+        onCancel={() => (settingsResetConfirmationOpen = false)}
+      />
+    {/if}
+
+    {#if renameCard}
+      <RenameProviderSheet
+        initialValue={renameCard.initialValue}
+        onRename={renameProvider}
+        onCancel={() => void closeRenameProvider()}
+      />
+    {/if}
+
+    {#if showAbout}
+      <div
+        class="about-backdrop"
+        role="presentation"
+        onclick={closeAboutFromBackdrop}
+        onkeydown={handleAboutKeydown}
+      >
+        <div
+          class="about-card"
+          role="dialog"
+          tabindex="-1"
+          aria-modal="true"
+          aria-label="About UsageDeck"
+        >
+          <button
+            bind:this={aboutCloseButton}
+            class="about-card__close"
+            type="button"
+            aria-label="Close About"
+            onclick={() => void closeAbout()}
+            ><Icon name="close" size={11} strokeWidth={2.3} /></button
+          >
+          <UsageDeckMark size={44} />
+          <h1>UsageDeck</h1>
+          <p>Version {appVersion}</p>
+          <small>Private, local usage monitoring for your AI coding tools.</small>
+        </div>
+      </div>
+    {/if}
+  {:else}
+    <div class="content">
+      {#if settingsError}
+        <div class="notice notice--blocking" role="alert">{settingsError}</div>
+      {:else}
+        <p class="empty-row">Loading UsageDeck…</p>
+      {/if}
+    </div>
+  {/if}
+  {#if renderedResizeEdge === 'bottom'}
+    <div
+      class="panel-resize-dragger panel-resize-dragger--bottom"
+      role="separator"
+      aria-label="Resize panel height"
+      aria-orientation="horizontal"
+      onpointerdown={handlePanelResizePointerDown}
+    ></div>
+  {/if}
+  {#if floatingWindow && (renderedResizeEdge === 'top' || renderedResizeEdge === 'bottom')}
+    <div
+      class="panel-resize-dragger panel-resize-dragger--right"
+      role="slider"
+      tabindex="0"
+      aria-label="Resize panel width"
+      aria-orientation="vertical"
+      aria-valuemin={PANEL_MIN_WIDTH}
+      aria-valuemax={PANEL_MAX_WIDTH}
+      aria-valuenow={panelWidth}
+      onpointerdown={handlePanelWidthResizePointerDown}
+      onkeydown={handlePanelWidthKeydown}
+    ></div>
+  {/if}
+</main>
+
+<style>
+  :global {
+    .popover {
+      position: relative;
+      display: flex;
+      width: 100%;
+      height: 100%;
+      flex-direction: column;
+      overflow: hidden;
+      color: var(--text);
+      background: var(--tray);
+      isolation: isolate;
+      user-select: none;
+    }
+
+    .floating-chrome {
+      position: relative;
+      z-index: 30;
+      display: grid;
+      width: 100%;
+      height: 32px;
+      flex: 0 0 32px;
+      grid-template-columns: 32px 1fr 32px;
+      align-items: center;
+      border-bottom: 1px solid var(--separator);
+      background: color-mix(in srgb, var(--text) 3%, var(--tray));
+    }
+
+    .floating-chrome__drag {
+      grid-row: 1;
+      grid-column: 1 / -1;
+      display: flex;
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      color: var(--secondary);
+      cursor: grab;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      touch-action: none;
+    }
+
+    .floating-chrome__drag:active {
+      cursor: grabbing;
+    }
+
+    .floating-chrome__drag > * {
+      pointer-events: none;
+    }
+
+    .floating-chrome__close {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      width: 24px;
+      height: 24px;
+      grid-row: 1;
+      grid-column: 3;
+      align-items: center;
+      justify-self: center;
+      padding: 0;
+      border: 0;
+      border-radius: 7px;
+      color: var(--secondary);
+      background: transparent;
+      cursor: default;
+      place-items: center;
+      transition:
+        color 120ms ease,
+        background-color 120ms ease,
+        transform 80ms ease;
+    }
+
+    .popover--macos .floating-chrome__close {
+      grid-column: 1;
+    }
+
+    .floating-chrome__close:hover {
+      color: var(--text);
+      background: color-mix(in srgb, var(--text) 9%, transparent);
+    }
+
+    .floating-chrome__close:active {
+      transform: scale(0.92);
+    }
+
+    .floating-chrome__close:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--meter-fill) 55%, transparent);
+      outline-offset: -1px;
+    }
+
+    .panel-resize-dragger {
+      position: relative;
+      z-index: 20;
+      display: grid;
+      width: 100%;
+      height: 10px;
+      flex: 0 0 10px;
+      cursor: ns-resize;
+      touch-action: none;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+
+    .panel-resize-dragger::after {
+      width: 36px;
+      height: 4px;
+      border-radius: 999px;
+      background: var(--separator);
+      content: '';
+      transition:
+        width 120ms ease,
+        background-color 120ms ease;
+    }
+
+    .panel-resize-dragger:hover::after,
+    .panel-resize-dragger:focus-visible::after {
+      width: 42px;
+      background: var(--tertiary);
+    }
+
+    .panel-resize-dragger:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--meter-fill) 55%, transparent);
+      outline-offset: -2px;
+    }
+
+    .panel-resize-dragger--top {
+      box-shadow: 0 10px 18px -20px rgba(0, 0, 0, 0.7);
+    }
+
+    .panel-resize-dragger--bottom {
+      box-shadow: 0 -10px 18px -20px rgba(0, 0, 0, 0.7);
+    }
+
+    .panel-resize-dragger--right {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 8px;
+      height: auto;
+      flex: 0 0 auto;
+      cursor: ew-resize;
+    }
+
+    .panel-resize-dragger--right::after {
+      width: 4px;
+      height: 36px;
+    }
+
+    .panel-resize-dragger--right:hover::after,
+    .panel-resize-dragger--right:focus-visible::after {
+      height: 42px;
+    }
+
+    .content {
+      flex: 1;
+      min-height: 0;
+      padding: 14px 14px 12px;
+      overflow-y: auto;
+      scrollbar-width: none;
+      overflow-x: hidden;
+    }
+
+    .content::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
+
+    .footer {
+      display: flex;
+      min-height: 58px;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-top: 1px solid var(--separator);
+      background: color-mix(in srgb, var(--tray) 92%, transparent);
+    }
+
+    .identity {
+      display: flex;
+      flex-direction: column;
+      color: var(--secondary);
+      font-size: 10px;
+      line-height: 14px;
+    }
+
+    .identity small {
+      color: var(--tertiary);
+      font: inherit;
+    }
+
+    .options-menu {
+      position: relative;
+    }
+
+    .options-menu > summary {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      color: var(--secondary);
+      cursor: pointer;
+      font-size: 13px;
+      list-style: none;
+      place-items: center;
+    }
+
+    .options-menu > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .options-menu[open] > summary,
+    .options-menu > summary:hover {
+      color: var(--text);
+      background: var(--button-hover);
+    }
+
+    .options-menu > div {
+      position: absolute;
+      right: 0;
+      bottom: 36px;
+      z-index: 10;
+      width: 130px;
+      padding: 4px;
+      border: 1px solid var(--separator);
+      border-radius: 9px;
+      background: var(--tray);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    }
+
+    .options-menu button {
+      width: 100%;
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 6px;
+      color: var(--text);
+      background: none;
+      font-size: 11px;
+      text-align: left;
+    }
+
+    .options-menu button:hover {
+      background: var(--button-hover);
+    }
+
+    .screen-header {
+      display: grid;
+      min-height: 30px;
+      align-items: center;
+      grid-template-columns: 54px 1fr 54px;
+      margin-bottom: 8px;
+    }
+
+    .screen-header h1 {
+      margin: 0;
+      font-size: 14px;
+      text-align: center;
+    }
+
+    .screen-header button {
+      width: fit-content;
+      padding: 3px 7px;
+      border: 0;
+      border-radius: 6px;
+      color: var(--secondary);
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .screen-header > button:first-child {
+      font-size: 23px;
+      line-height: 20px;
+    }
+
+    .screen-header .text-button {
+      justify-self: end;
+      color: var(--meter-fill);
+      font-size: 10px;
+    }
+
+    .screen-header button:hover {
+      background: var(--button-hover);
+    }
+
+    :root[data-density='compact'] .content {
+      padding: 9px 11px 7px;
+    }
+
+    :root[data-density='compact'] .footer {
+      min-height: 48px;
+      padding-top: 6px;
+      padding-bottom: 6px;
+    }
+
+    .content {
+      padding: 14px 14px 12px;
+      scrollbar-width: none;
+    }
+
+    .content--chrome {
+      padding-top: 12px;
+    }
+
+    .screen-stage {
+      display: grid;
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      overflow: clip;
+      background: var(--tray);
+    }
+
+    .screen-page {
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      grid-area: 1 / 1;
+      align-self: start;
+      transform-origin: 50% 45%;
+    }
+
+    .footer {
+      min-height: 52px;
+      padding: 12px 14px;
+      border-top: 0;
+      background: color-mix(in srgb, var(--tray) 94%, transparent);
+      box-shadow: 0 -10px 18px -18px rgba(0, 0, 0, 0.65);
+    }
+
+    .identity {
+      padding: 0;
+      border: 0;
+      color: var(--secondary);
+      background: none;
+      font-size: 10px;
+      line-height: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .identity:disabled {
+      cursor: default;
+    }
+
+    .footer-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+
+    .footer-actions .options-menu {
+      margin-left: 0;
+    }
+
+    .window-mode-toggle {
+      display: grid;
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      color: var(--secondary);
+      background: transparent;
+      cursor: pointer;
+      place-items: center;
+      transition:
+        color 120ms ease,
+        background-color 120ms ease,
+        transform 80ms ease;
+    }
+
+    .window-mode-toggle:hover {
+      color: var(--text);
+      background: var(--button-hover);
+    }
+
+    .window-mode-toggle--active {
+      color: var(--meter-fill);
+    }
+
+    .window-mode-toggle:active {
+      transform: scale(0.92);
+    }
+
+    .window-mode-toggle:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--meter-fill) 55%, transparent);
+      outline-offset: 1px;
+    }
+
+    .window-mode-toggle::after {
+      top: auto;
+      bottom: calc(100% + 7px);
+      transform: translate(-50%, 2px) scale(0.97);
+      transform-origin: bottom center;
+    }
+
+    .window-mode-toggle:hover::after,
+    .window-mode-toggle:focus-visible::after {
+      transform: translate(-50%, 0) scale(1);
+    }
+
+    .options-menu {
+      margin-left: auto;
+    }
+
+    .options-menu > summary {
+      display: flex;
+      width: auto;
+      height: 26px;
+      align-items: center;
+      gap: 4px;
+      padding: 0 9px 0 10px;
+      border: 1px solid var(--separator);
+      border-radius: 8px;
+      color: var(--text);
+      background: color-mix(in srgb, var(--card) 72%, transparent);
+      font-size: 11px;
+      font-weight: 550;
+    }
+
+    .options-menu > summary i {
+      margin-top: -2px;
+      font-size: 11px;
+      font-style: normal;
+    }
+
+    .options-menu > summary .symbol-icon {
+      transition: transform 160ms ease;
+    }
+
+    .options-menu[open] > summary .symbol-icon {
+      transform: rotate(180deg);
+    }
+
+    .options-menu > div {
+      bottom: 34px;
+      width: 172px;
+      padding: 6px;
+      border: 0;
+      border-radius: 10px;
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+      transform-origin: bottom right;
+      animation: menu-in 180ms ease-out both;
+    }
+
+    .options-menu button {
+      font-size: 11px;
+    }
+
+    .screen-header {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      min-height: 44px;
+      grid-template-columns: 44px 1fr 44px;
+      margin: 0 -14px 12px;
+      padding: 0 14px;
+      background: color-mix(in srgb, var(--tray) 94%, transparent);
+      box-shadow: 0 10px 18px -20px rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(18px);
+    }
+
+    .app-top-bar {
+      position: relative;
+      top: auto;
+      z-index: 10;
+      width: 100%;
+      min-height: 44px;
+      flex: 0 0 44px;
+      margin: 0;
+      padding: 0 14px;
+    }
+
+    .screen-header h1 {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .screen-header button:first-child {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 50%;
+      background: var(--button-hover);
+      place-items: center;
+    }
+
+    .screen-header .text-button {
+      width: 28px;
+      height: 28px;
+      overflow: hidden;
+      color: var(--secondary);
+      font-size: inherit;
+    }
+
+    .screen-header .text-button::after {
+      content: none;
+    }
+
+    .options-menu .menu-item,
+    .share-menu > summary {
+      display: flex;
+      width: 100%;
+      min-height: 32px;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 9px;
+      border: 0;
+      border-radius: 6px;
+      color: var(--text);
+      background: transparent;
+      font-size: 11px;
+      text-align: left;
+    }
+
+    .options-menu .menu-item span,
+    .share-menu > summary span {
+      flex: 1;
+    }
+
+    .options-menu kbd {
+      color: var(--tertiary);
+      background: none;
+      font: 10px/1 inherit;
+    }
+
+    .options-menu .menu-item--danger {
+      color: var(--meter-critical);
+    }
+
+    .share-menu {
+      position: relative;
+    }
+
+    .share-menu > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .share-menu > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .share-menu > summary .share-menu__direction {
+      display: grid;
+      width: 16px;
+      flex: 0 0 16px;
+      place-items: center;
+    }
+
+    .share-menu > summary .share-menu__direction .symbol-icon {
+      transition: transform 140ms ease;
+    }
+
+    .share-menu[open] > summary .share-menu__direction .symbol-icon {
+      transform: translateX(-2px);
+    }
+
+    .share-menu > div {
+      position: absolute;
+      right: calc(100% - 2px);
+      bottom: -5px;
+      width: 130px;
+      max-width: calc(100vw - 16px);
+      padding: 5px;
+      border: 1px solid var(--separator);
+      border-radius: 9px;
+      background: var(--tray);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+      transform-origin: bottom right;
+      animation: menu-in 160ms ease-out both;
+    }
+
+    .share-menu button {
+      width: 100%;
+      min-height: 30px;
+      padding: 7px 9px;
+      border: 0;
+      border-radius: 5px;
+      color: var(--text);
+      background: transparent;
+      font-size: 11px;
+      text-align: left;
+    }
+
+    .transient-pill {
+      position: absolute;
+      right: 14px;
+      bottom: 62px;
+      z-index: 90;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      border: 1px solid var(--separator);
+      border-radius: 999px;
+      color: var(--text);
+      background: color-mix(in srgb, var(--tray) 96%, transparent);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+      font-size: 10px;
+      animation: detail-in var(--motion-spring) both;
+    }
+
+    .transient-pill .symbol-icon {
+      color: #34c759;
+    }
+
+    .about-backdrop {
+      position: absolute;
+      z-index: 100;
+      display: grid;
+      border: 0;
+      background: rgba(0, 0, 0, 0.28);
+      inset: 0;
+      place-items: center;
+      backdrop-filter: blur(6px);
+    }
+
+    .about-card {
+      position: relative;
+      display: flex;
+      width: 230px;
+      align-items: center;
+      padding: 24px 20px 20px;
+      border: 1px solid var(--separator);
+      border-radius: 16px;
+      color: var(--text);
+      background: var(--tray);
+      box-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
+      flex-direction: column;
+      animation: detail-in var(--motion-spring) both;
+    }
+
+    .about-card h1 {
+      margin: 10px 0 2px;
+      font-size: 17px;
+    }
+
+    .about-card p,
+    .about-card small {
+      margin: 0;
+      color: var(--secondary);
+      font-size: 10px;
+      text-align: center;
+    }
+
+    .about-card__close {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: grid;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      color: var(--secondary);
+      background: var(--button-hover);
+      cursor: pointer;
+      place-items: center;
+      transition:
+        color var(--motion-switch),
+        background var(--motion-switch),
+        transform var(--motion-switch);
+    }
+
+    .about-card__close:hover {
+      color: var(--text);
+      background: color-mix(in srgb, var(--text) 14%, transparent);
+    }
+
+    .about-card__close:active {
+      transform: scale(0.92);
+    }
+
+    .about-card__close:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--meter-fill) 55%, transparent);
+      outline-offset: 1px;
+    }
+
+    :root[data-density='compact'] .content {
+      padding: 10px 14px 8px;
+    }
+
+    :root[data-density='compact'] .content--chrome {
+      padding-top: 12px;
+    }
+
+    .notice--blocking {
+      color: var(--error);
+      background: var(--error-bg);
+    }
+
+    .popover {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+    }
+  }
+</style>

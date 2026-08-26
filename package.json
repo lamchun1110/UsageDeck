@@ -1,0 +1,48 @@
+{
+  "name": "usagedeck",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.11.0",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "vite build",
+    "build:installer": "tauri build --bundles nsis",
+    "build:linux": "tauri build --bundles deb,appimage",
+    "check": "svelte-check --tsconfig ./tsconfig.app.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint eslint.config.js vite.config.ts scripts/verify/*.js src && prettier --check '.github/**/*.{yml,yaml}' '*.{json,md,js,ts}' scripts/verify/*.js 'src/**/*.{ts,svelte,css}' src-tauri/tauri.conf.json src-tauri/capabilities/default.json",
+    "format": "prettier --write '.github/**/*.{yml,yaml}' '*.{json,md,js,ts}' scripts/verify/*.js 'src/**/*.{ts,svelte,css}' src-tauri/tauri.conf.json src-tauri/capabilities/default.json",
+    "verify:versions": "node scripts/verify/verify-versions.js",
+    "verify:contracts": "node scripts/verify/verify-command-contract.js && node scripts/verify/verify-model-contract.js && node scripts/verify/verify-provider-registry-contract.js && node scripts/verify/verify-single-instance-contract.js && node scripts/verify/verify-platform-smoke.js",
+    "verify:frontend": "corepack pnpm lint && corepack pnpm check && corepack pnpm test && corepack pnpm build",
+    "verify:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --all-targets",
+    "verify": "corepack pnpm verify:versions && corepack pnpm verify:contracts && corepack pnpm verify:frontend && corepack pnpm verify:rust",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "svelte": "^5.56.10"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@tauri-apps/cli": "^2.11.4",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/svelte": "^5.4.2",
+    "@types/node": "^26.2.0",
+    "eslint": "^10.8.1",
+    "eslint-plugin-svelte": "^3.23.0",
+    "globals": "^17.11.0",
+    "jsdom": "^29.1.1",
+    "pngjs": "^7.0.0",
+    "prettier": "^3.9.6",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte-check": "^4.7.6",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.67.0",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}
