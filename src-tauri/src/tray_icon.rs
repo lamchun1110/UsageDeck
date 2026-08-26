@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use roxmltree::Document;
 use svgtypes::{PathParser, PathSegment};
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 use tauri::image::Image;
 use tiny_skia::{FillRule, Mask, Paint, Path, PathBuilder, Pixmap, Transform};
 
