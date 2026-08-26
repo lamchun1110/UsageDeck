@@ -27,6 +27,34 @@
 
 UsageDeck 原本是 OpenQuota 的分支，現在已是獨立的專案。你的資料會跟著你走：首次啟動時，UsageDeck 會自動從既有的 OpenQuota 安裝搬移設定、用量歷史與價格快取，存放在系統憑證儲存區的 API 金鑰也會移到 UsageDeck 自己的條目。舊位置的資料一律不會刪除。存放在 `~/.config/openquota/<provider>.json` 的金鑰仍會被讀取；新的金鑰則存放於 `~/.config/usagedeck/`。
 
+## 安裝
+
+從[最新發布](https://github.com/lamchun1110/UsageDeck/releases/latest)下載對應平台的安裝檔：
+
+| 平台    | 檔案                                   | 說明                                        |
+| ------- | -------------------------------------- | ------------------------------------------- |
+| Windows | `_x64-setup.exe` 或 `_arm64-setup.exe` | x64 與 ARM64                                |
+| macOS   | `_universal.dmg`                       | Universal，Developer ID 簽署並經 Apple 公證 |
+| Linux   | `.AppImage` 或 `.deb`                  | x64 與 ARM64，附 GPG 分離簽署               |
+
+應用程式會自動更新。更新包使用專案自己的更新器金鑰做了加密簽署，這與作業系統的套件簽署是兩回事。
+
+### 發布簽署
+
+- **macOS：** 正式發布版本使用簽發給 **Madness Technology Limited** 的 Apple Developer ID 憑證簽署，bundle ID 為 `com.lamchun1110.usagedeck`，並經 Apple 公證與附加票證（staple）。發布流程在發布前會驗證程式碼簽署、Gatekeeper 評估、公證票證與強化執行階段（Hardened Runtime）。
+- **Linux：** 每個 `.AppImage` 與 `.deb` 都有對應的 ASCII 裝甲分離簽署檔 `<file>.asc`。發布內容還包含 `SHA256SUMS`、其 GPG 簽署副本 `SHA256SUMS.asc`，以及驗證所需的公鑰 `usagedeck-gpg-public.asc`。
+
+驗證 Linux 下載：
+
+```bash
+gpg --import usagedeck-gpg-public.asc
+gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
+# 請將上方的範例檔名替換為發布頁中的實際檔名。
+```
+
+> [!IMPORTANT]
+> Windows 安裝程式目前未做 Authenticode 簽署，SmartScreen 可能會要求你確認。請只從本儲存庫的發布頁面下載 UsageDeck。每個版本的發布說明都會註明該版本的正確簽署狀態。
+
 ## 可追蹤的服務
 
 | 服務                                              | 憑證來源 | 追蹤內容                                                     |

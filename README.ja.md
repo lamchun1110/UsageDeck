@@ -31,16 +31,29 @@ UsageDeck は OpenQuota のフォークとして始まり、現在は独立し�
 
 [最新リリース](https://github.com/lamchun1110/UsageDeck/releases/latest)からお使いのプラットフォーム向けのファイルを取得してください。
 
-| プラットフォーム | ファイル                                   | 備考                                  |
-| ---------------- | ------------------------------------------ | ------------------------------------- |
-| Windows          | `_x64-setup.exe` または `_arm64-setup.exe` | x64 と ARM64                          |
-| macOS            | `_universal.dmg`                           | Apple Silicon と Intel、macOS 11 以降 |
-| Linux            | `.AppImage` または `.deb`                  | x64 と ARM64                          |
+| プラットフォーム | ファイル                                   | 備考                                             |
+| ---------------- | ------------------------------------------ | ------------------------------------------------ |
+| Windows          | `_x64-setup.exe` または `_arm64-setup.exe` | x64 と ARM64                                     |
+| macOS            | `_universal.dmg`                           | Universal、Developer ID 署名済み、Apple 公証済み |
+| Linux            | `.AppImage` または `.deb`                  | x64 と ARM64、GPG 分離署名付き                   |
 
 アプリは自動で更新されます。更新ペイロードはプロジェクト独自のアップデーター鍵で署名されており、これは OS のパッケージ署名とは別の仕組みです。
 
+### リリース署名
+
+- **macOS:** 公式リリースは **Madness Technology Limited** 名義の Apple Developer ID 証明書で署名され、バンドル ID は `com.lamchun1110.usagedeck`、Apple による公証とステープルが適用されています。リリースワークフローは公開前に、コード署名・Gatekeeper 評価・公証チケット・Hardened Runtime を検証します。
+- **Linux:** すべての `.AppImage` と `.deb` に、ASCII armored の分離署名 `<file>.asc` が付きます。リリースには `SHA256SUMS`、その GPG 署名版である `SHA256SUMS.asc`、検証に必要な公開鍵 `usagedeck-gpg-public.asc` も含まれます。
+
+Linux ダウンロードを検証するには:
+
+```bash
+gpg --import usagedeck-gpg-public.asc
+gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
+# 上のファイル名は、リリースページの実際のファイル名に置き換えてください。
+```
+
 > [!IMPORTANT]
-> このビルドではネイティブ署名が既定で無効です。Windows インストーラーは Authenticode 署名されず、macOS アプリはアドホック署名のみで Apple の公証も受けていません。そのため SmartScreen や Gatekeeper が確認を求めることがあり、macOS では「プライバシーとセキュリティ」での手動許可が必要になる場合があります。ダウンロードは必ず本リポジトリのリリースページから行ってください。各リリースのノートに、そのリリースの正確な署名状況が記載されています。
+> Windows インストーラーは現在 Authenticode 署名がないため、SmartScreen が確認を求めることがあります。UsageDeck は必ず本リポジトリのリリースページからのみダウンロードしてください。各リリースのノートに正確な署名状況が記載されています。
 
 ## 取得できる情報
 

@@ -37,19 +37,30 @@ API 密钥也会移到 UsageDeck 自己的条目下。旧位置的数据一律�
 
 从[最新发布](https://github.com/lamchun1110/UsageDeck/releases/latest)下载对应平台的安装文件：
 
-| 平台    | 文件                                   | 说明                              |
-| ------- | -------------------------------------- | --------------------------------- |
-| Windows | `_x64-setup.exe` 或 `_arm64-setup.exe` | x64 与 ARM64                      |
-| macOS   | `_universal.dmg`                       | Apple Silicon 与 Intel，macOS 11+ |
-| Linux   | `.AppImage` 或 `.deb`                  | x64 与 ARM64                      |
+| 平台    | 文件                                   | 说明                                           |
+| ------- | -------------------------------------- | ---------------------------------------------- |
+| Windows | `_x64-setup.exe` 或 `_arm64-setup.exe` | x64 与 ARM64                                   |
+| macOS   | `_universal.dmg`                       | Universal，带 Developer ID 签名并经 Apple 公证 |
+| Linux   | `.AppImage` 或 `.deb`                  | x64 与 ARM64，附 GPG 分离签名                  |
 
 应用会自动更新。更新包使用项目自己的更新器密钥做了加密签名，这与操作系统的包签名是两回事。
 
+### 发布签名
+
+- **macOS：** 正式发布版使用颁发给 **Madness Technology Limited** 的 Apple Developer ID 证书签名，bundle ID 为 `com.lamchun1110.usagedeck`，并经 Apple 公证和装订（staple）。发布工作流在发布前会验证代码签名、Gatekeeper 评估、公证票据与强化运行时（Hardened Runtime）。
+- **Linux：** 每个 `.AppImage` 和 `.deb` 都有对应的 ASCII 装甲分离签名文件 `<file>.asc`。发布内容还包含 `SHA256SUMS`、它的 GPG 签名副本 `SHA256SUMS.asc`，以及验证所需的公钥 `usagedeck-gpg-public.asc`。
+
+验证 Linux 下载：
+
+```bash
+gpg --import usagedeck-gpg-public.asc
+gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
+# 请将上面的示例文件名替换为发布页中的实际文件名。
+```
+
 > [!IMPORTANT]
-> 默认未开启原生签名。Windows 安装包没有 Authenticode 签名，macOS 应用仅带有 ad-hoc
-> 签名且未经 Apple 公证——因此 SmartScreen 或 Gatekeeper 可能会要求你确认，macOS
-> 下可能需要在“隐私与安全性”中手动允许。请只从本仓库的发布页面下载。每个版本的发布说明中
-> 都会注明该版本的确切签名状态。
+> Windows 安装包目前未做 Authenticode 签名，SmartScreen 可能会要求你确认。请只从本仓库的
+> 发布页面下载 UsageDeck。每个版本的发布说明中都会注明该版本的确切签名状态。
 
 ## 可追踪的服务
 

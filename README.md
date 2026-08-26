@@ -54,20 +54,37 @@ and will not appear in an API-key-only session.
 Grab the file for your platform from the
 [latest release](https://github.com/lamchun1110/UsageDeck/releases/latest):
 
-| Platform | File                                   | Notes                              |
-| -------- | -------------------------------------- | ---------------------------------- |
-| Windows  | `_x64-setup.exe` or `_arm64-setup.exe` | x64 and ARM64                      |
-| macOS    | `_universal.dmg`                       | Apple Silicon and Intel, macOS 11+ |
-| Linux    | `.AppImage` or `.deb`                  | x64 and ARM64                      |
+| Platform | File                                   | Notes                                              |
+| -------- | -------------------------------------- | -------------------------------------------------- |
+| Windows  | `_x64-setup.exe` or `_arm64-setup.exe` | x64 and ARM64                                      |
+| macOS    | `_universal.dmg`                       | Universal, Developer ID signed and Apple notarized |
+| Linux    | `.AppImage` or `.deb`                  | x64 and ARM64, with detached GPG signatures        |
 
 The app updates itself. Update payloads are cryptographically signed with the project's own updater
 key, which is a separate thing from operating-system package signing.
 
+### Release signatures
+
+- **macOS:** official releases are signed with an Apple Developer ID certificate issued to
+  **Madness Technology Limited**, use the bundle ID `com.lamchun1110.usagedeck`, and are notarized
+  and stapled by Apple. The release workflow verifies the code signature, Gatekeeper assessment,
+  notarization ticket, and hardened runtime before publishing.
+- **Linux:** every `.AppImage` and `.deb` has a matching ASCII-armored detached signature named
+  `<file>.asc`. Releases also include `SHA256SUMS`, its GPG-signed copy `SHA256SUMS.asc`, and
+  `usagedeck-gpg-public.asc`, the public key needed for verification.
+
+To verify a Linux download:
+
+```bash
+gpg --import usagedeck-gpg-public.asc
+gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
+# Replace the example filenames above with the exact files from the release.
+```
+
 > [!IMPORTANT]
-> Native signing is off by default. Windows installers are not Authenticode-signed, and the macOS
-> app carries an ad-hoc signature with no Apple notarization — so SmartScreen or Gatekeeper may ask
-> you to confirm, and macOS may need a manual approval under **Privacy & Security**. Only download
-> from this repository's releases page. Every release states its exact signing status in the notes.
+> Windows installers are not currently Authenticode-signed, so SmartScreen may ask you to confirm.
+> Only download UsageDeck from this repository's releases page. Every release states its exact
+> signing status in the notes.
 
 ## Coming from OpenQuota?
 

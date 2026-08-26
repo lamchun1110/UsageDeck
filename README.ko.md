@@ -31,16 +31,29 @@ UsageDeck은 OpenQuota 포크로 시작해 지금은 독립 프로젝트가 되�
 
 [최신 릴리스](https://github.com/lamchun1110/UsageDeck/releases/latest)에서 사용 중인 플랫폼에 맞는 파일을 내려받으세요.
 
-| 플랫폼  | 파일                                     | 비고                                  |
-| ------- | ---------------------------------------- | ------------------------------------- |
-| Windows | `_x64-setup.exe` 또는 `_arm64-setup.exe` | x64 및 ARM64                          |
-| macOS   | `_universal.dmg`                         | Apple Silicon 및 Intel, macOS 11 이상 |
-| Linux   | `.AppImage` 또는 `.deb`                  | x64 및 ARM64                          |
+| 플랫폼  | 파일                                     | 비고                                           |
+| ------- | ---------------------------------------- | ---------------------------------------------- |
+| Windows | `_x64-setup.exe` 또는 `_arm64-setup.exe` | x64 및 ARM64                                   |
+| macOS   | `_universal.dmg`                         | 유니버설, Developer ID 서명 및 Apple 공증 완료 |
+| Linux   | `.AppImage` 또는 `.deb`                  | x64 및 ARM64, GPG 분리 서명 포함               |
 
 앱은 스스로 업데이트합니다. 업데이트 페이로드는 프로젝트 자체의 업데이터 키로 서명되며, 이는 운영 체제의 패키지 서명과는 별개입니다.
 
+### 릴리스 서명
+
+- **macOS:** 공식 릴리스는 **Madness Technology Limited** 명의의 Apple Developer ID 인증서로 서명되고, 번들 ID는 `com.lamchun1110.usagedeck`이며 Apple 공증과 스테이플이 적용됩니다. 릴리스 워크플로는 게시 전에 코드 서명, Gatekeeper 평가, 공증 티켓, Hardened Runtime을 검증합니다.
+- **Linux:** 모든 `.AppImage`와 `.deb`에는 ASCII 아머 분리 서명 `<file>.asc`가 함께 제공됩니다. 릴리스에는 `SHA256SUMS`, GPG로 서명된 `SHA256SUMS.asc`, 검증에 필요한 공개 키 `usagedeck-gpg-public.asc`도 포함됩니다.
+
+Linux 다운로드를 검증하려면:
+
+```bash
+gpg --import usagedeck-gpg-public.asc
+gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
+# 위 파일 이름은 릴리스 페이지의 실제 파일 이름으로 바꾸세요.
+```
+
 > [!IMPORTANT]
-> 이 빌드는 네이티브 서명이 기본적으로 꺼져 있습니다. Windows 설치 프로그램은 Authenticode 서명이 되지 않고, macOS 앱은 애드혹 서명만 있으며 Apple 공증도 받지 않았습니다. 따라서 SmartScreen이나 Gatekeeper가 확인을 요구할 수 있고, macOS에서는 '개인 정보 보호 및 보안'에서 수동으로 허용해야 할 수 있습니다. 반드시 이 저장소의 릴리스 페이지에서만 내려받으세요. 각 릴리스 노트에 해당 릴리스의 정확한 서명 상태가 명시되어 있습니다.
+> Windows 설치 프로그램은 현재 Authenticode 서명이 없어 SmartScreen이 확인을 요구할 수 있습니다. UsageDeck은 반드시 이 저장소의 릴리스 페이지에서만 내려받으세요. 각 릴리스 노트에 정확한 서명 상태가 명시되어 있습니다.
 
 ## 추적하는 항목
 
