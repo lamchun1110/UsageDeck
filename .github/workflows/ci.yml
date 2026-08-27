@@ -9,20 +9,30 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    # ubuntu-24.04 is a migration canary: GitHub starts deprecating the 22.04 runner image on
+    # 2026-09-17, so keep a leg proving the pipeline works there. Its failures do not block.
+    # ubuntu-22.04 stays the release floor: linking against its glibc 2.35 keeps the AppImage
+    # and .deb installable on every still-supported Ubuntu LTS.
+    continue-on-error: ${{ matrix.os == 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-22.04]
+        os: [windows-latest, windows-11-arm, macos-latest, ubuntu-22.04, ubuntu-24.04]
 
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-22.04'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -39,14 +49,15 @@ jobs:
             xdotool \
             xvfb
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-
       - uses: pnpm/action-setup@v6
         with:
           version: 11.11.0
           run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -151,12 +162,22 @@ jobs:
         uses: ./.github/actions/platform-smoke
 
       - name: Upload Windows installer
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v7
         with:
           name: UsageDeck-Windows-installer
           path: src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Windows ARM64 installer
+        if: matrix.os == 'windows-11-arm'
+        uses: actions/upload-artifact@v7
+        with:
+          name: UsageDeck-Windows-ARM64-installer
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload macOS DMG
         if: runner.os == 'macOS'
@@ -165,19 +186,22 @@ jobs:
           name: UsageDeck-macOS-DMG
           path: src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
+          retention-days: 14
 
       - name: Upload Linux AppImage
-        if: runner.os == 'Linux'
+        if: matrix.os == 'ubuntu-22.04'
         uses: actions/upload-artifact@v7
         with:
           name: UsageDeck-Linux-AppImage
           path: src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
+          retention-days: 14
 
       - name: Upload Linux Debian package
-        if: runner.os == 'Linux'
+        if: matrix.os == 'ubuntu-22.04'
         uses: actions/upload-artifact@v7
         with:
           name: UsageDeck-Linux-deb
           path: src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
+          retention-days: 14

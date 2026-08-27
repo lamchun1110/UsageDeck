@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    ignore:
+      # gtk 0.18 — pinned by tauri 2.11 — requires glib 0.18, so Dependabot's glib
+      # update PRs can never satisfy Cargo. Drop this rule once Cargo.lock moves to
+      # glib >= 0.20 (tauri adopting the gtk 0.20+ stack).
+      - dependency-name: glib
