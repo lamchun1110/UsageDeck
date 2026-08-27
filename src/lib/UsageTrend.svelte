@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { t } from './i18n.svelte';
   import { SvelteDate } from 'svelte/reactivity';
   import { formatMetricNumber } from './metricFormat';
   import type { DailyUsage } from './types';
@@ -64,8 +65,8 @@
   });
 </script>
 
-<section class="trend-row" aria-label="Usage Trend">
-  <strong>Usage Trend</strong>
+<section class="trend-row" aria-label={t('trend.title')}>
+  <strong>{t('trend.title')}</strong>
   {#if total > 0}
     <div
       class="trend-chart-wrap"
@@ -78,7 +79,7 @@
         class="trend-bars"
         class:trend-bars--active={detailVisible}
         role="img"
-        aria-label={`30-day token chart. Peak ${compact(peak.tokens)} tokens on ${peak.date}.`}
+        aria-label={t('trend.aria', { peak: compact(peak.tokens), date: peak.date })}
       >
         {#each points as point (point.date)}
           <span
@@ -90,7 +91,7 @@
       {#if detailVisible}
         <aside class="trend-detail" onmouseenter={revealDetail} onmouseleave={concealDetail}>
           <header>
-            <strong>Usage Trend</strong><span
+            <strong>{t('trend.title')}</strong><span
               >{hoveredDate
                 ? `${dayLabel(highlightedPoint.date)} · ${compact(highlightedPoint.tokens)} tokens`
                 : `peak ${compact(peak.tokens)} tokens`}</span
@@ -120,7 +121,7 @@
       {/if}
     </div>
   {:else}
-    <p class="trend-empty">No data</p>
+    <p class="trend-empty">{t('trend.empty')}</p>
   {/if}
 </section>
 

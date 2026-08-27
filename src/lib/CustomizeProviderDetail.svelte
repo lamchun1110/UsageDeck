@@ -78,7 +78,7 @@
   function togglePin(metric: MetricLayout, button: HTMLButtonElement) {
     if (!provider || !metricDefinition(metric.id)?.pinnable) return;
     if (!metric.pinned && provider.metrics.filter((item) => item.pinned).length >= 2) {
-      showMessage('Up to 2 stars per provider', 'denied');
+      showMessage(t('customize.starsLimit'), 'denied');
       if (!reducedMotion) {
         button.animate?.(
           [
@@ -95,7 +95,7 @@
       }
       return;
     }
-    showMessage(metric.pinned ? 'Removed from menu bar' : 'Starred for menu bar', 'success');
+    showMessage(metric.pinned ? t('customize.unstarred') : t('customize.starred'), 'success');
     updateMetric({ ...metric, pinned: !metric.pinned });
   }
   function showMessage(text: string, kind: 'success' | 'denied') {
