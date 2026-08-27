@@ -43,4 +43,6 @@ export const ja = {
   'deadline.todayDetail': '今日 {time}',
   'deadline.tomorrowDetail': '明日 {time}',
   'deadline.dateDetail': '{date} {time}',
+  'settings.barsHint':
+    'バーはパネルの上から下の順序どおりです。トレイアイコンにカーソルを合わせると各プロバイダーの名前と値が表示されます。',
 } as const;

@@ -25,6 +25,10 @@ pub enum StorageError {
     Poisoned,
 }
 
+/// The only non-automatic value stored in `panel_state.height_mode`; NULL and every other value
+/// mean automatic, so absent or legacy rows default to the automatic height mode.
+pub const MANUAL_HEIGHT_MODE: &str = "manual";
+
 pub struct Storage {
     connection: Mutex<Connection>,
 }
@@ -188,6 +192,11 @@ impl Storage {
         }
         if !Self::has_column(&connection, "panel_state", "width")? {
             connection.execute("ALTER TABLE panel_state ADD COLUMN width INTEGER", [])?;
+        }
+        // Legacy rows keep their height as a dormant value but start in automatic mode: presence
+        // of a stored height no longer implies a manual preference.
+        if !Self::has_column(&connection, "panel_state", "height_mode")? {
+            connection.execute("ALTER TABLE panel_state ADD COLUMN height_mode TEXT", [])?;
         }
         Ok(Self {
             connection: Mutex::new(connection),
@@ -581,22 +590,43 @@ impl Storage {
                 row.get::<_, i64>(0)
             })
             .optional()?;
-        Ok(height.and_then(|value| u32::try_from(value).ok()))
+        // Width-only upserts write a zero height placeholder; treat it as "no height".
+        Ok(height
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|height| *height > 0))
     }
 
     pub fn save_panel_height(&self, height: u32) -> Result<(), StorageError> {
         self.connection()?.execute(
-            "INSERT INTO panel_state(id, height) VALUES (1, ?1)
-             ON CONFLICT(id) DO UPDATE SET height = excluded.height",
-            [i64::from(height)],
+            "INSERT INTO panel_state(id, height, height_mode) VALUES (1, ?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET
+               height = excluded.height,
+               height_mode = excluded.height_mode",
+            params![i64::from(height), MANUAL_HEIGHT_MODE],
         )?;
         Ok(())
     }
 
-    pub fn clear_panel_height(&self) -> Result<(), StorageError> {
-        self.connection()?
-            .execute("DELETE FROM panel_state WHERE id = 1", [])?;
+    /// Switches the persisted height preference to automatic. The stored height is kept as the
+    /// dormant value the next manual choice starts from; absence of a row is automatic too.
+    pub fn mark_panel_height_automatic(&self) -> Result<(), StorageError> {
+        self.connection()?.execute(
+            "UPDATE panel_state SET height_mode = 'automatic' WHERE id = 1",
+            [],
+        )?;
         Ok(())
+    }
+
+    pub fn load_panel_height_mode(&self) -> Result<Option<String>, StorageError> {
+        let connection = self.connection()?;
+        let mode = connection
+            .query_row(
+                "SELECT height_mode FROM panel_state WHERE id = 1",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        Ok(mode.flatten())
     }
 
     pub fn load_panel_width(&self) -> Result<Option<u32>, StorageError> {
@@ -677,7 +707,7 @@ mod tests {
     #[test]
     fn quota_history_keeps_one_sample_per_hour_and_day() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let quota = |used_percent: f64| QuotaWindow {
             id: "session".into(),
             label: "Session".into(),
@@ -733,9 +763,9 @@ mod tests {
     #[test]
     fn corrupted_database_is_moved_aside_and_recreated() {
         let directory = tempdir().unwrap();
-        let path = directory.path().join("openquota.db");
+        let path = directory.path().join("usagedeck.db");
         std::fs::write(&path, b"this is definitely not a sqlite database").unwrap();
-        std::fs::write(path.with_file_name("openquota.db-wal"), b"stale wal").unwrap();
+        std::fs::write(path.with_file_name("usagedeck.db-wal"), b"stale wal").unwrap();
 
         let storage = Storage::open(&path).unwrap();
         let snapshot = ProviderSnapshot {
@@ -756,12 +786,12 @@ mod tests {
             .unwrap()
             .filter_map(|entry| {
                 let name = entry.ok()?.file_name().into_string().ok()?;
-                name.starts_with("openquota.db.corrupt-").then_some(name)
+                name.starts_with("usagedeck.db.corrupt-").then_some(name)
             })
             .collect::<Vec<_>>();
         quarantined.sort();
         assert_eq!(quarantined.len(), 1, "only the primary file remains to quarantine after the stale WAL is dropped or moved: {quarantined:?}");
-        assert!(quarantined[0].starts_with("openquota.db.corrupt-"));
+        assert!(quarantined[0].starts_with("usagedeck.db.corrupt-"));
         assert_eq!(
             std::fs::read(directory.path().join(&quarantined[0])).unwrap(),
             b"this is definitely not a sqlite database"
@@ -771,7 +801,7 @@ mod tests {
     #[test]
     fn snapshot_round_trip_contains_no_credentials() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let snapshot = ProviderSnapshot {
             provider_id: "codex".into(),
             plan: Some("Plus".into()),
@@ -811,7 +841,7 @@ mod tests {
         storage.save_snapshot(&snapshot).unwrap();
 
         assert_eq!(storage.load_snapshot("codex").unwrap(), Some(snapshot));
-        let bytes = std::fs::read(directory.path().join("openquota.db")).unwrap();
+        let bytes = std::fs::read(directory.path().join("usagedeck.db")).unwrap();
         let database = String::from_utf8_lossy(&bytes);
         assert!(!database.contains("access_token"));
         assert!(!database.contains("refresh_token"));
@@ -820,7 +850,7 @@ mod tests {
     #[test]
     fn account_scoped_snapshot_is_visible_only_to_the_same_identity() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let snapshot = ProviderSnapshot {
             provider_id: "claude".into(),
             plan: Some("Max".into()),
@@ -859,7 +889,7 @@ mod tests {
     #[test]
     fn provider_account_records_round_trip_by_family() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
 
         storage
             .save_provider_account_record(
@@ -891,7 +921,7 @@ mod tests {
     #[test]
     fn account_records_and_settings_roll_back_together() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let original = AppSettings {
             theme: crate::models::ThemePreference::Light,
             ..AppSettings::default()
@@ -931,7 +961,7 @@ mod tests {
     #[test]
     fn legacy_snapshot_table_gains_the_account_identity_column() {
         let directory = tempdir().unwrap();
-        let path = directory.path().join("openquota.db");
+        let path = directory.path().join("usagedeck.db");
         let legacy = Connection::open(&path).unwrap();
         legacy
             .execute_batch(
@@ -953,7 +983,7 @@ mod tests {
     #[test]
     fn legacy_count_quota_cache_is_normalized_at_load_boundary() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let snapshot = ProviderSnapshot {
             provider_id: "cursor".into(),
             plan: None,
@@ -989,7 +1019,7 @@ mod tests {
     #[test]
     fn settings_round_trip_uses_the_same_disk_database() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let settings = AppSettings {
             always_show_pacing: true,
             ..AppSettings::default()
@@ -1001,24 +1031,34 @@ mod tests {
     #[test]
     fn panel_height_round_trip_is_independent_from_app_settings() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let settings = AppSettings::default();
         storage.save_settings(&settings).unwrap();
 
         assert_eq!(storage.load_panel_height().unwrap(), None);
+        assert_eq!(storage.load_panel_height_mode().unwrap(), None);
         storage.save_panel_height(734).unwrap();
 
         assert_eq!(storage.load_panel_height().unwrap(), Some(734));
+        assert_eq!(
+            storage.load_panel_height_mode().unwrap().as_deref(),
+            Some(super::MANUAL_HEIGHT_MODE)
+        );
         assert_eq!(storage.load_settings().unwrap(), Some(settings));
 
-        storage.clear_panel_height().unwrap();
-        assert_eq!(storage.load_panel_height().unwrap(), None);
+        // Automatic keeps the height as a dormant value while restoring the automatic mode.
+        storage.mark_panel_height_automatic().unwrap();
+        assert_eq!(storage.load_panel_height().unwrap(), Some(734));
+        assert_eq!(
+            storage.load_panel_height_mode().unwrap().as_deref(),
+            Some("automatic")
+        );
     }
 
     #[test]
     fn panel_width_round_trip_preserves_height_and_is_independent_from_app_settings() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let settings = AppSettings::default();
         storage.save_settings(&settings).unwrap();
 
@@ -1034,7 +1074,7 @@ mod tests {
     #[test]
     fn log_cache_pruning_is_scoped_to_a_provider() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let codex_old = PathBuf::from("/logs/codex-old.jsonl");
         let codex_current = PathBuf::from("/logs/codex-current.jsonl");
         let claude_current = PathBuf::from("/logs/claude-current.jsonl");
@@ -1075,7 +1115,7 @@ mod tests {
     #[test]
     fn providers_can_cache_the_same_path_independently() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let shared = PathBuf::from("/synced/session.jsonl");
         storage
             .save_log_events("claude", &shared, 10, 20, "claude")
@@ -1097,7 +1137,7 @@ mod tests {
     #[test]
     fn legacy_millisecond_log_cache_is_safely_rebuilt() {
         let directory = tempdir().unwrap();
-        let path = directory.path().join("openquota.db");
+        let path = directory.path().join("usagedeck.db");
         let legacy = Connection::open(&path).unwrap();
         legacy
             .execute_batch(

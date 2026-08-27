@@ -43,4 +43,6 @@ export const en = {
   'deadline.todayDetail': 'today at {time}',
   'deadline.tomorrowDetail': 'tomorrow at {time}',
   'deadline.dateDetail': '{date} at {time}',
+  'settings.barsHint':
+    "Bars follow your dashboard order, top to bottom. Hover the tray icon to see each provider's name and value.",
 } as const;

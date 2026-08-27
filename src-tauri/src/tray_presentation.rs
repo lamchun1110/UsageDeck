@@ -62,12 +62,11 @@ pub fn update(
     };
     let groups = resolved_groups(state, settings, registry);
     let tooltip = tooltip_text(&tooltip_entries(state, settings, registry));
-    #[cfg(not(target_os = "linux"))]
+    // Hovering the tray names each provider in strip order, which is the only way to tell the
+    // Bars-style icon's rows apart; hosts without tooltip support simply ignore it.
     if tray.set_tooltip(Some(tooltip)).is_err() {
         crate::app_warn!("tray", "tray tooltip update failed");
     }
-    #[cfg(target_os = "linux")]
-    let _ = tooltip;
 
     #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
     {

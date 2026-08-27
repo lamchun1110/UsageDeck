@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PanelHeightMode } from './backend';
-  import { LANGUAGE_PREFERENCES } from './i18n.svelte';
+  import { LANGUAGE_PREFERENCES, t } from './i18n.svelte';
   import Icon from './Icon.svelte';
   import type { DesktopPlatform } from './platform';
   import SelectMenu from './SelectMenu.svelte';
@@ -187,6 +187,9 @@
           onChange={(value) => patch({ menuBarStyle: value as AppSettings['menuBarStyle'] })}
         />
       </div>
+      {#if settings.menuBarStyle === 'bars'}
+        <small>{t('settings.barsHint')}</small>
+      {/if}
     {/if}
     <div class="setting-row">
       <span><b>Theme</b></span><SelectMenu

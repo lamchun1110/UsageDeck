@@ -43,4 +43,6 @@ export const ko = {
   'deadline.todayDetail': '오늘 {time}',
   'deadline.tomorrowDetail': '내일 {time}',
   'deadline.dateDetail': '{date} {time}',
+  'settings.barsHint':
+    '막대는 패널의 위에서 아래 순서를 따릅니다. 트레이 아이콘에 마우스를 올리면 각 제공자의 이름과 값을 볼 수 있습니다.',
 } as const;

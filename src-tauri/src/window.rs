@@ -56,8 +56,12 @@ pub(crate) struct PanelResetToken {
 
 impl PanelResizeSession {
     pub fn new(storage: Arc<Storage>) -> Self {
+        // The persisted height is only a dormant value; automatic is the default unless the user
+        // explicitly chose manual, so a stored (or width-only placeholder) height never pins the
+        // panel to manual mode on its own.
         let automatic = Arc::new(AtomicBool::new(
-            storage.load_panel_height().ok().flatten().is_none(),
+            storage.load_panel_height_mode().ok().flatten().as_deref()
+                != Some(crate::storage::MANUAL_HEIGHT_MODE),
         ));
         let generation = Arc::new(AtomicU64::new(0));
         let persistence = Arc::new(Mutex::new(()));
@@ -182,7 +186,7 @@ impl PanelResizeSession {
             .load_panel_height()
             .map_err(|_| "UsageDeck panel state could not be loaded.".to_owned())?;
         self.storage
-            .clear_panel_height()
+            .mark_panel_height_automatic()
             .map_err(|_| "UsageDeck panel state could not be saved.".to_owned())?;
         self.active.store(false, Ordering::SeqCst);
         *latest = None;
@@ -211,7 +215,7 @@ impl PanelResizeSession {
             self.automatic.store(false, Ordering::SeqCst);
         } else {
             self.storage
-                .clear_panel_height()
+                .mark_panel_height_automatic()
                 .map_err(|_| "UsageDeck panel state could not be restored.".to_owned())?;
             self.automatic.store(true, Ordering::SeqCst);
         }
@@ -951,7 +955,7 @@ mod tests {
     #[test]
     fn a_real_resize_owns_the_height_until_automatic_mode_is_restored() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let session = PanelResizeSession::new(storage.clone());
 
         assert_eq!(session.mode(), PanelHeightMode::Automatic);
@@ -969,14 +973,44 @@ mod tests {
 
         session.set_automatic().unwrap();
         assert_eq!(session.mode(), PanelHeightMode::Automatic);
-        assert_eq!(storage.load_panel_height().unwrap(), None);
+        assert_eq!(
+            storage.load_panel_height_mode().unwrap().as_deref(),
+            Some("automatic")
+        );
+        // The height survives as the dormant value the next manual choice starts from.
+        assert_eq!(storage.load_panel_height().unwrap(), Some(612));
 
         session.begin(680).unwrap();
         session.record(720);
         session.set_automatic().unwrap();
         session.finish(Some(720));
         assert_eq!(session.mode(), PanelHeightMode::Automatic);
-        assert_eq!(storage.load_panel_height().unwrap(), None);
+        assert_eq!(storage.load_panel_height().unwrap(), Some(680));
+    }
+
+    #[test]
+    fn startup_defaults_to_automatic_even_when_a_height_is_stored() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+        // Legacy installs only have a stored height, which must not pin them to manual mode.
+        storage.save_panel_height(600).unwrap();
+        storage.mark_panel_height_automatic().unwrap();
+
+        let session = PanelResizeSession::new(storage.clone());
+        assert_eq!(session.mode(), PanelHeightMode::Automatic);
+        assert_eq!(session.saved_height(), Some(600));
+    }
+
+    #[test]
+    fn width_only_saves_do_not_flip_the_panel_into_manual_mode() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+
+        // A width upsert writes a zero height placeholder; it must not imply a manual height.
+        storage.save_panel_width(460).unwrap();
+        let session = PanelResizeSession::new(storage.clone());
+        assert_eq!(session.mode(), PanelHeightMode::Automatic);
+        assert_eq!(session.saved_height(), None);
     }
 
     #[test]
@@ -996,7 +1030,7 @@ mod tests {
     #[test]
     fn failed_settings_reset_only_restores_unchanged_panel_state() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let session = PanelResizeSession::new(storage.clone());
         session.set_manual(560).unwrap();
 

@@ -43,4 +43,6 @@ export const zhCN = {
   'deadline.todayDetail': '今天 {time}',
   'deadline.tomorrowDetail': '明天 {time}',
   'deadline.dateDetail': '{date} {time}',
+  'settings.barsHint':
+    '色条按面板从上到下的顺序排列。将鼠标悬停在托盘图标上可查看每个服务的名称和数值。',
 } as const;

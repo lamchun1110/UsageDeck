@@ -43,4 +43,6 @@ export const zhTW = {
   'deadline.todayDetail': '今天 {time}',
   'deadline.tomorrowDetail': '明天 {time}',
   'deadline.dateDetail': '{date} {time}',
+  'settings.barsHint':
+    '色條依面板從上到下的順序排列。將滑鼠停留在系統匣圖示上可查看每個服務的名稱與數值。',
 } as const;
