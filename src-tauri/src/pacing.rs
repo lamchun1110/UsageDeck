@@ -28,7 +28,12 @@ pub struct PaceProjection {
 }
 
 pub fn project(window: &QuotaWindow, now: DateTime<Utc>) -> PaceProjection {
-    let used = window.used_percent.clamp(0.0, 100.0);
+    // A non-finite percent means the provider could not derive one (0/0 and
+    // friends); `clamp` would pass NaN straight into the projection and the
+    // menu bar would render it as "NaN%".
+    let Some(used) = finite_used_percent(window.used_percent) else {
+        return level_projection();
+    };
     if is_visibly_spent(window, used) {
         return PaceProjection {
             severity: PaceSeverity::Spent,
@@ -38,13 +43,13 @@ pub fn project(window: &QuotaWindow, now: DateTime<Utc>) -> PaceProjection {
         };
     }
     if used <= 0.0 {
-        return level_projection(used);
+        return level_projection();
     }
     let Some(resets_at) = window.resets_at else {
-        return level_projection(used);
+        return level_projection();
     };
     if window.period_seconds == 0 || resets_at <= now {
-        return level_projection(used);
+        return level_projection();
     }
     let period = Duration::seconds(window.period_seconds as i64);
     let starts_at = resets_at - period;
@@ -56,7 +61,7 @@ pub fn project(window: &QuotaWindow, now: DateTime<Utc>) -> PaceProjection {
     let progress = (elapsed_seconds / window.period_seconds as f64).clamp(0.0, 1.0);
     // Very young windows carry too little signal for a useful burn-rate projection.
     if elapsed_seconds < (window.period_seconds as f64 * 0.01).max(60.0) {
-        return level_projection(used);
+        return level_projection();
     }
     let projected = used / progress;
     if projected <= 90.0 {
@@ -68,7 +73,7 @@ pub fn project(window: &QuotaWindow, now: DateTime<Utc>) -> PaceProjection {
         };
     }
     if used < 5.0 {
-        return level_projection(used);
+        return level_projection();
     }
     if projected <= 100.0 {
         return PaceProjection {
@@ -104,7 +109,11 @@ fn is_visibly_spent(window: &QuotaWindow, used_percent: f64) -> bool {
     (100.0 - used_percent).round() <= 0.0
 }
 
-fn level_projection(_used: f64) -> PaceProjection {
+fn finite_used_percent(value: f64) -> Option<f64> {
+    value.is_finite().then(|| value.clamp(0.0, 100.0))
+}
+
+fn level_projection() -> PaceProjection {
     PaceProjection {
         severity: PaceSeverity::Untracked,
         projected_used_percent: None,
@@ -247,8 +256,9 @@ impl NotificationEvaluator {
             let mut new_alerts = transition(
                 state,
                 projection.severity,
-                100.0 - window.used_percent.clamp(0.0, 100.0),
+                finite_used_percent(window.used_percent).map_or(100.0, |used| 100.0 - used),
                 window.resets_at,
+                now,
                 &settings.notifications,
                 &window.label,
             );
@@ -271,6 +281,7 @@ fn transition(
     severity: PaceSeverity,
     remaining_percent: f64,
     resets_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
     toggles: &NotificationPreferences,
     metric: &str,
 ) -> Vec<PaceAlert> {
@@ -278,7 +289,7 @@ fn transition(
         PaceSeverity::Spent => PaceSeverity::RunningOut,
         value => value,
     };
-    if reset_advanced(resets_at, state.resets_at) {
+    if reset_advanced(resets_at, state.resets_at, now) {
         state.fired.clear();
         state.previous = None;
         state.was_under_ten = false;
@@ -351,12 +362,18 @@ fn transition(
         .collect()
 }
 
-fn reset_advanced(current: Option<DateTime<Utc>>, previous: Option<DateTime<Utc>>) -> bool {
+/// A moved reset only counts as a fresh window once the previous deadline has
+/// actually passed. Rolling windows nudge their `resets_at` forward between
+/// refreshes ("five hours after the first request"); treating any movement as
+/// a reset would re-arm every alert within a single window.
+fn reset_advanced(
+    current: Option<DateTime<Utc>>,
+    previous: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> bool {
     match (current, previous) {
         (Some(_), None) => true,
-        (Some(current), Some(previous)) => {
-            current.signed_duration_since(previous).num_milliseconds() > 1_000
-        }
+        (Some(current), Some(previous)) => current > previous && previous <= now,
         _ => false,
     }
 }
@@ -411,6 +428,17 @@ mod tests {
             project(&window(60.0, 0.5), now).severity,
             PaceSeverity::RunningOut
         );
+    }
+
+    #[test]
+    fn non_finite_percent_projects_as_untracked() {
+        let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
+        for used in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let projection = project(&window(used, 0.5), now);
+            assert_eq!(projection.severity, PaceSeverity::Untracked);
+            assert_eq!(projection.projected_used_percent, None);
+            assert_eq!(projection.run_out_at, None);
+        }
     }
 
     #[test]
@@ -482,6 +510,7 @@ mod tests {
             will_run_out: true,
             almost_out: true,
         };
+        let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
         let reset = Some(Utc.timestamp_opt(1_800_010_000, 0).unwrap());
         let mut state = NotificationState::default();
         assert!(transition(
@@ -489,6 +518,7 @@ mod tests {
             PaceSeverity::Healthy,
             50.0,
             reset,
+            now,
             &toggles,
             "Weekly"
         )
@@ -498,6 +528,7 @@ mod tests {
             PaceSeverity::Close,
             8.0,
             reset,
+            now,
             &toggles,
             "Weekly",
         );
@@ -507,6 +538,7 @@ mod tests {
             PaceSeverity::Close,
             8.0,
             reset,
+            now,
             &toggles,
             "Weekly"
         )
@@ -520,6 +552,7 @@ mod tests {
             will_run_out: true,
             almost_out: false,
         };
+        let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
         let reset = Utc.timestamp_opt(1_800_010_000, 0).unwrap();
         let mut state = NotificationState::default();
         transition(
@@ -527,6 +560,7 @@ mod tests {
             PaceSeverity::Healthy,
             50.0,
             Some(reset),
+            now,
             &toggles,
             "Weekly",
         );
@@ -536,6 +570,7 @@ mod tests {
                 PaceSeverity::Close,
                 8.0,
                 Some(reset),
+                now,
                 &toggles,
                 "Weekly"
             )
@@ -547,17 +582,20 @@ mod tests {
             PaceSeverity::Close,
             8.0,
             Some(reset),
+            now,
             &toggles,
             "Weekly"
         )
         .is_empty());
-        let next_reset = reset + Duration::hours(1);
+        // The old deadline has passed by the time the later window appears.
+        let later = reset + Duration::hours(1);
         assert_eq!(
             transition(
                 &mut state,
                 PaceSeverity::Close,
                 8.0,
-                Some(next_reset),
+                Some(later),
+                later + Duration::hours(4),
                 &toggles,
                 "Weekly"
             )
@@ -567,7 +605,55 @@ mod tests {
     }
 
     #[test]
+    fn reset_drift_before_the_deadline_does_not_rearm_notifications() {
+        let toggles = NotificationPreferences {
+            cutting_it_close: true,
+            will_run_out: true,
+            almost_out: false,
+        };
+        let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
+        let reset = Utc.timestamp_opt(1_800_010_000, 0).unwrap();
+        let mut state = NotificationState::default();
+        transition(
+            &mut state,
+            PaceSeverity::Healthy,
+            50.0,
+            Some(reset),
+            now,
+            &toggles,
+            "Weekly",
+        );
+        assert_eq!(
+            transition(
+                &mut state,
+                PaceSeverity::Close,
+                8.0,
+                Some(reset),
+                now,
+                &toggles,
+                "Weekly"
+            )
+            .len(),
+            1
+        );
+        // A rolling window whose deadline creeps forward between refreshes
+        // must not fire a second time for the same window.
+        let drifted = reset + Duration::minutes(3);
+        assert!(transition(
+            &mut state,
+            PaceSeverity::Close,
+            8.0,
+            Some(drifted),
+            now + Duration::minutes(5),
+            &toggles,
+            "Weekly"
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn disabled_worsening_is_not_consumed_from_an_untracked_baseline() {
+        let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
         let reset = Some(Utc.timestamp_opt(1_800_010_000, 0).unwrap());
         let mut state = NotificationState::default();
         let disabled = NotificationPreferences::default();
@@ -576,6 +662,7 @@ mod tests {
             PaceSeverity::Untracked,
             50.0,
             reset,
+            now,
             &disabled,
             "Weekly",
         );
@@ -584,6 +671,7 @@ mod tests {
             PaceSeverity::Close,
             20.0,
             reset,
+            now,
             &disabled,
             "Weekly",
         )
@@ -600,6 +688,7 @@ mod tests {
                 PaceSeverity::Close,
                 20.0,
                 reset,
+                now,
                 &enabled,
                 "Weekly",
             )

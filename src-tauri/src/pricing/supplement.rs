@@ -31,6 +31,7 @@ impl PricingSupplement {
                 let mut rates = ModelRates::new(input, entry.output_per_million);
                 rates.cache_write_per_million = entry.cache_write_per_million.unwrap_or(input);
                 rates.cache_read_per_million = entry.cache_read_per_million.unwrap_or(input * 0.1);
+                rates.cache_write_1h_per_million = entry.cache_write_1h_per_million;
                 rates.cache_read_is_explicit = entry.cache_read_per_million.is_some();
                 (model, rates)
             })
@@ -117,6 +118,8 @@ struct SupplementEntry {
     cache_write_per_million: Option<f64>,
     #[serde(default)]
     cache_read_per_million: Option<f64>,
+    #[serde(default)]
+    cache_write_1h_per_million: Option<f64>,
 }
 
 #[derive(Deserialize)]

@@ -15,6 +15,7 @@ use zeroize::Zeroizing;
 
 #[cfg(target_os = "macos")]
 use crate::providers::credential_store::read_generic_password;
+use crate::providers::paths::home_directory;
 use crate::{
     child_process::background_command, providers::credential_store::decode_go_keyring_value,
 };
@@ -428,13 +429,6 @@ fn environment_path(name: &str) -> Option<PathBuf> {
     std::env::var_os(name)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-}
-
-fn home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
 }
 
 fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {

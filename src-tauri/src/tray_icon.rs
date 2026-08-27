@@ -1,7 +1,6 @@
 use std::sync::OnceLock;
 
 use roxmltree::Document;
-use svgtypes::{PathParser, PathSegment};
 #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 use tauri::image::Image;
 use tiny_skia::{FillRule, Mask, Paint, Path, PathBuilder, Pixmap, Transform};
@@ -202,31 +201,7 @@ fn parse_named_path(
     let data = node
         .attribute("d")
         .ok_or_else(|| format!("#{id} has no path data"))?;
-    parse_path_data(data).map_err(|error| format!("#{id}: {error}"))
-}
-
-fn parse_path_data(data: &str) -> Result<Path, String> {
-    let mut builder = PathBuilder::new();
-    for segment in PathParser::from(data) {
-        match segment.map_err(|error| error.to_string())? {
-            PathSegment::MoveTo { abs: true, x, y } => builder.move_to(x as f32, y as f32),
-            PathSegment::LineTo { abs: true, x, y } => builder.line_to(x as f32, y as f32),
-            PathSegment::CurveTo {
-                abs: true,
-                x1,
-                y1,
-                x2,
-                y2,
-                x,
-                y,
-            } => builder.cubic_to(
-                x1 as f32, y1 as f32, x2 as f32, y2 as f32, x as f32, y as f32,
-            ),
-            PathSegment::ClosePath { .. } => builder.close(),
-            _ => return Err("only absolute M, L, C and Z commands are supported".into()),
-        }
-    }
-    builder.finish().ok_or_else(|| "path is empty".into())
+    crate::svg_path::parse_path_data(&[data]).map_err(|error| format!("#{id}: {error}"))
 }
 
 #[cfg(test)]

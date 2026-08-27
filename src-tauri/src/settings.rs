@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
     },
 };
 
@@ -43,7 +43,12 @@ pub struct CredentialDetectionOutcome {
 pub struct SettingsService {
     storage: Arc<Storage>,
     registry: Arc<ProviderRegistry>,
-    settings: RwLock<AppSettings>,
+    settings: RwLock<Arc<AppSettings>>,
+    /// Serializes settings commits. Storage round-trips run while it is held
+    /// but never under the settings read/write locks, so slow disks cannot
+    /// stall readers, while each commit still snapshots fresh state and can no
+    /// longer overwrite a concurrent writer's changes.
+    commit: Mutex<()>,
     command_mutation: tokio::sync::Mutex<()>,
     credential_mutation: tokio::sync::Mutex<()>,
     enablement_revision: AtomicU64,
@@ -69,7 +74,8 @@ impl SettingsService {
         let service = Self {
             storage,
             registry,
-            settings: RwLock::new(settings),
+            settings: RwLock::new(Arc::new(settings)),
+            commit: Mutex::new(()),
             command_mutation: tokio::sync::Mutex::new(()),
             credential_mutation: tokio::sync::Mutex::new(()),
             enablement_revision: AtomicU64::new(0),
@@ -128,7 +134,8 @@ impl SettingsService {
         let service = Self {
             storage,
             registry,
-            settings: RwLock::new(settings),
+            settings: RwLock::new(Arc::new(settings)),
+            commit: Mutex::new(()),
             command_mutation: tokio::sync::Mutex::new(()),
             credential_mutation: tokio::sync::Mutex::new(()),
             enablement_revision: AtomicU64::new(0),
@@ -148,11 +155,14 @@ impl SettingsService {
         Ok((service, plan))
     }
 
-    pub fn get(&self) -> AppSettings {
+    /// A cheap snapshot: readers (tray updates, refresh ticks, one-field
+    /// lookups) share the current value through the `Arc` instead of deep
+    /// cloning the whole tree per call.
+    pub fn get(&self) -> Arc<AppSettings> {
         self.settings
             .read()
-            .map(|settings| settings.clone())
-            .unwrap_or_default()
+            .map(|settings| Arc::clone(&settings))
+            .unwrap_or_else(|poisoned| Arc::new(poisoned.into_inner().as_ref().clone()))
     }
 
     pub(crate) async fn lock_command_mutation(&self) -> tokio::sync::MutexGuard<'_, ()> {
@@ -168,7 +178,7 @@ impl SettingsService {
             .read()
             .map(|settings| {
                 (
-                    settings.clone(),
+                    settings.as_ref().clone(),
                     self.settings_revision.load(Ordering::SeqCst),
                     self.account_revision.load(Ordering::SeqCst),
                 )
@@ -200,8 +210,21 @@ impl SettingsService {
         provider_id: &str,
         identity: &str,
     ) -> Result<bool, StorageError> {
-        // Storage round-trips run without holding the settings locks so slow disks cannot stall
-        // readers; the commit re-checks under the write lock and defers to a concurrent activation.
+        if self
+            .active_account_identities
+            .read()
+            .map_err(|_| StorageError::Poisoned)?
+            .get(provider_id)
+            .map(String::as_str)
+            == Some(identity)
+        {
+            return Ok(false);
+        }
+        // The commit lock serializes settings commits: the snapshot below is
+        // taken under it, so a concurrent save or activation can no longer be
+        // overwritten by a stale write, and storage round-trips never run
+        // under the settings locks.
+        let _commit = self.commit.lock().map_err(|_| StorageError::Poisoned)?;
         let previous_identity = self
             .active_account_identities
             .read()
@@ -216,6 +239,7 @@ impl SettingsService {
             .settings
             .read()
             .map_err(|_| StorageError::Poisoned)?
+            .as_ref()
             .clone();
         let records = self.storage.load_provider_account_records(family)?;
         let (record_id, mut payload) = account_record(&records, family, identity);
@@ -271,17 +295,11 @@ impl SettingsService {
         self.storage
             .save_settings_with_account_updates(&next, &account_updates)?;
 
-        let mut settings = self.settings.write().map_err(|_| StorageError::Poisoned)?;
-        let mut active_accounts = self
-            .active_account_identities
+        *self.settings.write().map_err(|_| StorageError::Poisoned)? = Arc::new(next);
+        self.active_account_identities
             .write()
-            .map_err(|_| StorageError::Poisoned)?;
-        if active_accounts.get(provider_id) != previous_identity.as_ref() {
-            // A concurrent activation for this provider already committed; keep its outcome.
-            return Ok(false);
-        }
-        settings.clone_from(&next);
-        active_accounts.insert(provider_id.to_owned(), identity.to_owned());
+            .map_err(|_| StorageError::Poisoned)?
+            .insert(provider_id.to_owned(), identity.to_owned());
         self.settings_revision.fetch_add(1, Ordering::SeqCst);
         self.account_revision.fetch_add(1, Ordering::SeqCst);
         Ok(true)
@@ -304,11 +322,26 @@ impl SettingsService {
             .read()
             .map_err(|_| StorageError::Poisoned)?
             .clone();
+        if active.is_empty() {
+            return Ok(Vec::new());
+        }
+        // One full-table scan serves every active account; loading per family
+        // inside the loop re-read the same table once per account on save.
+        let mut records_by_family: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
+        for (provider_family, identity_key, provider_id, payload) in
+            self.storage.load_all_provider_account_records()?
+        {
+            records_by_family.entry(provider_family).or_default().push((
+                identity_key,
+                provider_id,
+                payload,
+            ));
+        }
         let mut updates = Vec::new();
         for (provider_id, identity) in active {
-            let family = crate::providers::provider_family(&provider_id);
-            let records = self.storage.load_provider_account_records(family)?;
-            let (record_id, mut payload) = account_record(&records, family, &identity);
+            let family = crate::providers::provider_family(&provider_id).to_owned();
+            let records = records_by_family.get(&family).cloned().unwrap_or_default();
+            let (record_id, mut payload) = account_record(&records, &family, &identity);
             set_account_custom_name(
                 &mut payload,
                 settings
@@ -317,7 +350,7 @@ impl SettingsService {
                     .map(String::as_str),
             );
             updates.push(ProviderAccountUpdate {
-                provider_family: family.to_owned(),
+                provider_family: family,
                 identity_key: identity,
                 provider_id: record_id,
                 payload: serde_json::to_string(&payload)?,
@@ -366,9 +399,18 @@ impl SettingsService {
         expected_account_revision: Option<u64>,
         reset_all_account_names: bool,
     ) -> Result<AppSettings, String> {
-        let mut current = self
+        // The commit lock serializes settings commits. The revision checks and
+        // snapshot below run under it — only commit holders mutate settings —
+        // and storage round-trips run without the settings locks so slow disks
+        // cannot stall readers.
+        let _commit = self
+            .commit
+            .lock()
+            .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())?;
+        let current = self
             .settings
-            .write()
+            .read()
+            .map(|settings| settings.as_ref().clone())
             .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())?;
         if expected_settings_revision
             .is_some_and(|revision| revision != self.settings_revision.load(Ordering::SeqCst))
@@ -413,7 +455,11 @@ impl SettingsService {
             .save_settings_with_account_updates(settings, &account_updates)
             .map_err(|_| "UsageDeck settings could not be saved.".to_owned())?;
         let enablement_changed = enabled_provider_set(settings) != enabled_before;
-        current.clone_from(settings);
+        *self
+            .settings
+            .write()
+            .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())? =
+            Arc::new(settings.clone());
         if enablement_changed {
             self.enablement_revision.fetch_add(1, Ordering::SeqCst);
         }
@@ -462,9 +508,14 @@ impl SettingsService {
         plan: &CredentialDetectionPlan,
         probe_results: &CredentialProbeResults,
     ) -> Result<CredentialDetectionOutcome, String> {
-        let mut current = self
+        let _commit = self
+            .commit
+            .lock()
+            .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())?;
+        let current = self
             .settings
-            .write()
+            .read()
+            .map(|settings| settings.as_ref().clone())
             .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())?;
         let enabled_before = enabled_provider_set(&current);
         let detected_before = detected_provider_set(&current);
@@ -523,7 +574,7 @@ impl SettingsService {
             }
         }
 
-        if next == *current {
+        if next == current {
             return Ok(CredentialDetectionOutcome {
                 settings: next,
                 newly_enabled_provider_ids: Vec::new(),
@@ -540,7 +591,11 @@ impl SettingsService {
             .map(|provider| provider.id.clone())
             .collect();
         let enablement_changed = enabled_provider_set(&next) != enabled_before;
-        current.clone_from(&next);
+        *self
+            .settings
+            .write()
+            .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())? =
+            Arc::new(next.clone());
         if enablement_changed {
             self.enablement_revision.fetch_add(1, Ordering::SeqCst);
         }
@@ -557,6 +612,7 @@ impl SettingsService {
     pub fn enabled_provider_ids(&self) -> Vec<String> {
         self.get()
             .providers
+            .clone()
             .into_iter()
             .filter(|provider| provider.enabled && self.registry.definition(&provider.id).is_some())
             .map(|provider| provider.id)
@@ -569,7 +625,7 @@ impl SettingsService {
         expected_settings_revision: u64,
         expected_account_revision: u64,
     ) -> Result<AppSettings, String> {
-        let mut settings = self.get();
+        let mut settings = self.get().as_ref().clone();
         let definition = self
             .registry
             .definition(provider_id)
@@ -602,9 +658,14 @@ impl SettingsService {
         detected: bool,
         enable: bool,
     ) -> Result<AppSettings, String> {
-        let mut current = self
+        let _commit = self
+            .commit
+            .lock()
+            .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())?;
+        let current = self
             .settings
-            .write()
+            .read()
+            .map(|settings| settings.as_ref().clone())
             .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())?;
         let enabled_before = enabled_provider_set(&current);
         let mut next = current.clone();
@@ -620,7 +681,11 @@ impl SettingsService {
         self.storage
             .save_settings(&next)
             .map_err(|_| "UsageDeck settings could not be saved.".to_owned())?;
-        current.clone_from(&next);
+        *self
+            .settings
+            .write()
+            .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())? =
+            Arc::new(next.clone());
         if enabled_provider_set(&next) != enabled_before {
             self.enablement_revision.fetch_add(1, Ordering::SeqCst);
         }
@@ -1079,6 +1144,7 @@ mod tests {
 
     #[test]
     fn provider_options_materialize_their_default_choice() {
+        let _selections = crate::provider_options::selections_guard();
         let registry = option_catalog();
         let mut settings = AppSettings::default();
 
@@ -1093,6 +1159,7 @@ mod tests {
 
     #[test]
     fn a_stored_provider_option_choice_is_preserved() {
+        let _selections = crate::provider_options::selections_guard();
         let registry = option_catalog();
         let mut settings = AppSettings::default();
         settings.provider_options.insert(
@@ -1110,6 +1177,7 @@ mod tests {
 
     #[test]
     fn unknown_providers_options_and_values_are_discarded_on_load() {
+        let _selections = crate::provider_options::selections_guard();
         let registry = option_catalog();
         let mut settings = AppSettings::default();
         settings.provider_options.insert(
@@ -1134,6 +1202,7 @@ mod tests {
 
     #[test]
     fn normalizing_publishes_the_selections_providers_read() {
+        let _selections = crate::provider_options::selections_guard();
         let registry = option_catalog();
         let mut settings = AppSettings::default();
         settings.provider_options.insert(
@@ -1355,7 +1424,7 @@ mod tests {
         let directory = tempdir().unwrap();
         let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let (service, plan) = SettingsService::new_deferred(storage, catalog()).unwrap();
-        let mut changed = service.get();
+        let mut changed = service.get().as_ref().clone();
         changed
             .providers
             .iter_mut()
@@ -1439,7 +1508,7 @@ mod tests {
             .unwrap();
         let registry = catalog();
         let (first, _) = SettingsService::new_deferred(storage.clone(), registry.clone()).unwrap();
-        let mut settings = first.get();
+        let mut settings = first.get().as_ref().clone();
         settings
             .provider_names
             .insert("claude".into(), "Personal".into());
@@ -1480,7 +1549,7 @@ mod tests {
         service
             .activate_account("codex", "codex", "aaaaaaaa11111111")
             .unwrap();
-        let mut settings = service.get();
+        let mut settings = service.get().as_ref().clone();
         settings.provider_names.insert("codex".into(), "GPT".into());
         service
             .update_from_view(
@@ -1495,7 +1564,7 @@ mod tests {
             .unwrap();
         assert!(!service.get().provider_names.contains_key("codex"));
 
-        let mut settings = service.get();
+        let mut settings = service.get().as_ref().clone();
         settings
             .provider_names
             .insert("codex".into(), "Work".into());
@@ -1571,7 +1640,7 @@ mod tests {
         let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service = SettingsService::new_for_test(storage, catalog(), &HashSet::new()).unwrap();
         let initial_revision = service.settings_revision();
-        let stale = service.get();
+        let stale = service.get().as_ref().clone();
         let mut newer = stale.clone();
         newer.density = crate::models::DensityPreference::Compact;
 
@@ -1600,7 +1669,7 @@ mod tests {
         let service = SettingsService::new_for_test(storage, catalog(), &HashSet::new()).unwrap();
         let mut revision = service.settings_revision();
 
-        service.update(service.get()).unwrap();
+        service.update(service.get().as_ref().clone()).unwrap();
         revision += 1;
         assert_eq!(service.settings_revision(), revision);
 
@@ -1669,7 +1738,7 @@ mod tests {
         service
             .activate_account("codex", "codex", "aaaaaaaa11111111")
             .unwrap();
-        let mut named = service.get();
+        let mut named = service.get().as_ref().clone();
         named.provider_names.insert("codex".into(), "GPT".into());
         service
             .update_from_view(
@@ -1680,7 +1749,7 @@ mod tests {
             .unwrap();
 
         let stale_account_revision = service.account_revision();
-        let mut stale_settings = service.get();
+        let mut stale_settings = service.get().as_ref().clone();
         service
             .activate_account("codex", "codex", "bbbbbbbb22222222")
             .unwrap();
@@ -1761,7 +1830,7 @@ mod tests {
             .retain(|provider| provider.id != "antigravity");
         storage.save_settings(&saved).unwrap();
         let (service, plan) = SettingsService::new_deferred(storage, registry).unwrap();
-        let mut changed = service.get();
+        let mut changed = service.get().as_ref().clone();
         changed
             .providers
             .iter_mut()
@@ -1796,6 +1865,7 @@ mod tests {
 
     #[test]
     fn normalization_preserves_order_and_enforces_pin_cap_per_provider() {
+        let _selections = crate::provider_options::selections_guard();
         let detected = HashSet::from(["codex".to_owned(), "claude".to_owned()]);
         let catalog = catalog();
         let mut settings = default_settings(&catalog, &detected);
@@ -1819,6 +1889,7 @@ mod tests {
 
     #[test]
     fn normalization_preserves_valid_pins_for_dashboard_hidden_metrics() {
+        let _selections = crate::provider_options::selections_guard();
         let detected = HashSet::from(["codex".to_owned()]);
         let catalog = catalog();
         let mut settings = default_settings(&catalog, &detected);
@@ -1852,6 +1923,7 @@ mod tests {
 
     #[test]
     fn normalization_keeps_one_always_visible_metric() {
+        let _selections = crate::provider_options::selections_guard();
         let detected = HashSet::from(["codex".to_owned()]);
         let catalog = catalog();
         let mut settings = default_settings(&catalog, &detected);
@@ -1867,6 +1939,7 @@ mod tests {
 
     #[test]
     fn normalization_adds_new_codex_metrics_without_disturbing_existing_order() {
+        let _selections = crate::provider_options::selections_guard();
         let detected = HashSet::from(["codex".to_owned()]);
         let catalog = catalog();
         let mut settings = default_settings(&catalog, &detected);
@@ -1917,7 +1990,7 @@ mod tests {
         let catalog = catalog();
         let first =
             SettingsService::new_for_test(storage.clone(), catalog.clone(), &detected).unwrap();
-        let mut settings = first.get();
+        let mut settings = first.get().as_ref().clone();
         settings.density = crate::models::DensityPreference::Compact;
         settings.window_mode = crate::models::WindowMode::Floating;
         settings.dismissed_update_version = Some("0.2.0".to_owned());
@@ -1926,11 +1999,12 @@ mod tests {
         settings.providers[1].metrics.rotate_right(1);
         let expected = first.update(settings).unwrap();
         let second = SettingsService::new_for_test(storage, catalog, &detected).unwrap();
-        assert_eq!(second.get(), expected);
+        assert_eq!(*second.get(), expected);
     }
 
     #[test]
     fn new_detected_provider_is_enabled_once_without_overriding_later_choice() {
+        let _selections = crate::provider_options::selections_guard();
         let catalog = catalog();
         let mut settings = default_settings(&catalog, &HashSet::from(["codex".to_owned()]));
         settings.known_provider_ids.retain(|id| id != "antigravity");
@@ -1959,6 +2033,7 @@ mod tests {
 
     #[test]
     fn new_claude_account_is_inserted_after_its_provider_family() {
+        let _selections = crate::provider_options::selections_guard();
         let base = catalog();
         let mut settings = default_settings(&base, &HashSet::from(["claude".to_owned()]));
 
@@ -1986,6 +2061,7 @@ mod tests {
 
     #[test]
     fn unavailable_claude_account_keeps_its_customization_until_it_returns() {
+        let _selections = crate::provider_options::selections_guard();
         let account_catalog = catalog_with_claude_account();
         let detected = HashSet::from(["claude@1234abcd".to_owned()]);
         let mut settings = default_settings(&account_catalog, &detected);
@@ -2106,6 +2182,7 @@ mod tests {
 
     #[test]
     fn normalization_keeps_only_valid_account_card_names() {
+        let _selections = crate::provider_options::selections_guard();
         let registry = catalog_with_claude_account();
         let mut settings = default_settings(
             &registry,
@@ -2153,6 +2230,7 @@ mod tests {
 
     #[test]
     fn schema_two_migration_uses_the_multi_provider_default_order() {
+        let _selections = crate::provider_options::selections_guard();
         let catalog = catalog();
         let mut settings = default_settings(&catalog, &HashSet::from(["codex".to_owned()]));
         settings.schema_version = 2;
@@ -2213,7 +2291,7 @@ mod tests {
         let detected = HashSet::from(["codex".to_owned()]);
         let catalog = catalog();
         let service = SettingsService::new_for_test(storage, catalog.clone(), &detected).unwrap();
-        let mut settings = service.get();
+        let mut settings = service.get().as_ref().clone();
         let codex = settings
             .providers
             .iter_mut()
@@ -2291,7 +2369,7 @@ mod tests {
         service
             .activate_account("codex", "codex", "identity-a")
             .unwrap();
-        let mut customized = service.get();
+        let mut customized = service.get().as_ref().clone();
         customized.theme = ThemePreference::Dark;
         customized.density = crate::models::DensityPreference::Compact;
         customized.reduce_animations = true;

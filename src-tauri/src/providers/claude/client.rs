@@ -8,12 +8,17 @@ use super::{auth::ClaudeOAuthConfig, ClaudeError};
 const OAUTH_SCOPES: &str =
     "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct ClaudeRefreshResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_in: Option<f64>,
 }
+
+crate::redacted_debug!(ClaudeRefreshResponse {
+    access_token,
+    refresh_token
+});
 
 #[derive(Clone)]
 pub struct ClaudeClient {

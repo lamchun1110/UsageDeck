@@ -345,6 +345,7 @@ mod tests {
 
     impl SecretBackend for MemorySecrets {
         fn read(&self, account: &str) -> Result<Option<SecretBytes>, String> {
+            crate::providers::http::clear_rate_limits();
             Ok(self
                 .0
                 .lock()

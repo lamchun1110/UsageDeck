@@ -23,6 +23,8 @@ const PROVIDER_REFRESH_TIMEOUT: Duration = Duration::from_secs(120);
 // can run. Backs off exponentially per consecutive abandonment to bound leaked blocking threads.
 const WORKER_DRAIN_GRACE_FLOOR: Duration = Duration::from_secs(30);
 const DRAIN_BACKOFF_STEPS: u32 = 8;
+// Minimum spacing between full-state progress emissions during a refresh batch.
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(250);
 
 fn default_drain_grace(refresh_timeout: Duration) -> Duration {
     refresh_timeout
@@ -454,6 +456,14 @@ impl ProviderService {
         let mut succeeded = 0;
         let mut failed = 0;
         let mut completed = 0;
+        // Each progress event deep-clones and re-serializes the whole state for the
+        // frontend; throttling keeps a large batch from becoming a burst of
+        // full-state payloads (and full re-renders) while cards still fill in
+        // progressively. The final state always reaches callers via the return.
+        let total = provider_ids.len();
+        let mut last_emit = Instant::now()
+            .checked_sub(PROGRESS_EMIT_INTERVAL)
+            .unwrap_or_else(Instant::now);
         while let Some(state) = completed_rx.recv().await {
             completed += 1;
             if state.error.is_none() {
@@ -461,8 +471,10 @@ impl ProviderService {
             } else {
                 failed += 1;
             }
-            let current = self.state();
-            on_progress(&current);
+            if completed == total || last_emit.elapsed() >= PROGRESS_EMIT_INTERVAL {
+                on_progress(&self.state());
+                last_emit = Instant::now();
+            }
         }
         failed += provider_ids.len().saturating_sub(completed);
         crate::app_info!(
@@ -1091,7 +1103,7 @@ mod tests {
         settings
             .activate_account("codex", "codex", "aaaaaaaa11111111")
             .unwrap();
-        let mut renamed = settings.get();
+        let mut renamed = settings.get().as_ref().clone();
         renamed.provider_names.insert("codex".into(), "GPT".into());
         settings
             .update_from_view(

@@ -1,5 +1,6 @@
 use std::{
     fs::{self, Metadata},
+    io::{BufRead, BufReader},
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -70,7 +71,7 @@ pub fn load_or_parse_log<T>(
     provider_id: &str,
     path: &Path,
     schema_version: u8,
-    parse: impl FnOnce(&str) -> Vec<T>,
+    parse: impl FnOnce(&mut dyn Iterator<Item = std::io::Result<String>>) -> Vec<T>,
 ) -> Result<Option<Vec<T>>, LogCacheError>
 where
     T: Serialize + DeserializeOwned,
@@ -109,17 +110,28 @@ where
         return Ok(Some(events));
     }
 
-    let content = match fs::read_to_string(path) {
-        Ok(content) => content,
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
         Err(_) => {
             crate::logging::local_usage_file_failed(provider_id, path);
             storage.remove_log_events(provider_id, path)?;
             return Ok(None);
         }
     };
-    crate::logging::local_usage_file_recovered(provider_id, path);
     crate::app_debug!("cache", "local usage cache miss for {provider_id}");
-    let events = parse(&content);
+    // Session logs grow append-only for months and can reach hundreds of
+    // megabytes; parse them line-by-line instead of holding the whole file
+    // (plus its parsed events) in memory at once.
+    let mut lines = BufReader::new(file).lines();
+    let events = parse(&mut lines);
+    if lines.next().is_some() {
+        // The stream stopped on a mid-file read error. Treat the file exactly
+        // like a failed whole-file read — never cache a partial parse.
+        crate::logging::local_usage_file_failed(provider_id, path);
+        storage.remove_log_events(provider_id, path)?;
+        return Ok(None);
+    }
+    crate::logging::local_usage_file_recovered(provider_id, path);
     let json = serde_json::to_string(&CachedLogEventsRef {
         schema_version,
         events: &events,
@@ -310,9 +322,9 @@ mod tests {
         let path = directory.path().join("session.jsonl");
         fs::write(&path, "first").unwrap();
         let parses = Cell::new(0);
-        let parse = |content: &str| {
+        let parse = |lines: &mut dyn Iterator<Item = std::io::Result<String>>| {
             parses.set(parses.get() + 1);
-            vec![content.to_owned()]
+            lines.map_while(|line| line.ok()).collect()
         };
 
         assert_eq!(
@@ -364,8 +376,8 @@ mod tests {
 
         fs::write(&path, "recovered").unwrap();
         assert_eq!(
-            load_or_parse_log(&storage, "test", &path, 1, |content| {
-                vec![content.to_owned()]
+            load_or_parse_log(&storage, "test", &path, 1, |lines| {
+                lines.map_while(|line| line.ok()).collect()
             })
             .unwrap(),
             Some(vec!["recovered".to_owned()])

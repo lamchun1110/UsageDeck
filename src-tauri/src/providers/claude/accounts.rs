@@ -8,6 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::auth::{self, ClaudeCredentialScope};
+use crate::providers::paths::{expand_home, home_directory};
 use crate::{
     hashing::sha256_hex,
     providers::credential_store::generic_password_service_exists,
@@ -519,17 +520,6 @@ fn canonical(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn expand_home(value: &str, home: &Path) -> PathBuf {
-    if value == "~" {
-        return home.to_path_buf();
-    }
-    value
-        .strip_prefix("~/")
-        .or_else(|| value.strip_prefix("~\\"))
-        .map(|rest| home.join(rest))
-        .unwrap_or_else(|| PathBuf::from(value))
-}
-
 fn nonempty(value: String) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_owned())
@@ -537,13 +527,6 @@ fn nonempty(value: String) -> Option<String> {
 
 fn env_text(name: &str) -> Option<String> {
     crate::provider_environment::value(name)
-}
-
-fn home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

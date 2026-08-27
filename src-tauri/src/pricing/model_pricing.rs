@@ -51,6 +51,22 @@ impl ModelPricing {
         )
     }
 
+    /// [`Self::estimated_cost_dollars`] for usage logs in Anthropic's format,
+    /// whose one-hour cache writes carry Anthropic's 2x-input premium unless
+    /// the pricing data states an explicit rate.
+    pub fn estimated_cost_dollars_anthropic(
+        &self,
+        model: &str,
+        tokens: TokenBreakdown,
+        apply_long_context_rates: bool,
+    ) -> Option<f64> {
+        Some(
+            self.resolve(model)?
+                .with_anthropic_one_hour_cache()
+                .cost_dollars(tokens, apply_long_context_rates),
+        )
+    }
+
     /// Returns the stable display family used for provider exports that contain one slug per model
     /// variant. Alias rules are the same source of truth used for pricing; fast variants fold into
     /// their base family without guessing at otherwise unknown names.

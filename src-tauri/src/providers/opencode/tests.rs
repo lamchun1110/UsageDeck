@@ -47,6 +47,7 @@ fn pricing_store(directory: &Path) -> Arc<PricingStore> {
 }
 
 fn test_client(url: &str) -> OpenCodeClient {
+    crate::providers::http::clear_rate_limits();
     OpenCodeClient::for_test(url, Duration::from_secs(1))
 }
 
@@ -726,7 +727,7 @@ fn transient_account_quota_failure_is_propagated_with_local_history() {
     let directory = tempdir().unwrap();
     fs::write(
         directory.path().join("auth.json"),
-        r#"{"opencode-go":{"type":"api","key":"secret-key"}}"#,
+        r#"{"opencode-go":{"type":"api","key":"limited-secret-key"}}"#,
     )
     .unwrap();
     let connection = create_database(&directory.path().join("opencode.db"), false);

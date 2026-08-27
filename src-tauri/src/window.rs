@@ -862,8 +862,11 @@ fn schedule_outside_click_dismiss(window: Window) {
     let app = window.app_handle().clone();
     let token = app.state::<PopupDismissGuard>().token();
 
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(100));
+    // Focus chatter on a non-floating window used to cost an OS thread per
+    // event just to wait out the debounce; the async runtime does that for
+    // free.
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let app_for_dismiss = app.clone();
         let _ = app.run_on_main_thread(move || {
             let guard = app_for_dismiss.state::<PopupDismissGuard>();

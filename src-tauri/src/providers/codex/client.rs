@@ -20,12 +20,18 @@ pub struct UsageResponse {
     pub body: Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct TokenRefresh {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub id_token: Option<String>,
 }
+
+crate::redacted_debug!(TokenRefresh {
+    access_token,
+    refresh_token,
+    id_token
+});
 
 pub struct CodexClient {
     client: Client,

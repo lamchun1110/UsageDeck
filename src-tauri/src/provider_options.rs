@@ -32,14 +32,26 @@ pub fn selection(provider_id: &str, option_id: &str) -> Option<String> {
         .cloned()
 }
 
+/// Serializes tests that publish or read the process-global selection map.
+/// `normalize` replaces the whole map, so a parallel test's normalization
+/// wipes what another test just published between its write and read.
+#[cfg(test)]
+pub(crate) fn selections_guard() -> std::sync::MutexGuard<'static, ()> {
+    static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    GUARD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{publish, selection};
+    use super::{publish, selection, selections_guard};
 
     #[test]
     fn publishes_and_reads_back_a_selection() {
+        let _guard = selections_guard();
         let mut provider = BTreeMap::new();
         provider.insert("endpoint".to_owned(), "global".to_owned());
         let mut selections = BTreeMap::new();

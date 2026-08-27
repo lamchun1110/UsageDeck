@@ -1,5 +1,3 @@
-use std::thread;
-
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 
@@ -102,9 +100,15 @@ fn show(app: &AppHandle, title: &str, body: &str) -> Result<(), String> {
 
     let handle = notification
         .show()
+        .inspect_err(|error| {
+            crate::app_error!("notifications", "notification delivery failed: {error}");
+        })
         .map_err(|_| "The notification could not be delivered.".to_owned())?;
     let app = app.clone();
-    thread::spawn(move || {
+    // The response wait blocks until the user acts or the notification closes;
+    // the blocking pool reuses its threads instead of dedicating an OS thread
+    // per alert.
+    tauri::async_runtime::spawn_blocking(move || {
         let _ = handle.wait_for_response(move |response: &notify_rust::NotificationResponse| {
             if !response_opens_window(response) {
                 return;

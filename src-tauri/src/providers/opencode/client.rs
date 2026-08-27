@@ -1,20 +1,25 @@
 use std::time::Duration;
 
-use reqwest::{blocking::Client, StatusCode};
-use serde_json::Value;
+use crate::providers::http::{self, TransportError};
 
 use super::OpenCodeError;
 
 const GO_USAGE_URL: &str = "https://opencode.ai/zen/go/v1/usage";
 
-#[derive(Debug)]
-pub(super) struct UsageResponse {
-    pub(super) status: StatusCode,
-    pub(super) body: Value,
+pub(super) type UsageResponse = crate::providers::http::EndpointResponse;
+
+impl From<TransportError> for OpenCodeError {
+    fn from(error: TransportError) -> Self {
+        match error {
+            TransportError::ConnectionFailed => OpenCodeError::ConnectionFailed,
+            TransportError::InvalidResponse => OpenCodeError::InvalidResponse,
+            TransportError::RateLimited => OpenCodeError::RequestFailed(429),
+        }
+    }
 }
 
 pub(super) struct OpenCodeClient {
-    client: Client,
+    client: reqwest::blocking::Client,
     usage_url: String,
 }
 
@@ -25,41 +30,20 @@ impl OpenCodeClient {
 
     fn with_endpoint(usage_url: &str, timeout: Duration) -> Result<Self, OpenCodeError> {
         Ok(Self {
-            client: Client::builder()
-                .connect_timeout(Duration::from_secs(8))
-                .timeout(timeout)
-                .user_agent(concat!("UsageDeck/", env!("CARGO_PKG_VERSION")))
-                .build()
-                .map_err(|_| OpenCodeError::ConnectionFailed)?,
+            client: http::client(timeout)?,
             usage_url: usage_url.into(),
         })
     }
 
     pub(super) fn fetch_go_usage(&self, api_key: &str) -> Result<UsageResponse, OpenCodeError> {
-        let started = std::time::Instant::now();
-        let response = self
-            .client
-            .get(&self.usage_url)
-            .bearer_auth(api_key)
-            .header("Accept", "application/json")
-            .send()
-            .map_err(|_| {
-                crate::app_warn!("http", "opencode go usage request failed (transport)");
-                OpenCodeError::ConnectionFailed
-            })?;
-        let status = response.status();
-        crate::app_debug!(
-            "http",
-            "opencode go usage HTTP {} ({}ms)",
-            status.as_u16(),
-            started.elapsed().as_millis()
-        );
-        let body = response
-            .text()
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(Value::Null);
-        Ok(UsageResponse { status, body })
+        http::get_json(
+            &self.client,
+            &self.usage_url,
+            api_key,
+            "opencode",
+            "go usage",
+        )
+        .map_err(From::from)
     }
 }
 

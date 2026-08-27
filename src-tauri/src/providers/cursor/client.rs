@@ -27,11 +27,13 @@ impl CursorResponse {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CursorSession {
     pub user_id: String,
     pub session_token: String,
 }
+
+crate::redacted_debug!(CursorSession { session_token });
 
 #[derive(Clone)]
 pub(super) struct Endpoints {
@@ -73,6 +75,9 @@ impl CursorClient {
     pub(super) fn with_endpoints(endpoints: Endpoints) -> Result<Self, CursorError> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(8))
+            // Builder-level safety net: per-request timeouts stay authoritative,
+            // but a new endpoint method that forgets one must not hang forever.
+            .timeout(Duration::from_secs(30))
             .user_agent(concat!("UsageDeck/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|_| CursorError::ConnectionFailed)?;

@@ -38,6 +38,9 @@ pub fn output_with_timeout(command: &mut Command, timeout: Duration) -> io::Resu
         .checked_add(timeout)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "child timeout is too large"))?;
 
+    // Poll with a backing-off interval: responsive for short-lived commands
+    // without burning 10ms wakeups for the whole runtime of long ones.
+    let mut poll_interval = Duration::from_millis(10);
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -45,8 +48,9 @@ pub fn output_with_timeout(command: &mut Command, timeout: Duration) -> io::Resu
                 thread::sleep(
                     deadline
                         .saturating_duration_since(Instant::now())
-                        .min(Duration::from_millis(10)),
+                        .min(poll_interval),
                 );
+                poll_interval = (poll_interval * 2).min(Duration::from_millis(100));
             }
             Ok(None) => {
                 let _ = child.kill();

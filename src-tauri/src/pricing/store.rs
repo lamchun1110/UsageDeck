@@ -316,7 +316,7 @@ impl PricingStore {
         );
         match response.status {
             StatusCode::OK => {
-                let cache_data = validated_cache_data(source, &response.body)?;
+                let cache_data = validated_cache_data(source, &response.body, now)?;
                 write_bytes_atomic(&self.cache_file(source), &cache_data)?;
                 state.etag = response.etag;
                 state.fetched_at = Some(now);
@@ -357,7 +357,7 @@ fn load_pricing(
     let supplement = match fs::read(cache_directory.join(SourceId::Supplement.file_name())) {
         Ok(cached) => match PricingSupplement::decode(&cached) {
             Ok(cached_supplement)
-                if supplement_is_newer(
+                if timestamp_is_newer(
                     bundled_supplement.updated_at.as_deref(),
                     cached_supplement.updated_at.as_deref(),
                 ) =>
@@ -380,7 +380,47 @@ fn load_pricing(
     Ok(ModelPricing::new(supplement, primary, secondary))
 }
 
-fn supplement_is_newer(candidate: Option<&str>, current: Option<&str>) -> bool {
+fn load_catalog(
+    cache_directory: &Path,
+    source: SourceId,
+    bundled: &[u8],
+) -> Result<PricingCatalog, PricingStoreError> {
+    let bundled_catalog = catalog_from_compact(bundled)?;
+    let Ok(cached) = fs::read(cache_directory.join(source.file_name())) else {
+        return Ok(bundled_catalog);
+    };
+    let cache = match catalog_from_compact(&cached) {
+        Ok(cache) => cache,
+        Err(error) => {
+            crate::app_warn!(
+                "pricing",
+                "cached {} catalog unreadable, using bundled: {error}",
+                source.file_name()
+            );
+            return Ok(bundled_catalog);
+        }
+    };
+    // A bundled snapshot shipped by an app update must not be masked by the
+    // previous install's on-disk cache (for up to a day, or forever offline),
+    // so whichever source is more recent contributes the winning entries.
+    // Caches written before fetches were stamped carry no timestamp and defer
+    // to any stamped bundle.
+    Ok(
+        if timestamp_is_newer(
+            bundled_catalog.retrieved_at.as_deref(),
+            cache.retrieved_at.as_deref(),
+        ) {
+            cache.merging(bundled_catalog)
+        } else {
+            bundled_catalog.merging(cache)
+        },
+    )
+}
+
+/// Whether `candidate` is strictly more recent than `current`. Accepts
+/// RFC 3339 timestamps and bare `YYYY-MM-DD` dates; a missing or malformed
+/// value on either side resolves conservatively.
+fn timestamp_is_newer(candidate: Option<&str>, current: Option<&str>) -> bool {
     let parse = |value: Option<&str>| -> Option<DateTime<Utc>> {
         let value = value?;
         DateTime::parse_from_rfc3339(value)
@@ -400,29 +440,20 @@ fn supplement_is_newer(candidate: Option<&str>, current: Option<&str>) -> bool {
     }
 }
 
-fn load_catalog(
-    cache_directory: &Path,
+fn validated_cache_data(
     source: SourceId,
-    bundled: &[u8],
-) -> Result<PricingCatalog, PricingStoreError> {
-    let mut catalog = catalog_from_compact(bundled)?;
-    if let Ok(cached) = fs::read(cache_directory.join(source.file_name())) {
-        match catalog_from_compact(&cached) {
-            Ok(cache) => catalog = catalog.merging(cache),
-            Err(error) => crate::app_warn!(
-                "pricing",
-                "cached {} catalog unreadable, using bundled: {error}",
-                source.file_name()
-            ),
-        }
-    }
-    Ok(catalog)
-}
-
-fn validated_cache_data(source: SourceId, body: &[u8]) -> Result<Vec<u8>, PricingStoreError> {
+    body: &[u8],
+    now: DateTime<Utc>,
+) -> Result<Vec<u8>, PricingStoreError> {
+    // The stamp lets the next launch tell a fetched cache apart from a bundled
+    // snapshot shipped by an app update and merge by recency.
+    let stamp = |mut catalog: PricingCatalog| {
+        catalog.retrieved_at = Some(now.to_rfc3339());
+        catalog
+    };
     match source {
-        SourceId::Litellm => Ok(compact_data(&catalog_from_litellm(body)?)?),
-        SourceId::ModelsDev => Ok(compact_data(&catalog_from_models_dev(body)?)?),
+        SourceId::Litellm => Ok(compact_data(&stamp(catalog_from_litellm(body)?))?),
+        SourceId::ModelsDev => Ok(compact_data(&stamp(catalog_from_models_dev(body)?))?),
         SourceId::Supplement => {
             PricingSupplement::decode(body)?;
             Ok(body.to_vec())
@@ -561,6 +592,178 @@ mod tests {
             status: StatusCode::OK,
             etag: Some("\"v1\"".into()),
             body: body.to_vec(),
+        }
+    }
+
+    fn bundled_with_catalog_stamps(
+        litellm_stamp: Option<&str>,
+        models_dev_stamp: Option<&str>,
+    ) -> BundledSources {
+        let mut sources = bundled();
+        let stamped = |stamp: Option<&str>, body: &str| -> Arc<[u8]> {
+            match stamp {
+                Some(stamp) => {
+                    let value: serde_json::Value = serde_json::from_str(body).unwrap();
+                    Arc::from(
+                        serde_json::to_vec(&serde_json::json!({
+                            "retrieved_at": stamp,
+                            "models": value["models"],
+                        }))
+                        .unwrap()
+                        .as_slice(),
+                    )
+                }
+                None => Arc::from(body.as_bytes()),
+            }
+        };
+        sources.litellm = stamped(
+            litellm_stamp,
+            r#"{"models":{"bundled-model":{"i":1,"o":2,"cw":1,"cr":0.1},"snapshot-only":{"i":2,"o":3,"cw":2,"cr":0.2}}}"#,
+        );
+        sources.models_dev = stamped(
+            models_dev_stamp,
+            r#"{"models":{"bundled-dev-model":{"i":3,"o":4,"cw":3,"cr":0.3}}}"#,
+        );
+        sources
+    }
+
+    fn compact_catalog(stamp: Option<&str>, entries: &[(&str, f64)]) -> Vec<u8> {
+        let models: serde_json::Map<String, serde_json::Value> = entries
+            .iter()
+            .map(|(name, input)| {
+                (
+                    (*name).to_owned(),
+                    serde_json::json!({"i": input, "o": 2.0, "cw": 1.0, "cr": 0.1}),
+                )
+            })
+            .collect();
+        serde_json::to_vec(&serde_json::json!({
+            "retrieved_at": stamp,
+            "models": models,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_newer_bundled_catalog_beats_a_stale_cache() {
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join(SourceId::Litellm.file_name()),
+            compact_catalog(
+                Some("2026-08-01T00:00:00Z"),
+                &[("bundled-model", 9.0), ("cache-only", 8.0)],
+            ),
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join(SourceId::ModelsDev.file_name()),
+            compact_catalog(Some("2026-08-01T00:00:00Z"), &[("bundled-dev-model", 9.0)]),
+        )
+        .unwrap();
+
+        let pricing = load_pricing(
+            directory.path(),
+            &bundled_with_catalog_stamps(
+                Some("2026-08-12T00:00:00Z"),
+                Some("2026-08-12T00:00:00Z"),
+            ),
+        )
+        .unwrap();
+
+        // The app update's fresher bundle wins for shared models…
+        assert_eq!(
+            pricing.resolve("bundled-model").unwrap().input_per_million,
+            1.0
+        );
+        assert_eq!(
+            pricing
+                .resolve("bundled-dev-model")
+                .unwrap()
+                .input_per_million,
+            3.0
+        );
+        // …while cache-only models still resolve, as before.
+        assert_eq!(
+            pricing.resolve("cache-only").unwrap().input_per_million,
+            8.0
+        );
+    }
+
+    #[test]
+    fn an_equally_or_less_recent_bundle_keeps_the_cache() {
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join(SourceId::Litellm.file_name()),
+            compact_catalog(Some("2026-08-12T00:00:00Z"), &[("bundled-model", 9.0)]),
+        )
+        .unwrap();
+
+        for bundle_stamp in ["2026-08-12T00:00:00Z", "2026-08-01T00:00:00Z"] {
+            let pricing = load_pricing(
+                directory.path(),
+                &bundled_with_catalog_stamps(Some(bundle_stamp), None),
+            )
+            .unwrap();
+            assert_eq!(
+                pricing.resolve("bundled-model").unwrap().input_per_million,
+                9.0,
+                "bundle stamped {bundle_stamp} must not displace the cache"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stamped_bundle_beats_a_legacy_unstamped_cache() {
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join(SourceId::Litellm.file_name()),
+            compact_catalog(None, &[("bundled-model", 9.0)]),
+        )
+        .unwrap();
+
+        let pricing = load_pricing(
+            directory.path(),
+            &bundled_with_catalog_stamps(Some("2026-08-12T00:00:00Z"), None),
+        )
+        .unwrap();
+
+        assert_eq!(
+            pricing.resolve("bundled-model").unwrap().input_per_million,
+            1.0
+        );
+    }
+
+    #[test]
+    fn fetched_catalogs_are_cached_with_a_recency_stamp() {
+        let directory = tempdir().unwrap();
+        let http = Arc::new(StubHttp::default());
+        http.push(response(br#"{"fetched-model":{"input_cost_per_token":0.000005,"output_cost_per_token":0.00001}}"#));
+        http.push(response(
+            br#"{"x":{"models":{"fetched-dev":{"cost":{"input":1,"output":2}}}}}"#,
+        ));
+        http.push(response(&supplement(None, 9.0)));
+        let now = Utc.with_ymd_and_hms(2026, 7, 15, 10, 0, 0).unwrap();
+        let store = PricingStore::with_dependencies(
+            directory.path().to_path_buf(),
+            bundled(),
+            http,
+            Arc::new(move || now),
+        )
+        .unwrap();
+
+        store.refresh_due();
+
+        for source in [SourceId::Litellm, SourceId::ModelsDev] {
+            let cached: serde_json::Value = serde_json::from_slice(
+                &fs::read(directory.path().join(source.file_name())).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                cached["retrieved_at"].as_str(),
+                Some("2026-07-15T10:00:00+00:00"),
+                "{} must carry its fetch time",
+                source.file_name()
+            );
         }
     }
 

@@ -14,13 +14,14 @@ use crate::{
 };
 
 use super::ClaudeError;
+use crate::providers::paths::home_directory;
 
 const DEFAULT_API_BASE: &str = "https://api.anthropic.com";
 const DEFAULT_REFRESH_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const DEFAULT_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const NON_PROD_CLIENT_ID: &str = "22422756-60c9-4084-8eb7-27705fd5cf9a";
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ClaudeOAuth {
     pub access_token: Option<String>,
@@ -30,6 +31,11 @@ pub struct ClaudeOAuth {
     pub rate_limit_tier: Option<String>,
     pub scopes: Option<Vec<String>>,
 }
+
+crate::redacted_debug!(ClaudeOAuth {
+    access_token,
+    refresh_token
+});
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -44,13 +50,15 @@ enum CredentialSource {
     Environment,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClaudeCredential {
     pub oauth: ClaudeOAuth,
     source: CredentialSource,
     document: ClaudeCredentialsFile,
     pub inference_only: bool,
 }
+
+crate::redacted_debug!(ClaudeCredential { oauth, document });
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaudeCredentialGeneration {
@@ -559,13 +567,6 @@ fn env_flag(name: &str) -> bool {
             )
         })
         .unwrap_or(false)
-}
-
-fn home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

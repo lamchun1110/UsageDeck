@@ -254,6 +254,7 @@ mod tests {
     }
 
     fn auth(key: Option<&str>) -> MiniMaxAuthStore {
+        crate::providers::http::clear_rate_limits();
         MiniMaxAuthStore::with_store(ApiKeyStore::with_backends(
             "minimax",
             "MINIMAX_API_KEY",
@@ -324,7 +325,7 @@ mod tests {
         }
 
         let rate_limited = MiniMaxProvider::with_dependencies(
-            auth(Some("secret")),
+            auth(Some("limited-secret")),
             MiniMaxClient::for_test(
                 &test_http::serve_once(429, &[], "{}"),
                 Duration::from_secs(1),

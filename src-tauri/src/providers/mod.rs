@@ -11,16 +11,36 @@ mod daily_usage;
 mod detection;
 pub mod devin;
 pub mod grok;
+mod http;
 pub mod kimi;
 mod log_usage;
 pub mod minimax;
 pub mod opencode;
 pub mod openrouter;
+mod paths;
 mod pi_usage;
 mod registry;
 #[cfg(test)]
 pub mod test_http;
 pub mod zai;
+
+/// Implements `Debug` for a token-bearing struct by printing every listed
+/// field as `<redacted>`, mirroring the hand-written impl in `devin::auth`.
+/// Fields not listed are omitted from the output entirely, so a stray `{:?}`
+/// log can never leak a credential.
+#[macro_export]
+macro_rules! redacted_debug {
+    ($name:ident { $($field:ident),* $(,)? }) => {
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter
+                    .debug_struct(stringify!($name))
+                    $(.field(stringify!($field), &"<redacted>"))*
+                    .finish()
+            }
+        }
+    };
+}
 
 pub use detection::{detect_local_credentials, CredentialProbeResults, CredentialProbeStatus};
 pub use registry::ProviderRegistry;

@@ -80,10 +80,17 @@ fn mutate_api_key(
     provider_id: String,
     mutation: ApiKeyMutation<'_>,
 ) -> Result<AppliedApiKeyMutation, String> {
-    let initial_status = runtime
-        .api_key_status()
-        .ok_or_else(|| "That provider does not accept an API key.".to_owned())?
-        .ok();
+    let initial_status = match runtime.api_key_status() {
+        Some(status) => status
+            .inspect_err(|error| {
+                crate::app_warn!(
+                    "auth",
+                    "API key status could not be read before mutation for {provider_id}: {error}"
+                );
+            })
+            .ok(),
+        None => return Err("That provider does not accept an API key.".to_owned()),
+    };
     let fallback_status = match &mutation {
         ApiKeyMutation::Save(_) => {
             if matches!(
@@ -306,9 +313,13 @@ pub async fn add_api_key_account(
             "Provider family '{family}' does not support multiple accounts."
         ));
     }
-    storage
-        .allocate_api_key_account(&family, &account_name)
-        .map_err(|error| error.to_string())
+    let storage = storage.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        storage.allocate_api_key_account(&family, &account_name)
+    })
+    .await
+    .map_err(|_| "The provider account could not be created.".to_owned())?
+    .map_err(|error| error.to_string())
 }
 
 /// Removes an API-key account by its derived provider id (e.g. `kimi@1a2b3c4d`). The credential
@@ -330,35 +341,56 @@ pub async fn remove_api_key_account(
     // Deleting unknown families would expose an error path with no valid CS value; truncate to a
     // non-sensitive prefix of the derived id instead.
     let prefix = if provider_id.len() > 16 {
-        &provider_id[..16]
+        provider_id[..16].to_owned()
     } else {
-        &provider_id
+        provider_id.clone()
     };
-    let identity_key = storage
-        .load_provider_account_records(&family)
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .find(|(_, stored_provider_id, _)| stored_provider_id == &provider_id)
-        .map(|(identity_key, _, _)| identity_key)
-        .ok_or_else(|| {
-            format!("API-key account '{prefix}...' could not be found. It may already have been removed.")
-        })?;
-    // The credential-store entry is tied to the derived provider id (e.g. `kimi@1a2b3c4d`);
-    // deleting the raw ApiKeyStore entry is sufficient: every family ultimately delegates to it,
-    // so calling it directly avoids depending on per-family ZaiAuthStore/KimiAuthStore privacy.
-    // Missing entries are not errors: the database record is the source of truth and a keyring
-    // miss simply means the secret was already absent.
     if !crate::providers::api_key_account::supports_api_key_accounts(&family) {
         return Err(format!(
             "Provider family '{family}' does not support multiple accounts."
         ));
     }
-    let store = crate::providers::api_key::ApiKeyStore::new_with_sources(&provider_id, &[], &[]);
-    let _ = store.delete();
-    storage
-        .delete_provider_account_by_identity(&family, &identity_key)
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    // Records lookup, credential-store deletion, and the database removal all block
+    // (the keyring call can sit on D-Bus for seconds); keep them off the async
+    // runtime's workers.
+    let storage = storage.inner().clone();
+    let provider_id_for_removal = provider_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let identity_key = storage
+            .load_provider_account_records(&family)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|(_, stored_provider_id, _)| stored_provider_id == &provider_id_for_removal)
+            .map(|(identity_key, _, _)| identity_key)
+            .ok_or_else(|| {
+                format!(
+                    "API-key account '{prefix}...' could not be found. It may already have been removed."
+                )
+            })?;
+        // The credential-store entry is tied to the derived provider id (e.g. `kimi@1a2b3c4d`);
+        // deleting the raw ApiKeyStore entry is sufficient: every family ultimately delegates to it,
+        // so calling it directly avoids depending on per-family ZaiAuthStore/KimiAuthStore privacy.
+        // Missing entries are not errors: the database record is the source of truth and a keyring
+        // miss simply means the secret was already absent — but a live keyring failure is worth a
+        // log line so a wedged delete stays diagnosable.
+        let store = crate::providers::api_key::ApiKeyStore::new_with_sources(
+            &provider_id_for_removal,
+            &[],
+            &[],
+        );
+        if let Err(error) = store.delete() {
+            crate::app_warn!(
+                "auth",
+                "credential entry for {provider_id_for_removal} could not be deleted: {error}"
+            );
+        }
+        storage
+            .delete_provider_account_by_identity(&family, &identity_key)
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|_| "The provider account could not be removed.".to_owned())?
 }
 
 #[cfg(test)]

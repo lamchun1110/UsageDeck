@@ -14,6 +14,7 @@ use serde_json::{Map, Value};
 use tempfile::NamedTempFile;
 
 use super::GrokError;
+use crate::providers::paths::home_directory;
 
 const DEFAULT_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const REFRESH_BUFFER_MINUTES: i64 = 5;
@@ -34,13 +35,20 @@ pub struct GrokAuthEntry {
     pub oidc_client_id: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GrokAuthState {
     document: Value,
     pub entry_key: String,
     pub entry: GrokAuthEntry,
     pub token: String,
 }
+
+crate::redacted_debug!(GrokAuthState {
+    document,
+    entry_key,
+    entry,
+    token
+});
 
 #[derive(Debug, Clone)]
 pub struct GrokAuthStore {
@@ -255,13 +263,6 @@ fn trimmed(value: Option<&str>) -> Option<&str> {
 fn trimmed_owned(value: String) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_owned())
-}
-
-fn home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

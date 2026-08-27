@@ -116,17 +116,58 @@ fn migrate_app_data_from(legacy: Option<&Path>, destination: &Path) -> DataMigra
         return report;
     }
 
-    if let Some(label) =
-        copy_file_if_absent(legacy, destination, LEGACY_DATABASE_FILE, DATABASE_FILE)
-    {
+    let (copied, error) = copy_database_if_absent(legacy, destination);
+    if let Some(label) = copied {
         report.copied.push(label);
     }
+    if let Some(error) = error {
+        report.errors.push(error);
+    }
     for item in DATA_DIRECTORY_ITEMS {
-        if let Some(label) = copy_tree_if_absent(&legacy.join(item), &destination.join(item)) {
-            report.copied.push(label);
+        match copy_tree_if_absent(&legacy.join(item), &destination.join(item)) {
+            Ok(Some(label)) => report.copied.push(label),
+            Ok(None) => {}
+            Err(error) => report.errors.push(error),
         }
     }
     report
+}
+
+/// Copies the legacy database under its current name together with its SQLite
+/// sidecars. The sidecars matter as much as the file itself: a live database's
+/// committed-but-uncheckpointed transactions live in the WAL, so a database
+/// copied without it would silently lose them. Sidecars only follow a
+/// successful primary copy — a WAL without its database is meaningless — and a
+/// sidecar failure leaves the successful primary copy in place, reported as an
+/// error alongside it.
+fn copy_database_if_absent(
+    source_root: &Path,
+    destination_root: &Path,
+) -> (Option<String>, Option<String>) {
+    let copied = match copy_file_if_absent(
+        source_root,
+        destination_root,
+        LEGACY_DATABASE_FILE,
+        DATABASE_FILE,
+    ) {
+        Ok(copied) => copied,
+        Err(error) => return (None, Some(error)),
+    };
+    let Some(label) = copied else {
+        return (None, None);
+    };
+    let mut sidecar_error = None;
+    for suffix in ["-wal", "-shm"] {
+        if let Err(error) = copy_file_if_absent(
+            source_root,
+            destination_root,
+            &format!("{LEGACY_DATABASE_FILE}{suffix}"),
+            &format!("{DATABASE_FILE}{suffix}"),
+        ) {
+            sidecar_error.get_or_insert(error);
+        }
+    }
+    (Some(label), sidecar_error)
 }
 
 /// Renames the database file left by earlier builds to its current name, in
@@ -143,18 +184,29 @@ pub fn rename_legacy_database(app_data_dir: &Path) -> Result<bool, String> {
     if !legacy.is_file() || app_data_dir.join(DATABASE_FILE).exists() {
         return Ok(false);
     }
-    fs::rename(&legacy, app_data_dir.join(DATABASE_FILE))
-        .map_err(|error| format!("{LEGACY_DATABASE_FILE}: {error}"))?;
     // Sidecars follow SQLite's `<db>-wal` / `<db>-shm` naming. Carrying the WAL
     // over matters: committed-but-uncheckpointed transactions live there, and a
-    // renamed database without its WAL would silently lose them.
+    // renamed database without its WAL would silently lose them. They move
+    // ahead of the primary so an interrupted rename cannot strand them: a
+    // sidecar already under the current name is picked up when the next launch
+    // retries the primary, while the reverse order would leave the promoted
+    // database looking complete without its WAL. A sidecar that cannot move is
+    // reported rather than ignored — its transactions would be lost silently.
     for suffix in ["-wal", "-shm"] {
         let source = app_data_dir.join(format!("{LEGACY_DATABASE_FILE}{suffix}"));
-        if source.is_file() {
-            let destination = app_data_dir.join(format!("{DATABASE_FILE}{suffix}"));
-            let _ = fs::rename(&source, &destination);
+        if !source.is_file() {
+            continue;
+        }
+        let destination = app_data_dir.join(format!("{DATABASE_FILE}{suffix}"));
+        if let Err(error) = fs::rename(&source, &destination) {
+            crate::app_warn!(
+                "migration",
+                "legacy database sidecar rename failed ({suffix}): {error}"
+            );
         }
     }
+    fs::rename(&legacy, app_data_dir.join(DATABASE_FILE))
+        .map_err(|error| format!("{LEGACY_DATABASE_FILE}: {error}"))?;
     Ok(true)
 }
 
@@ -163,26 +215,22 @@ fn copy_file_if_absent(
     destination_root: &Path,
     source_name: &str,
     destination_name: &str,
-) -> Option<String> {
+) -> Result<Option<String>, String> {
     let source = source_root.join(source_name);
     let destination = destination_root.join(destination_name);
     if !source.is_file() || destination.exists() {
-        return None;
+        return Ok(None);
     }
     if let Some(parent) = destination.parent() {
-        if let Err(error) = fs::create_dir_all(parent) {
-            return Some(format!("{destination_name}: {error}"));
-        }
+        fs::create_dir_all(parent).map_err(|error| format!("{destination_name}: {error}"))?;
     }
-    match fs::copy(&source, &destination) {
-        Ok(_) => Some(destination_name.to_owned()),
-        Err(error) => Some(format!("{destination_name}: {error}")),
-    }
+    fs::copy(&source, &destination).map_err(|error| format!("{destination_name}: {error}"))?;
+    Ok(Some(destination_name.to_owned()))
 }
 
-fn copy_tree_if_absent(source: &Path, destination: &Path) -> Option<String> {
+fn copy_tree_if_absent(source: &Path, destination: &Path) -> Result<Option<String>, String> {
     if !source.is_dir() {
-        return None;
+        return Ok(None);
     }
     let label = source
         .file_name()
@@ -220,9 +268,9 @@ fn copy_tree_if_absent(source: &Path, destination: &Path) -> Option<String> {
         }
     }
     if let Some(error) = first_error {
-        return Some(error);
+        return Err(error);
     }
-    copied_any.then_some(label)
+    Ok(copied_any.then_some(label))
 }
 
 pub(crate) trait CredentialMigrator: Sync {
@@ -368,6 +416,70 @@ mod tests {
             std::fs::read(destination.path().join("usagedeck.db")).unwrap(),
             b"database"
         );
+    }
+
+    #[test]
+    fn copies_the_database_sidecars_along_with_the_file() {
+        let legacy = tempdir().unwrap();
+        let destination = tempdir().unwrap();
+        std::fs::write(legacy.path().join("openquota.db"), b"database").unwrap();
+        std::fs::write(legacy.path().join("openquota.db-wal"), b"wal").unwrap();
+        std::fs::write(legacy.path().join("openquota.db-shm"), b"shm").unwrap();
+
+        let report = migrate_app_data_from(Some(legacy.path()), destination.path());
+
+        assert_eq!(report.copied, vec!["usagedeck.db".to_owned()]);
+        assert!(report.errors.is_empty());
+        assert_eq!(
+            std::fs::read(destination.path().join("usagedeck.db-wal")).unwrap(),
+            b"wal"
+        );
+        assert_eq!(
+            std::fs::read(destination.path().join("usagedeck.db-shm")).unwrap(),
+            b"shm"
+        );
+    }
+
+    #[test]
+    fn an_existing_sidecar_is_never_overwritten_by_the_copy_pass() {
+        let legacy = tempdir().unwrap();
+        let destination = tempdir().unwrap();
+        std::fs::write(legacy.path().join("openquota.db"), b"database").unwrap();
+        std::fs::write(legacy.path().join("openquota.db-wal"), b"legacy-wal").unwrap();
+        std::fs::write(destination.path().join("usagedeck.db-wal"), b"current-wal").unwrap();
+
+        let report = migrate_app_data_from(Some(legacy.path()), destination.path());
+
+        assert!(report.errors.is_empty());
+        assert_eq!(
+            std::fs::read(destination.path().join("usagedeck.db-wal")).unwrap(),
+            b"current-wal"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sidecar_copy_failures_are_reported_as_errors() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let legacy = tempdir().unwrap();
+        let destination = tempdir().unwrap();
+        std::fs::write(legacy.path().join("openquota.db"), b"database").unwrap();
+        let wal = legacy.path().join("openquota.db-wal");
+        std::fs::write(&wal, b"wal").unwrap();
+        std::fs::set_permissions(&wal, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let report = migrate_app_data_from(Some(legacy.path()), destination.path());
+
+        std::fs::set_permissions(&wal, std::fs::Permissions::from_mode(0o644)).unwrap();
+        // The primary copy still happened; the unreadable sidecar is reported.
+        assert_eq!(
+            std::fs::read(destination.path().join("usagedeck.db")).unwrap(),
+            b"database"
+        );
+        assert_eq!(report.copied, vec!["usagedeck.db".to_owned()]);
+        assert_eq!(report.errors.len(), 1);
+        assert!(report.errors[0].starts_with("usagedeck.db-wal:"));
     }
 
     #[test]

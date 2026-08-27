@@ -1,9 +1,10 @@
-use std::{env, fs, io::Read, path::PathBuf};
+use std::{fs, io::Read, path::PathBuf};
 
 use serde_json::Value;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::CommandCodeError;
+use crate::providers::paths::home_directory;
 
 const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -20,7 +21,7 @@ impl CommandCodeAuthStore {
     }
 
     #[cfg(test)]
-    fn with_path(path: PathBuf) -> Self {
+    pub(super) fn with_path(path: PathBuf) -> Self {
         Self { path }
     }
 
@@ -72,13 +73,6 @@ impl Default for CommandCodeAuthStore {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn home_directory() -> PathBuf {
-    env::var_os("HOME")
-        .or_else(|| env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
 }
 
 #[cfg(test)]
