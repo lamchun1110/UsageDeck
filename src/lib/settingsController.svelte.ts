@@ -1,4 +1,5 @@
 import { getAppSettings, saveAppSettings } from './backend';
+import { t } from './i18n.svelte';
 import type { AppSettings, SettingsViewState } from './types';
 
 export type SettingsMutation = (
@@ -28,7 +29,7 @@ function strictlyFollows(candidate: SettingsViewState, current: SettingsViewStat
 }
 
 function errorMessage(error: unknown) {
-  return typeof error === 'string' ? error : 'Settings could not be saved.';
+  return typeof error === 'string' ? error : t('settings.saveFailed');
 }
 
 export class SettingsController {
@@ -178,7 +179,7 @@ export class SettingsController {
         this.state = state;
       }
     } catch {
-      this.onError('Settings could not be saved or reloaded.');
+      this.onError(t('settings.saveOrReloadFailed'));
     }
   }
 }

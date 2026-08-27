@@ -379,7 +379,7 @@
       );
       customizationHistory = [...customizationHistory.slice(-19), previous];
     } catch {
-      settingsError = 'Customization could not be reset.';
+      settingsError = t('app.error.customizationReset');
     } finally {
       resettingCustomization = false;
       resetConfirmationOpen = false;
@@ -421,9 +421,9 @@
       updatePanelHeightMode();
       updatePanelResizeEdge();
       settingsError = null;
-      showConfirmation('All settings restored');
+      showConfirmation(t('app.confirm.allSettingsRestored'));
     } catch {
-      settingsError = 'Settings could not be reset.';
+      settingsError = t('app.error.settingsReset');
       updatePanelHeightMode();
     } finally {
       resettingAllSettings = false;
@@ -442,7 +442,7 @@
     } else {
       await navigator.clipboard.writeText(fallback);
     }
-    showConfirmation('Copied to clipboard');
+    showConfirmation(t('app.confirm.copiedToClipboard'));
   }
   async function shareProvider(providerId: string) {
     const current = settingsState;
@@ -463,20 +463,20 @@
       });
       await copyCanvas(canvas, snapshot);
     } catch {
-      settingsError = 'Provider screenshot could not be copied.';
+      settingsError = t('app.error.screenshotCopy');
     }
   }
   async function copyLogPath() {
     const path = await getLogPath();
     await navigator.clipboard.writeText(path);
-    showConfirmation('Log path copied');
+    showConfirmation(t('app.confirm.logPathCopied'));
   }
   async function openLogFolder() {
     await openSystemLogFolder();
   }
   function topBarTitle() {
     if (screen.startsWith('provider:')) return providerDisplayName(screen.slice(9));
-    return screen === 'settings' ? 'Settings' : 'Customize';
+    return screen === 'settings' ? t('app.title.settings') : t('app.title.customize');
   }
   async function openAbout() {
     aboutTrigger = optionsMenuElement?.querySelector<HTMLElement>(':scope > summary') ?? null;
@@ -586,7 +586,7 @@
         // upstream support is still unavailable.
         await getCurrentWindow().startResizeDragging(edge === 'top' ? 'North' : 'South');
       } catch {
-        settingsError = 'UsageDeck panel resize could not be started.';
+        settingsError = t('app.error.resizeStart');
       } finally {
         await lockPanelResizeAxis().catch(() => undefined);
         updatePanelHeightMode();
@@ -649,7 +649,7 @@
         window.addEventListener('pointerup', finish);
         window.addEventListener('pointercancel', finish);
       } catch {
-        settingsError = 'UsageDeck panel width could not be resized.';
+        settingsError = t('app.error.widthResize');
       }
     })();
   }
@@ -674,7 +674,7 @@
       await setPanelWidth(panelWidth);
       await lockPanelResizeAxis();
     } catch {
-      settingsError = 'UsageDeck panel width could not be resized.';
+      settingsError = t('app.error.widthResize');
     }
   }
   async function changePanelHeightMode(mode: PanelHeightMode) {
@@ -689,7 +689,7 @@
       if (request === panelHeightModeRequest) updatePanelHeightMode();
     } catch {
       if (request !== panelHeightModeRequest) return;
-      settingsError = 'UsageDeck could not change the panel height mode.';
+      settingsError = t('app.error.heightMode');
       updatePanelHeightMode();
     }
   }
@@ -699,14 +699,14 @@
       const permissionState = await requestNotificationPermission();
       settingsController.acceptExternalState(permissionState);
     } catch {
-      settingsError = 'Notification permission could not be requested.';
+      settingsError = t('app.error.notificationPermission');
     }
   }
   async function openNotificationSettings() {
     try {
       await openSystemNotificationSettings();
     } catch {
-      settingsError = 'Notification settings could not be opened on this system.';
+      settingsError = t('app.error.notificationSettings');
     }
   }
   async function checkForUpdates(manual = false) {
@@ -1029,10 +1029,12 @@
           type="button"
           onclick={refresh}
           disabled={anyRefreshing}
-          aria-label="Refresh all provider usage"
+          aria-label={t('app.footer.refreshAll')}
         >
           <span>UsageDeck {appVersion}</span><small
-            >{anyRefreshing ? 'Updating…' : nextUpdateLabel(lastFullRefresh, now)}</small
+            >{anyRefreshing
+              ? t('app.footer.updating')
+              : nextUpdateLabel(lastFullRefresh, now)}</small
           >
         </button>
         {#if screen === 'dashboard'}
@@ -1051,8 +1053,8 @@
               </button>
             {/if}
             <details class="options-menu" bind:this={optionsMenuElement}>
-              <summary aria-label="Open options" onkeydown={handleOptionsKey}
-                ><span>Options</span><Icon
+              <summary aria-label={t('app.options.open')} onkeydown={handleOptionsKey}
+                ><span>{t('app.options.label')}</span><Icon
                   name="chevron-down"
                   size={11}
                   strokeWidth={2.2}
@@ -1061,7 +1063,7 @@
               <div
                 class="options-menu__panel"
                 role="menu"
-                aria-label="Options menu"
+                aria-label={t('app.options.menuLabel')}
                 tabindex="-1"
                 onkeydown={handleOptionsKey}
                 onclick={(event) => {
@@ -1073,16 +1075,18 @@
                 <button
                   class="menu-item"
                   type="button"
-                  aria-label="Customize"
+                  aria-label={t('app.menu.customize')}
                   onclick={() => navigate('customize')}
-                  ><Icon name="sliders" /><span>Customize</span><kbd>↩</kbd></button
+                  ><Icon name="sliders" /><span>{t('app.menu.customize')}</span><kbd>↩</kbd></button
                 >
                 <button
                   class="menu-item"
                   type="button"
-                  aria-label="Settings"
+                  aria-label={t('app.menu.settings')}
                   onclick={() => navigate('settings')}
-                  ><Icon name="gear" /><span>Settings</span><kbd>{shortcuts.settings}</kbd></button
+                  ><Icon name="gear" /><span>{t('app.menu.settings')}</span><kbd
+                    >{shortcuts.settings}</kbd
+                  ></button
                 >
                 <hr />
                 <details
@@ -1093,7 +1097,7 @@
                   <summary
                     ><span class="share-menu__direction"
                       ><Icon name="chevron-left" size={12} /></span
-                    ><span>Share Screenshot</span></summary
+                    ><span>{t('dashboard.menu.shareScreenshot')}</span></summary
                   >
                   <div>
                     {#if shareMenuOpen}
@@ -1106,18 +1110,18 @@
                   </div>
                 </details>
                 <button class="menu-item" type="button" onclick={() => void checkForUpdates(true)}
-                  ><Icon name="refresh" /><span>Check for Updates…</span></button
+                  ><Icon name="refresh" /><span>{t('settings.btn.checkUpdates')}</span></button
                 >
                 <hr />
                 <button class="menu-item" type="button" onclick={openAbout}
-                  ><Icon name="about" /><span>About UsageDeck</span></button
+                  ><Icon name="about" /><span>{t('app.menu.about')}</span></button
                 >
                 <button
                   class="menu-item menu-item--danger"
                   type="button"
-                  aria-label="Quit UsageDeck"
+                  aria-label={t('app.menu.quit')}
                   onclick={quitApp}
-                  ><Icon name="power" /><span>Quit UsageDeck</span><kbd>{shortcuts.quit}</kbd
+                  ><Icon name="power" /><span>{t('app.menu.quit')}</span><kbd>{shortcuts.quit}</kbd
                   ></button
                 >
               </div>
@@ -1135,9 +1139,9 @@
 
     {#if resetConfirmationOpen}
       <ConfirmationSheet
-        title="Reset All Customization?"
-        message="This turns installed providers back on and restores every provider's metric visibility and order."
-        confirmLabel="Reset All"
+        title={t('app.sheet.customizationTitle')}
+        message={t('app.sheet.customizationMessage')}
+        confirmLabel={t('app.sheet.resetAll')}
         pending={resettingCustomization}
         onConfirm={() => void confirmCustomizationReset()}
         onCancel={() => (resetConfirmationOpen = false)}
@@ -1146,9 +1150,9 @@
 
     {#if settingsResetConfirmationOpen}
       <ConfirmationSheet
-        title="Reset All Settings?"
-        message="This restores appearance, notifications, shortcuts, updates, panel sizing, provider names, and layout. Provider sign-ins, API keys, and usage history stay in place. This cannot be undone."
-        confirmLabel="Reset All"
+        title={t('app.sheet.settingsTitle')}
+        message={t('app.sheet.settingsMessage')}
+        confirmLabel={t('app.sheet.resetAll')}
         pending={resettingAllSettings}
         onConfirm={() => void confirmAllSettingsReset()}
         onCancel={() => (settingsResetConfirmationOpen = false)}

@@ -1,4 +1,5 @@
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
+import { t } from './i18n.svelte';
 import { fitPanelToContent } from './backend';
 import { springMotion } from './motion';
 import { panelTargetHeight, screenPanelHeight, shouldDeferPanelFit } from './panelSizing';
@@ -157,7 +158,7 @@ export function createWindowController(options: WindowControllerOptions) {
     } catch {
       pendingResizeHeight = null;
       resizeAvailable = false;
-      options.onError('UsageDeck window could not adapt to its content.');
+      options.onError(t('window.adaptFailed'));
     } finally {
       resizeInFlight = false;
     }
