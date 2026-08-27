@@ -15,7 +15,7 @@
     "lint": "eslint eslint.config.js vite.config.ts scripts/verify/*.js src && prettier --check '.github/**/*.{yml,yaml}' '*.{json,md,js,ts}' scripts/verify/*.js 'src/**/*.{ts,svelte,css}' src-tauri/tauri.conf.json src-tauri/capabilities/default.json",
     "format": "prettier --write '.github/**/*.{yml,yaml}' '*.{json,md,js,ts}' scripts/verify/*.js 'src/**/*.{ts,svelte,css}' src-tauri/tauri.conf.json src-tauri/capabilities/default.json",
     "verify:versions": "node scripts/verify/verify-versions.js",
-    "verify:contracts": "node scripts/verify/verify-command-contract.js && node scripts/verify/verify-model-contract.js && node scripts/verify/verify-provider-registry-contract.js && node scripts/verify/verify-single-instance-contract.js && node scripts/verify/verify-platform-smoke.js",
+    "verify:contracts": "node scripts/verify/verify-command-contract.js && node scripts/verify/verify-event-contract.js && node scripts/verify/verify-model-contract.js && node scripts/verify/verify-provider-registry-contract.js && node scripts/verify/verify-single-instance-contract.js && node scripts/verify/verify-platform-smoke.js",
     "verify:frontend": "corepack pnpm lint && corepack pnpm check && corepack pnpm test && corepack pnpm build",
     "verify:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --all-targets",
     "verify": "corepack pnpm verify:versions && corepack pnpm verify:contracts && corepack pnpm verify:frontend && corepack pnpm verify:rust",
