@@ -660,10 +660,7 @@ impl SettingsService {
         &self,
         checked_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), StorageError> {
-        let _commit = self
-            .commit
-            .lock()
-            .map_err(|_| StorageError::Poisoned)?;
+        let _commit = self.commit.lock().map_err(|_| StorageError::Poisoned)?;
         let mut next = self
             .settings
             .read()
@@ -672,10 +669,7 @@ impl SettingsService {
             .clone();
         next.last_update_check_at = Some(checked_at);
         self.storage.save_settings(&next)?;
-        *self
-            .settings
-            .write()
-            .map_err(|_| StorageError::Poisoned)? = Arc::new(next);
+        *self.settings.write().map_err(|_| StorageError::Poisoned)? = Arc::new(next);
         self.settings_revision.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -1551,7 +1545,11 @@ mod tests {
 
         let (second, _) = SettingsService::new_deferred(storage, registry).unwrap();
         let state = second.view_state(
-            crate::models::NotificationPermission::Prompt, None, false, None);
+            crate::models::NotificationPermission::Prompt,
+            None,
+            false,
+            None,
+        );
 
         assert_eq!(
             state
@@ -1734,7 +1732,11 @@ mod tests {
         assert_eq!(
             service
                 .view_state(
-            crate::models::NotificationPermission::Prompt, None, true, None)
+                    crate::models::NotificationPermission::Prompt,
+                    None,
+                    true,
+                    None
+                )
                 .settings_revision,
             revision
         );
