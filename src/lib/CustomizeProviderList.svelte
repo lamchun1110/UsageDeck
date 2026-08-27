@@ -2,6 +2,7 @@
   import { flip } from 'svelte/animate';
   import { addApiKeyAccount } from './backend';
   import { t } from './i18n.svelte';
+  import { reorderProviders } from './reorder';
   import type { AppSettings, ProviderLayout } from './types';
   import type { ProviderCatalogIndex } from './metrics';
   import Icon from './Icon.svelte';
@@ -46,17 +47,8 @@
     });
   }
   function reorder(draggedId: string, targetId: string) {
-    if (draggedId === targetId) return;
-    const enabled = settings.providers.filter((provider) => provider.enabled);
-    const from = enabled.findIndex((provider) => provider.id === draggedId);
-    const to = enabled.findIndex((provider) => provider.id === targetId);
-    if (from < 0 || to < 0) return;
-    const [provider] = enabled.splice(from, 1);
-    enabled.splice(to, 0, provider);
-    onChange({
-      ...settings,
-      providers: [...enabled, ...settings.providers.filter((provider) => !provider.enabled)],
-    });
+    const providers = reorderProviders(settings.providers, draggedId, targetId);
+    if (providers) onChange({ ...settings, providers });
   }
 
   async function confirmAddAccount() {

@@ -8,7 +8,7 @@ import type { AppSettings } from './types';
 afterEach(cleanup);
 
 const settings: AppSettings = {
-  schemaVersion: 7,
+  schemaVersion: 8,
   providerNames: {},
   providerOptions: {},
   knownProviderIds: ['codex', 'claude', 'antigravity'],

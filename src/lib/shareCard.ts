@@ -1,4 +1,5 @@
 import type { ProviderCatalogIndex } from './metrics';
+import { t } from './i18n.svelte';
 import { formatMetricNumber, formatMetricValue } from './metricFormat';
 import { formatLimit, formatReset, projectPace } from './pacing';
 import {
@@ -226,21 +227,27 @@ export function renderProviderShareCard(
 function quotaShareRow(quota: QuotaWindow, settings: AppSettings, now: number): ShareRow {
   const used = clamp(quota.usedPercent, 0, 100);
   const remaining = Math.max(0, 100 - used);
-  let reading = `${(settings.usageDisplay === 'used' ? used : remaining).toFixed(0)}% ${settings.usageDisplay}`;
+  let reading = `${(settings.usageDisplay === 'used' ? used : remaining).toFixed(0)}% ${
+    settings.usageDisplay === 'used' ? t('quota.used') : t('quota.left')
+  }`;
   let fillPercent = settings.usageDisplay === 'used' ? used : remaining;
   if (quota.format === 'count' && quota.usedValue !== null && quota.limitValue !== null) {
     const displayed =
       settings.usageDisplay === 'left'
         ? Math.max(0, quota.limitValue - quota.usedValue)
         : quota.usedValue;
-    reading = `${displayed.toFixed(0)} ${quota.unit?.trim() || 'requests'} ${settings.usageDisplay}`;
+    reading = `${displayed.toFixed(0)} ${quota.unit?.trim() || t('quota.requests')} ${
+      settings.usageDisplay === 'used' ? t('quota.used') : t('quota.left')
+    }`;
   }
   if (quota.format === 'dollars' && quota.usedValue !== null) {
     const displayed =
       settings.usageDisplay === 'left' && quota.limitValue !== null
         ? Math.max(0, quota.limitValue - quota.usedValue)
         : quota.usedValue;
-    reading = `$${displayed.toFixed(2)} ${settings.usageDisplay === 'left' ? 'left' : 'spent'}`;
+    reading = `$${displayed.toFixed(2)} ${
+      settings.usageDisplay === 'left' ? t('quota.left') : t('quota.spent')
+    }`;
     if (quota.limitValue !== null && quota.limitValue > 0) {
       fillPercent = (displayed / quota.limitValue) * 100;
     }
@@ -252,22 +259,24 @@ function quotaShareRow(quota: QuotaWindow, settings: AppSettings, now: number): 
       ? 'critical'
       : pace.severity === 'close'
         ? 'warning'
-        : used >= 90
+        : Math.round(used) >= 90
           ? 'critical'
-          : used >= 80
+          : Math.round(used) >= 80
             ? 'warning'
             : 'normal';
   const paceLabel =
     pace.severity === 'spent'
-      ? 'Limit reached'
+      ? t('quota.limitReached')
       : pace.severity === 'runningOut'
         ? formatLimit(pace.runOutAt, now, settings.resetDisplay, settings.timeFormat)
         : pace.severity === 'close' && pace.projectedUsedPercent !== null
-          ? `~${Math.max(1, Math.round(100 - pace.projectedUsedPercent))}% spare`
+          ? t('quota.spare', { percent: Math.max(1, Math.round(100 - pace.projectedUsedPercent)) })
           : pace.severity === 'healthy' &&
               settings.alwaysShowPacing &&
               pace.projectedUsedPercent !== null
-            ? `~${Math.max(0, Math.round(100 - pace.projectedUsedPercent))}% left at reset`
+            ? t('quota.leftAtReset', {
+                percent: Math.max(0, Math.round(100 - pace.projectedUsedPercent)),
+              })
             : null;
 
   return {

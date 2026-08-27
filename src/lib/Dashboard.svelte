@@ -10,6 +10,11 @@
   import ProviderNoticeRow from './ProviderNoticeRow.svelte';
   import Icon from './Icon.svelte';
   import { t } from './i18n.svelte';
+  import {
+    moveMetricIntoSection as moveMetric,
+    reorderMetric as reorderMetricList,
+    reorderProviders,
+  } from './reorder';
   import MetricRenderer from './MetricRenderer.svelte';
   import type { ProviderCatalogIndex } from './metrics';
   import { canRenameProvider } from './providerNames';
@@ -170,15 +175,8 @@
   }
   onDestroy(() => window.clearTimeout(demandMorphTimer));
   function reorderProvider(draggedId: string, targetId: string) {
-    if (draggedId === targetId) return;
-    const enabled = settings.providers.filter((provider) => provider.enabled);
-    const from = enabled.findIndex((provider) => provider.id === draggedId);
-    const to = enabled.findIndex((provider) => provider.id === targetId);
-    if (from < 0 || to < 0) return;
-    const [moved] = enabled.splice(from, 1);
-    enabled.splice(to, 0, moved);
-    const providers = [...enabled, ...settings.providers.filter((provider) => !provider.enabled)];
-    onCustomizationChange({ ...settings, providers });
+    const providers = reorderProviders(settings.providers, draggedId, targetId);
+    if (providers) onCustomizationChange({ ...settings, providers });
   }
   function reorderMetric(
     draggedMetricId: string,
@@ -187,15 +185,14 @@
     targetSection: MetricLayout['section'],
   ) {
     const provider = settings.providers.find((item) => item.id === providerId);
-    if (!provider || draggedMetricId === targetMetricId) return;
-    const metrics = [...provider.metrics];
-    const from = metrics.findIndex((metric) => metric.id === draggedMetricId);
-    const to = metrics.findIndex((metric) => metric.id === targetMetricId);
-    if (from < 0 || to < 0) return;
-    const [source] = metrics.splice(from, 1);
-    const moved = { ...source, section: targetSection };
-    metrics.splice(to, 0, moved);
-    updateProvider({ ...provider, metrics });
+    if (!provider) return;
+    const metrics = reorderMetricList(
+      provider.metrics,
+      draggedMetricId,
+      targetMetricId,
+      targetSection,
+    );
+    if (metrics) updateProvider({ ...provider, metrics });
   }
   function reorderMetricToTarget(
     draggedMetricId: string,
@@ -218,18 +215,8 @@
   ) {
     const provider = settings.providers.find((item) => item.id === providerId);
     if (!provider) return;
-    const metrics = [...provider.metrics];
-    const from = metrics.findIndex((metric) => metric.id === draggedMetricId);
-    if (from < 0) return;
-    const [source] = metrics.splice(from, 1);
-    const lastInSection = metrics.reduce(
-      (last, metric, index) => (metric.section === section ? index : last),
-      -1,
-    );
-    const insertAt =
-      lastInSection >= 0 ? lastInSection + 1 : section === 'alwaysVisible' ? 0 : metrics.length;
-    metrics.splice(insertAt, 0, { ...source, section });
-    updateProvider({ ...provider, metrics });
+    const metrics = moveMetric(provider.metrics, draggedMetricId, section);
+    if (metrics) updateProvider({ ...provider, metrics });
   }
   function openProviderMenu(event: MouseEvent, providerId: string) {
     event.preventDefault();
@@ -773,24 +760,6 @@
       letter-spacing: -0.01em;
     }
 
-    .plan {
-      color: var(--secondary);
-      font-size: 11px;
-      line-height: 1;
-      white-space: nowrap;
-    }
-
-    .status-badge {
-      padding: 2px 6px;
-      border-radius: 999px;
-      color: var(--warning);
-      background: var(--warning-bg);
-      font-size: 9px;
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-
     .provider-mark {
       display: grid;
       margin-left: auto;
@@ -849,12 +818,6 @@
       height: 2px;
       border-radius: 50%;
       background: var(--tertiary);
-    }
-
-    .provider-card {
-      padding: 5px 12px;
-      border-radius: 14px;
-      background: var(--card);
     }
 
     .provider-error-row {
