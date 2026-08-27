@@ -695,7 +695,7 @@ mod tests {
     #[test]
     fn reconciled_account_keeps_its_id_but_is_not_rendered_when_absent() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let root = directory.path().join("account");
         let account = |label: &str| DiscoveredClaudeAccount {
             label: Some(label.into()),
@@ -736,7 +736,7 @@ mod tests {
     #[test]
     fn default_account_keeps_its_last_descriptive_label() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let account = |label| DiscoveredClaudeAccount {
             label,
             identity: "1234567890abcdef".into(),
@@ -770,7 +770,7 @@ mod tests {
     #[test]
     fn legacy_account_payload_is_read_and_rewritten_without_runtime_paths() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let identity = identity_stamp("account-a");
         storage
             .save_provider_account_record(
@@ -803,7 +803,7 @@ mod tests {
     #[test]
     fn account_ids_survive_default_and_config_dir_swaps() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let root = directory.path().join("account");
         let standard = |identity: &str, label: &str| DiscoveredClaudeAccount {
             label: Some(label.into()),
@@ -858,7 +858,7 @@ mod tests {
     #[test]
     fn config_dir_only_account_never_claims_the_bare_id() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let root = directory.path().join("account");
         let discovery = reconcile_accounts(
             &storage,

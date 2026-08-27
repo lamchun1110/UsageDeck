@@ -14,6 +14,11 @@
 //! legacy services with a prompt-free metadata search first, and it records a
 //! marker file before touching any legacy entry so the consent prompt can appear
 //! at most once per marker version — a denied or failed attempt is never retried.
+//!
+//! The database file itself was named `openquota.db` by builds up to and
+//! including early UsageDeck releases; it is `usagedeck.db` now. Existing files
+//! are renamed in place on first launch, sidecars included, and the copy pass
+//! from the legacy OpenQuota directory translates the name on the way over.
 
 use std::{
     fs,
@@ -37,7 +42,11 @@ const LEGACY_API_KEY_SERVICES: &[&str] = &[LEGACY_API_KEY_SERVICE, PRIOR_API_KEY
 /// v2 re-runs the pass once on installs that already recorded the v1 marker, so
 /// keys saved under the reverse-DNS service name are folded into the renamed one.
 const LEGACY_KEY_MIGRATION_MARKER: &str = "legacy-api-key-migration.v2.attempted";
-const DATABASE_FILE: &str = "openquota.db";
+const LEGACY_DATABASE_FILE: &str = "openquota.db";
+/// The SQLite database file, named for UsageDeck. Earlier builds (OpenQuota and
+/// the first UsageDeck releases) kept the legacy file name; the migration passes
+/// below fold those files into this one.
+pub const DATABASE_FILE: &str = "usagedeck.db";
 const DATA_DIRECTORY_ITEMS: &[&str] = &["pricing", "antigravity"];
 /// Provider ids that can hold a saved API key. Keep in sync with the
 /// `ApiKeyStore::new_with_sources` call sites (kimi, minimax, openrouter, zai).
@@ -107,7 +116,9 @@ fn migrate_app_data_from(legacy: Option<&Path>, destination: &Path) -> DataMigra
         return report;
     }
 
-    if let Some(label) = copy_file_if_absent(legacy, destination, DATABASE_FILE) {
+    if let Some(label) =
+        copy_file_if_absent(legacy, destination, LEGACY_DATABASE_FILE, DATABASE_FILE)
+    {
         report.copied.push(label);
     }
     for item in DATA_DIRECTORY_ITEMS {
@@ -118,20 +129,54 @@ fn migrate_app_data_from(legacy: Option<&Path>, destination: &Path) -> DataMigra
     report
 }
 
-fn copy_file_if_absent(source_root: &Path, destination_root: &Path, name: &str) -> Option<String> {
-    let source = source_root.join(name);
-    let destination = destination_root.join(name);
+/// Renames the database file left by earlier builds to its current name, in
+/// place, together with its SQLite sidecars. Returns `Ok(true)` when a rename
+/// happened and `Ok(false)` when there was nothing to do. The current file
+/// always wins: the legacy file is left untouched when the current one already
+/// exists, so nothing is ever overwritten or deleted.
+///
+/// This runs before the legacy-directory copy pass so a user's own newer
+/// database is promoted ahead of anything recovered from the OpenQuota
+/// install.
+pub fn rename_legacy_database(app_data_dir: &Path) -> Result<bool, String> {
+    let legacy = app_data_dir.join(LEGACY_DATABASE_FILE);
+    if !legacy.is_file() || app_data_dir.join(DATABASE_FILE).exists() {
+        return Ok(false);
+    }
+    fs::rename(&legacy, app_data_dir.join(DATABASE_FILE))
+        .map_err(|error| format!("{LEGACY_DATABASE_FILE}: {error}"))?;
+    // Sidecars follow SQLite's `<db>-wal` / `<db>-shm` naming. Carrying the WAL
+    // over matters: committed-but-uncheckpointed transactions live there, and a
+    // renamed database without its WAL would silently lose them.
+    for suffix in ["-wal", "-shm"] {
+        let source = app_data_dir.join(format!("{LEGACY_DATABASE_FILE}{suffix}"));
+        if source.is_file() {
+            let destination = app_data_dir.join(format!("{DATABASE_FILE}{suffix}"));
+            let _ = fs::rename(&source, &destination);
+        }
+    }
+    Ok(true)
+}
+
+fn copy_file_if_absent(
+    source_root: &Path,
+    destination_root: &Path,
+    source_name: &str,
+    destination_name: &str,
+) -> Option<String> {
+    let source = source_root.join(source_name);
+    let destination = destination_root.join(destination_name);
     if !source.is_file() || destination.exists() {
         return None;
     }
     if let Some(parent) = destination.parent() {
         if let Err(error) = fs::create_dir_all(parent) {
-            return Some(format!("{name}: {error}"));
+            return Some(format!("{destination_name}: {error}"));
         }
     }
     match fs::copy(&source, &destination) {
-        Ok(_) => Some(name.to_owned()),
-        Err(error) => Some(format!("{name}: {error}")),
+        Ok(_) => Some(destination_name.to_owned()),
+        Err(error) => Some(format!("{destination_name}: {error}")),
     }
 }
 
@@ -304,23 +349,23 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        migrate_api_keys_in, migrate_api_keys_with, migrate_app_data_from, ApiKeyMigrationOutcome,
-        CredentialMigrator, API_KEY_ACCOUNTS, API_KEY_SERVICE, LEGACY_API_KEY_SERVICE,
-        LEGACY_KEY_MIGRATION_MARKER, PRIOR_API_KEY_SERVICE,
+        migrate_api_keys_in, migrate_api_keys_with, migrate_app_data_from, rename_legacy_database,
+        ApiKeyMigrationOutcome, CredentialMigrator, API_KEY_ACCOUNTS, API_KEY_SERVICE,
+        LEGACY_API_KEY_SERVICE, LEGACY_KEY_MIGRATION_MARKER, PRIOR_API_KEY_SERVICE,
     };
 
     #[test]
-    fn copies_the_database_when_the_destination_is_empty() {
+    fn copies_the_database_under_its_current_name() {
         let legacy = tempdir().unwrap();
         let destination = tempdir().unwrap();
         std::fs::write(legacy.path().join("openquota.db"), b"database").unwrap();
 
         let report = migrate_app_data_from(Some(legacy.path()), destination.path());
 
-        assert_eq!(report.copied, vec!["openquota.db".to_owned()]);
+        assert_eq!(report.copied, vec!["usagedeck.db".to_owned()]);
         assert!(report.errors.is_empty());
         assert_eq!(
-            std::fs::read(destination.path().join("openquota.db")).unwrap(),
+            std::fs::read(destination.path().join("usagedeck.db")).unwrap(),
             b"database"
         );
     }
@@ -330,15 +375,107 @@ mod tests {
         let legacy = tempdir().unwrap();
         let destination = tempdir().unwrap();
         std::fs::write(legacy.path().join("openquota.db"), b"legacy").unwrap();
-        std::fs::write(destination.path().join("openquota.db"), b"current").unwrap();
+        std::fs::write(destination.path().join("usagedeck.db"), b"current").unwrap();
 
         let report = migrate_app_data_from(Some(legacy.path()), destination.path());
 
         assert!(report.copied.is_empty());
         assert_eq!(
-            std::fs::read(destination.path().join("openquota.db")).unwrap(),
+            std::fs::read(destination.path().join("usagedeck.db")).unwrap(),
             b"current"
         );
+    }
+
+    #[test]
+    fn renames_the_legacy_database_and_its_sidecars() {
+        let directory = tempdir().unwrap();
+        for name in ["openquota.db", "openquota.db-wal", "openquota.db-shm"] {
+            std::fs::write(directory.path().join(name), name.as_bytes()).unwrap();
+        }
+
+        let renamed = rename_legacy_database(directory.path()).unwrap();
+
+        assert!(renamed);
+        for (legacy_name, current_name) in [
+            ("openquota.db", "usagedeck.db"),
+            ("openquota.db-wal", "usagedeck.db-wal"),
+            ("openquota.db-shm", "usagedeck.db-shm"),
+        ] {
+            assert_eq!(
+                std::fs::read(directory.path().join(current_name)).unwrap(),
+                legacy_name.as_bytes()
+            );
+            assert!(!directory.path().join(legacy_name).exists());
+        }
+    }
+
+    #[test]
+    fn keeps_the_legacy_file_when_the_current_database_already_exists() {
+        let directory = tempdir().unwrap();
+        std::fs::write(directory.path().join("openquota.db"), b"old").unwrap();
+        std::fs::write(directory.path().join("usagedeck.db"), b"new").unwrap();
+
+        let renamed = rename_legacy_database(directory.path()).unwrap();
+
+        assert!(!renamed);
+        assert_eq!(
+            std::fs::read(directory.path().join("usagedeck.db")).unwrap(),
+            b"new"
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("openquota.db")).unwrap(),
+            b"old"
+        );
+    }
+
+    #[test]
+    fn renaming_is_a_noop_without_a_legacy_database() {
+        let directory = tempdir().unwrap();
+
+        let renamed = rename_legacy_database(directory.path()).unwrap();
+
+        assert!(!renamed);
+        assert!(!directory.path().join("usagedeck.db").exists());
+    }
+
+    #[test]
+    fn the_current_database_is_promoted_before_the_legacy_copy_runs() {
+        let legacy = tempdir().unwrap();
+        let destination = tempdir().unwrap();
+        std::fs::write(legacy.path().join("openquota.db"), b"older").unwrap();
+        std::fs::write(destination.path().join("openquota.db"), b"newer").unwrap();
+
+        let renamed = rename_legacy_database(destination.path()).unwrap();
+        let report = migrate_app_data_from(Some(legacy.path()), destination.path());
+
+        assert!(renamed);
+        assert!(report.copied.is_empty());
+        assert_eq!(
+            std::fs::read(destination.path().join("usagedeck.db")).unwrap(),
+            b"newer"
+        );
+        assert_eq!(
+            std::fs::read(legacy.path().join("openquota.db")).unwrap(),
+            b"older"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_rename_failures_without_touching_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempdir().unwrap();
+        std::fs::write(directory.path().join("openquota.db"), b"database").unwrap();
+        let original = std::fs::metadata(directory.path()).unwrap().permissions();
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = rename_legacy_database(directory.path());
+
+        std::fs::set_permissions(directory.path(), original).unwrap();
+        assert!(result.is_err());
+        assert!(directory.path().join("openquota.db").is_file());
+        assert!(!directory.path().join("usagedeck.db").exists());
     }
 
     #[test]

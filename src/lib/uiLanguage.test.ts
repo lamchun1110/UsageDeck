@@ -5,6 +5,7 @@ import tokensCss from '../styles/tokens.css?raw';
 import customizeDetail from './CustomizeProviderDetail.svelte?raw';
 import customizeList from './CustomizeProviderList.svelte?raw';
 import dashboard from './Dashboard.svelte?raw';
+import enMessages from './messages/en?raw';
 import providerNameSection from './ProviderNameSection.svelte?raw';
 import settings from './SettingsScreen.svelte?raw';
 import { coLocatedComponentCss } from './uiStyleSources';
@@ -56,6 +57,7 @@ describe('native UI language contract', () => {
   });
 
   it('uses the shared Settings labels and single-line control rows', () => {
+    // Labels live in the English message catalog; the screen consumes them through t().
     for (const label of [
       'General',
       'Launch at Login',
@@ -69,12 +71,24 @@ describe('native UI language contract', () => {
       'Updates',
       'Check for Updates Automatically',
       'Check for Updates…',
+      'Auto',
+      '12-hour',
+      '24-hour',
     ]) {
-      expect(settings).toContain(label);
+      expect(enMessages).toContain(label);
     }
-    expect(settings).toContain("{ value: 'system', label: 'Auto' }");
-    expect(settings).toContain("{ value: 'twelveHour', label: '12-hour' }");
-    expect(settings).toContain("{ value: 'twentyFourHour', label: '24-hour' }");
+    for (const key of [
+      "t('settings.section.general')",
+      "t('settings.row.launchAtLogin')",
+      "t('settings.row.iconStyle')",
+      "t('settings.row.windowMode')",
+      "t('settings.row.autoCheckUpdates')",
+      "t('settings.option.auto')",
+      "t('settings.option.twelveHour')",
+      "t('settings.option.twentyFourHour')",
+    ]) {
+      expect(settings).toContain(key);
+    }
     expect(settings).not.toContain('<h2>Startup</h2>');
     expect(settings).not.toContain('Automatic Checks');
     expect(settings).not.toContain('Combined cost and token summary.');

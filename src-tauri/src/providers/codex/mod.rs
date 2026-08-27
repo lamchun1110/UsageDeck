@@ -449,7 +449,7 @@ mod account_tests {
     #[test]
     fn cache_identity_tracks_the_launch_resolved_account() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let pricing = Arc::new(PricingStore::new(directory.path().join("pricing")).unwrap());
         let provider = CodexProvider {
             account_identity: Some("account-a".into()),

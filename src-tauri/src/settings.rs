@@ -1209,7 +1209,7 @@ mod tests {
     #[test]
     fn deferred_first_run_replaces_fallback_with_detected_providers() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let (service, plan) = SettingsService::new_deferred(storage, catalog()).unwrap();
         assert_eq!(enabled_ids(&service.get()), ["claude", "codex", "cursor"]);
 
@@ -1233,7 +1233,7 @@ mod tests {
     #[test]
     fn deferred_first_run_keeps_fallback_when_nothing_is_detected() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let (service, plan) = SettingsService::new_deferred(storage, catalog()).unwrap();
 
         let outcome = service
@@ -1250,7 +1250,7 @@ mod tests {
     #[test]
     fn unknown_first_run_probes_preserve_the_fallback_enablement() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let (service, plan) = SettingsService::new_deferred(storage, catalog()).unwrap();
         let unknown = ["claude", "codex", "cursor", "antigravity", "openrouter"]
             .into_iter()
@@ -1273,7 +1273,7 @@ mod tests {
     #[test]
     fn unknown_reset_probe_preserves_existing_detection_and_enablement() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service =
             SettingsService::new_for_test(storage, catalog(), &HashSet::from(["codex".to_owned()]))
                 .unwrap();
@@ -1304,7 +1304,7 @@ mod tests {
     #[test]
     fn definitive_reset_absence_restores_the_fallback_set() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service = SettingsService::new_for_test(
             storage,
             catalog(),
@@ -1331,7 +1331,7 @@ mod tests {
     #[test]
     fn unknown_existing_detection_does_not_enable_the_fallback_set() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service =
             SettingsService::new_for_test(storage, catalog(), &HashSet::from(["codex".to_owned()]))
                 .unwrap();
@@ -1353,7 +1353,7 @@ mod tests {
     #[test]
     fn user_enablement_change_wins_over_a_running_detection_pass() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let (service, plan) = SettingsService::new_deferred(storage, catalog()).unwrap();
         let mut changed = service.get();
         changed
@@ -1383,7 +1383,7 @@ mod tests {
     #[test]
     fn deferred_new_provider_is_auto_enabled_only_once() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let registry = catalog();
         let mut saved = default_settings(&registry, &HashSet::from(["codex".to_owned()]));
         saved.known_provider_ids.retain(|id| id != "antigravity");
@@ -1433,7 +1433,7 @@ mod tests {
     #[test]
     fn account_name_and_rename_availability_survive_a_restart() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         storage
             .save_provider_account_record("claude", "identity-a", "claude", "{}")
             .unwrap();
@@ -1469,7 +1469,7 @@ mod tests {
     #[test]
     fn codex_names_follow_accounts_when_the_active_login_changes() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service = SettingsService::new_for_test(
             storage.clone(),
             catalog(),
@@ -1545,7 +1545,7 @@ mod tests {
     #[test]
     fn account_revision_only_changes_when_the_active_identity_changes() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service =
             SettingsService::new_for_test(storage, catalog(), &HashSet::from(["codex".to_owned()]))
                 .unwrap();
@@ -1568,7 +1568,7 @@ mod tests {
     #[test]
     fn settings_revision_rejects_a_stale_full_snapshot() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service = SettingsService::new_for_test(storage, catalog(), &HashSet::new()).unwrap();
         let initial_revision = service.settings_revision();
         let stale = service.get();
@@ -1596,7 +1596,7 @@ mod tests {
     #[test]
     fn settings_revision_tracks_each_persisted_mutation_path() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service = SettingsService::new_for_test(storage, catalog(), &HashSet::new()).unwrap();
         let mut revision = service.settings_revision();
 
@@ -1644,7 +1644,7 @@ mod tests {
     #[test]
     fn unchanged_credential_probe_does_not_create_a_settings_revision() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service =
             SettingsService::new_for_test(storage, catalog(), &HashSet::from(["codex".to_owned()]))
                 .unwrap();
@@ -1662,7 +1662,7 @@ mod tests {
     #[test]
     fn stale_settings_save_cannot_move_a_name_to_the_new_active_account() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service =
             SettingsService::new_for_test(storage, catalog(), &HashSet::from(["codex".to_owned()]))
                 .unwrap();
@@ -1718,7 +1718,7 @@ mod tests {
     #[test]
     fn codex_name_migration_keeps_the_original_accounts_name_after_an_offline_swap() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         storage
             .save_provider_account_record("codex", "aaaaaaaa11111111", "codex", "{}")
             .unwrap();
@@ -1752,7 +1752,7 @@ mod tests {
     #[test]
     fn unrelated_toggle_does_not_cancel_new_provider_detection() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let registry = catalog();
         let mut saved = default_settings(&registry, &HashSet::from(["claude".to_owned()]));
         saved.known_provider_ids.retain(|id| id != "antigravity");
@@ -1912,7 +1912,7 @@ mod tests {
     #[test]
     fn layout_and_preferences_survive_a_service_restart() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let detected = HashSet::from(["codex".to_owned(), "antigravity".to_owned()]);
         let catalog = catalog();
         let first =
@@ -2177,7 +2177,7 @@ mod tests {
     #[test]
     fn invalid_saved_settings_are_not_overwritten_with_defaults() {
         let directory = tempdir().unwrap();
-        let database_path = directory.path().join("openquota.db");
+        let database_path = directory.path().join("usagedeck.db");
         let connection = rusqlite::Connection::open(&database_path).unwrap();
         connection
             .execute_batch(
@@ -2209,7 +2209,7 @@ mod tests {
     #[test]
     fn provider_reset_uses_the_backend_catalog_and_preserves_provider_state() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let detected = HashSet::from(["codex".to_owned()]);
         let catalog = catalog();
         let service = SettingsService::new_for_test(storage, catalog.clone(), &detected).unwrap();
@@ -2253,7 +2253,7 @@ mod tests {
     #[test]
     fn full_reset_restores_defaults_without_deleting_usage_or_accounts() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         storage
             .save_provider_account_record(
                 "codex",
@@ -2348,7 +2348,7 @@ mod tests {
     #[test]
     fn api_key_save_marks_and_enables_provider_while_delete_only_clears_detection() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service = SettingsService::new_for_test(storage, catalog(), &HashSet::new()).unwrap();
 
         service.record_provider_credential_mutation();
@@ -2379,7 +2379,7 @@ mod tests {
     #[test]
     fn stale_absent_probe_cannot_undo_an_api_key_save_for_a_detected_provider() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service = SettingsService::new_for_test(
             storage,
             catalog(),
@@ -2410,7 +2410,7 @@ mod tests {
     #[test]
     fn stale_detected_probe_cannot_undo_an_api_key_delete() {
         let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let service = SettingsService::new_for_test(
             storage,
             catalog(),

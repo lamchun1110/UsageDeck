@@ -49,7 +49,7 @@ fn build_provider(
 ) -> (GrokProvider, Arc<Storage>) {
     let auth_path = directory.path().join("auth.json");
     fs::write(&auth_path, auth_json).unwrap();
-    let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+    let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
     let pricing = Arc::new(
         PricingStore::new_without_refresh_for_test(directory.path().join("pricing")).unwrap(),
     );

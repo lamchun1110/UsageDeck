@@ -1,5 +1,5 @@
 <script lang="ts">
-  import openQuotaMark from '../assets/usagedeck-mark.png';
+  import usagedeckMark from '../assets/usagedeck-mark.png';
 
   interface Props {
     size?: number;
@@ -10,7 +10,7 @@
 </script>
 
 <img
-  src={openQuotaMark}
+  src={usagedeckMark}
   width={size}
   height={size}
   alt={decorative ? '' : 'UsageDeck'}

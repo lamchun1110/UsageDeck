@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn unchanged_files_reuse_cache_and_schema_changes_reparse() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let path = directory.path().join("session.jsonl");
         fs::write(&path, "first").unwrap();
         let parses = Cell::new(0);
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn unreadable_text_removes_stale_cache_and_retries_later() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let path = directory.path().join("session.jsonl");
         fs::write(&path, [0xff, 0xfe]).unwrap();
         let metadata = fs::metadata(&path).unwrap();
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn failed_scan_keeps_cached_history_without_hiding_live_provider_data() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let cached_usage = cached_usage();
         storage
             .save_snapshot(&codex_snapshot(cached_usage.clone()))
@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn failed_scan_does_not_reuse_history_from_a_different_account() {
         let directory = tempdir().unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let cached_usage = cached_usage();
         storage
             .save_snapshot_for_identity(&codex_snapshot(cached_usage.clone()), Some("account-a"))

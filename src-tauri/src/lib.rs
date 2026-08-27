@@ -388,6 +388,20 @@ pub fn run() {
             app.manage(desktop_integration.clone());
 
             let app_data_dir = app.path().app_data_dir()?;
+            // Run ahead of the legacy-directory copy so the user's own newer
+            // database is promoted under its current name first.
+            match migration::rename_legacy_database(&app_data_dir) {
+                Ok(true) => {
+                    app_info!(
+                        "lifecycle",
+                        "renamed the legacy database file to usagedeck.db"
+                    );
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    app_warn!("lifecycle", "legacy database rename failed: {error}");
+                }
+            }
             let data_migration = migration::migrate_app_data(&app_data_dir);
             for copied in &data_migration.copied {
                 app_info!("lifecycle", "migrated legacy OpenQuota data: {copied}");
@@ -409,7 +423,7 @@ pub fn run() {
                     "API key migration failed for {account}: {error}"
                 );
             }
-            let database_path = app_data_dir.join("openquota.db");
+            let database_path = app_data_dir.join(migration::DATABASE_FILE);
             let storage = Arc::new(Storage::open(&database_path)?);
             provider_environment::initialize(storage.load_provider_environment()?);
             provider_environment::refresh_for_next_launch(storage.clone());

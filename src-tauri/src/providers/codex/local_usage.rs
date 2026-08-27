@@ -851,7 +851,7 @@ mod tests {
             r#"{"timestamp":"2026-07-10T08:00:00Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.5","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}"#,
         )
         .unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         let since = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
 
         let initial = scan_codex_events(&storage, std::slice::from_ref(&home), since).unwrap();
@@ -890,7 +890,7 @@ mod tests {
         .unwrap();
         let path = fs::canonicalize(path).unwrap();
         let fingerprint = LogFileFingerprint::from_metadata(&fs::metadata(&path).unwrap()).unwrap();
-        let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
         storage
             .save_log_events(
                 "codex",

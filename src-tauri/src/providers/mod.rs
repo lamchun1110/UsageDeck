@@ -174,7 +174,7 @@ mod tests {
     fn remembered_default_account_is_stable_across_identity_changes() {
         let directory = tempdir().unwrap();
         let storage =
-            crate::storage::Storage::open(&directory.path().join("openquota.db")).unwrap();
+            crate::storage::Storage::open(&directory.path().join("usagedeck.db")).unwrap();
 
         remember_default_account(&storage, "codex", "identity-a").unwrap();
         remember_default_account(&storage, "codex", "identity-b").unwrap();
