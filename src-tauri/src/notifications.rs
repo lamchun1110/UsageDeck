@@ -11,12 +11,15 @@ use crate::{
     window::{show_main_window, MAIN_WINDOW},
 };
 
-pub fn permission(app: &AppHandle) -> &'static str {
+pub fn permission(app: &AppHandle) -> crate::models::NotificationPermission {
+    use crate::models::NotificationPermission;
     match app.notification().permission_state() {
-        Ok(PermissionState::Granted) => "granted",
-        Ok(PermissionState::Denied) => "denied",
-        Ok(PermissionState::Prompt | PermissionState::PromptWithRationale) => "prompt",
-        Err(_) => "unavailable",
+        Ok(PermissionState::Granted) => NotificationPermission::Granted,
+        Ok(PermissionState::Denied) => NotificationPermission::Denied,
+        Ok(PermissionState::Prompt | PermissionState::PromptWithRationale) => {
+            NotificationPermission::Prompt
+        }
+        Err(_) => NotificationPermission::Unavailable,
     }
 }
 
@@ -50,7 +53,7 @@ fn notification_snapshot(state: &ProviderViewState) -> Option<&ProviderSnapshot>
 }
 
 fn deliver(app: &AppHandle, alerts: &[PaceAlert]) -> Vec<PaceAlert> {
-    if permission(app) != "granted" {
+    if permission(app) != crate::models::NotificationPermission::Granted {
         if !alerts.is_empty() {
             crate::app_debug!(
                 "notifications",

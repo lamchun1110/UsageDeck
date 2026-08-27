@@ -46,7 +46,7 @@ pub async fn get_app_settings(
             .await
             .unwrap_or_else(move |_| {
                 fallback.view_state(
-                    "unknown",
+                    crate::models::NotificationPermission::Unavailable,
                     Some("Settings could not be read.".to_owned()),
                     false,
                     None,

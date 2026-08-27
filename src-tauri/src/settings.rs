@@ -735,7 +735,7 @@ impl SettingsService {
 
     pub fn view_state(
         &self,
-        notification_permission: impl Into<String>,
+        notification_permission: crate::models::NotificationPermission,
         integration_error: Option<String>,
         tray_available: bool,
         platform_summary: Option<String>,
@@ -756,7 +756,7 @@ impl SettingsService {
             settings_revision,
             account_revision,
             renamable_provider_ids,
-            notification_permission: notification_permission.into(),
+            notification_permission,
             integration_error,
             tray_available,
             platform_summary,
@@ -1550,7 +1550,8 @@ mod tests {
         drop(first);
 
         let (second, _) = SettingsService::new_deferred(storage, registry).unwrap();
-        let state = second.view_state("prompt", None, false, None);
+        let state = second.view_state(
+            crate::models::NotificationPermission::Prompt, None, false, None);
 
         assert_eq!(
             state
@@ -1732,7 +1733,8 @@ mod tests {
         assert_eq!(service.settings_revision(), revision);
         assert_eq!(
             service
-                .view_state("prompt", None, true, None)
+                .view_state(
+            crate::models::NotificationPermission::Prompt, None, true, None)
                 .settings_revision,
             revision
         );
