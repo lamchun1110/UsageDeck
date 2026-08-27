@@ -52,7 +52,9 @@ done < checksums/installers.txt
 gpg --batch --yes --local-user "$fingerprint" \
   "${passphrase_args[@]}" --clearsign \
   --output checksums/SHA256SUMS.asc checksums/SHA256SUMS
-gpg --batch --yes --verify checksums/SHA256SUMS.asc checksums/SHA256SUMS
+# The clearsign was produced by the same key just above; trust it on the verify line so
+# gpg does not reject a freshly imported key as unsigned/unknown signer.
+gpg --batch --yes --trust-model always --verify checksums/SHA256SUMS.asc checksums/SHA256SUMS
 (cd checksums && sha256sum --check --strict SHA256SUMS)
 
 gpg --batch --armor --export "$fingerprint" > checksums/usagedeck-gpg-public.asc
