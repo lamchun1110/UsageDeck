@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { flip } from 'svelte/animate';
+  import { removeApiKeyAccount } from './backend';
+  import { t } from './i18n.svelte';
   import type { ProviderCatalogIndex } from './metrics';
   import type { AppSettings, MetricLayout, MetricSection, ProviderLayout } from './types';
   import Icon from './Icon.svelte';
@@ -44,6 +46,21 @@
     if (messageTimer) clearTimeout(messageTimer);
   });
   const provider = $derived(settings.providers.find((item) => item.id === providerId));
+  const isApiKeyAccount = $derived(
+    /^[^@]+@[0-9a-f]{8}$/.test(providerId) &&
+      catalog.provider(providerId) === undefined &&
+      catalog.supportsApiKeyConfiguration(providerId.split('@')[0]!),
+  );
+
+  async function removeAccount() {
+    if (!isApiKeyAccount) return;
+    try {
+      await removeApiKeyAccount(providerId);
+      showMessage(t('settings.accountRemovedRestart'), 'success');
+    } catch (error) {
+      showMessage((error as Error).message ?? String(error), 'denied');
+    }
+  }
 
   function updateProvider(next: ProviderLayout) {
     onChange({
@@ -223,6 +240,15 @@
       providerId={provider.id}
       providerName={providerDisplayName(provider.id)}
     />
+    {#if isApiKeyAccount}
+      <div class="metric-section">
+        <h2>{t('settings.section.account')}</h2>
+        <p class="account-hint">{t('settings.account.hint')}</p>
+        <button class="secondary-button account-remove" type="button" onclick={removeAccount}
+          >{t('settings.account.remove')}</button
+        >
+      </div>
+    {/if}
     {#if message}
       <div class:denied={messageKind === 'denied'} class="customization-pill" role="status">
         <Icon

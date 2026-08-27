@@ -109,23 +109,42 @@ impl From<ZaiError> for ProviderError {
 }
 
 pub struct ZaiProvider {
+    identity: crate::providers::api_key_account::ApiKeyIdentity,
     auth: ZaiAuthStore,
     client: Arc<ZaiClient>,
 }
 
 impl ZaiProvider {
     pub fn new() -> Result<Self, ProviderError> {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::base("zai", "Z.ai");
         Ok(Self {
-            auth: ZaiAuthStore::new(),
+            identity: identity.clone(),
+            auth: ZaiAuthStore::new_with_identity(&identity),
+            client: Arc::new(ZaiClient::new().map_err(ProviderError::from)?),
+        })
+    }
+
+    /// A named account under Z.ai with its own credential-store entry.
+    pub fn new_for_account(provider_id: &str, account_name: &str) -> Result<Self, ProviderError> {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::account(
+            provider_id,
+            account_name,
+            "Z.ai",
+        );
+        Ok(Self {
+            identity: identity.clone(),
+            auth: ZaiAuthStore::new_with_identity(&identity),
             client: Arc::new(ZaiClient::new().map_err(ProviderError::from)?),
         })
     }
 
     #[cfg(test)]
     fn with_dependencies(auth: ZaiAuthStore, client: ZaiClient) -> Self {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::base("zai", "Z.ai");
         Self {
             auth,
             client: Arc::new(client),
+            identity,
         }
     }
 
@@ -159,7 +178,7 @@ impl ZaiProvider {
 
 impl UsageProvider for ZaiProvider {
     fn definition(&self) -> ProviderDefinition {
-        definition()
+        self.identity.definition(definition())
     }
 
     fn has_local_credentials(&self) -> bool {

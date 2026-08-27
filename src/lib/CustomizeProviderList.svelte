@@ -1,5 +1,7 @@
 <script lang="ts">
   import { flip } from 'svelte/animate';
+  import { addApiKeyAccount } from './backend';
+  import { t } from './i18n.svelte';
   import type { AppSettings, ProviderLayout } from './types';
   import type { ProviderCatalogIndex } from './metrics';
   import Icon from './Icon.svelte';
@@ -28,6 +30,15 @@
     reducedMotion,
   }: Props = $props();
   const providerDisplayName = (id: string) => catalog.displayName(id, settings.providerNames);
+  const apiKeyFamilies = $derived(
+    catalog.providers
+      .filter((provider) => catalog.supportsApiKeyConfiguration(provider.id))
+      .map((provider) => provider.id),
+  );
+  let newAccountName = $state('');
+  let newAccountError = $state<string | null>(null);
+  let activeAccountFamily = $state<string | null>(null);
+
   function updateProvider(provider: ProviderLayout) {
     onChange({
       ...settings,
@@ -47,9 +58,50 @@
       providers: [...enabled, ...settings.providers.filter((provider) => !provider.enabled)],
     });
   }
+
+  async function confirmAddAccount() {
+    if (!activeAccountFamily) return;
+    const name = newAccountName.trim();
+    if (!name) {
+      newAccountError = t('settings.account.nameRequired');
+      return;
+    }
+    try {
+      await addApiKeyAccount(activeAccountFamily, name);
+      newAccountName = '';
+      newAccountError = null;
+      activeAccountFamily = null;
+    } catch (error) {
+      newAccountError = (error as Error).message ?? String(error);
+    }
+  }
 </script>
 
 <section class="screen customize-screen" aria-label="Customize">
+  <p class="account-add-hint">{t('settings.account.addHint')}</p>
+  <div class="account-add-row">
+    <select
+      value={activeAccountFamily ?? ''}
+      aria-label={t('settings.account.familyAria')}
+      onchange={(e) => (activeAccountFamily = (e.currentTarget as HTMLSelectElement).value || null)}
+    >
+      <option value="">{t('settings.account.chooseFamily')}</option>
+      {#each apiKeyFamilies as family (family)}
+        <option value={family}>{family}</option>
+      {/each}
+    </select>
+    {#if activeAccountFamily}
+      <input
+        placeholder={t('settings.account.namePlaceholder')}
+        value={newAccountName}
+        oninput={(e) => (newAccountName = (e.currentTarget as HTMLInputElement).value)}
+      />
+      <button type="button" class="secondary-button" onclick={confirmAddAccount}
+        >{t('settings.account.add')}</button
+      >
+    {/if}
+  </div>
+  {#if newAccountError}<p class="account-error" role="alert">{newAccountError}</p>{/if}
   <div class="customize-list" role="list">
     {#each settings.providers.filter( (provider) => catalog.provider(provider.id) ) as provider (provider.id)}
       <div

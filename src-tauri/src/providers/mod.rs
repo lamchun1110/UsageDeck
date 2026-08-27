@@ -1,5 +1,6 @@
 pub mod antigravity;
 pub mod api_key;
+pub mod api_key_account;
 pub mod claude;
 pub mod codex;
 pub mod commandcode;

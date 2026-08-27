@@ -127,4 +127,17 @@ export const ja = {
   'settings.log.copyError': 'ログのパスをクリップボードにコピーできませんでした。',
   'settings.log.revealError': 'ログファイルを表示できませんでした。',
   'settings.aria.settings': '設定',
+  'settings.section.account': 'アカウント',
+  'settings.account.hint':
+    'この名前付きアカウントは独立した API キーを持ちます。削除するとキーと ID が破棄されます。',
+  'settings.account.remove': 'アカウントを削除…',
+  'settings.account.addHint':
+    '同じプロバイダーの 2 枚目のキーを追跡する命名アカウントを追加します。',
+  'settings.account.familyAria': 'API プロバイダー',
+  'settings.account.chooseFamily': 'プロバイダーを選択…',
+  'settings.account.namePlaceholder': 'アカウント名',
+  'settings.account.add': 'アカウントを追加',
+  'settings.account.nameRequired': 'アカウント名を入力してください。',
+  'settings.accountRemovedRestart': 'アカウントを削除しました — 再起動すると反映されます。',
+  'settings.customize.accountHint': 'API アカウントは独立したカードとして表示されます。',
 } as const;

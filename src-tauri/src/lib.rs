@@ -449,6 +449,8 @@ pub fn run() {
                 Arc::new(KimiProvider::new()?) as Arc<dyn UsageProvider>,
                 Arc::new(MiniMaxProvider::new()?) as Arc<dyn UsageProvider>,
             ]);
+            providers
+                .extend(crate::providers::api_key_account::api_key_account_providers(&storage)?);
             let registry = Arc::new(ProviderRegistry::new(providers)?);
             let (settings_service, credential_detection_plan) =
                 SettingsService::new_deferred(storage.clone(), registry.clone())?;
@@ -552,6 +554,8 @@ pub fn run() {
             commands::provider::get_provider_api_key_state,
             commands::provider::save_provider_api_key,
             commands::provider::delete_provider_api_key,
+            commands::provider::add_api_key_account,
+            commands::provider::remove_api_key_account,
             commands::usage::refresh_usage,
             commands::usage::refresh_provider_usage,
             commands::usage::claim_codex_reset_credit,

@@ -285,6 +285,82 @@ pub async fn delete_provider_api_key(
     })
 }
 
+/// Creates and persists a named API-key account under `family` (e.g. `kimi`) with its own
+/// credential-store entry. The dashboard card appears after restart, when the runtime can
+/// register the new `family@suffix` provider id.
+#[tauri::command]
+pub async fn add_api_key_account(
+    storage: tauri::State<'_, std::sync::Arc<crate::storage::Storage>>,
+    family: String,
+    account_name: String,
+) -> Result<String, String> {
+    use crate::providers::api_key_account::API_KEY_ACCOUNT_FAMILIES;
+
+    let family = family.trim().to_owned();
+    let account_name = account_name.trim().to_owned();
+    if account_name.is_empty() || account_name.chars().count() > 48 {
+        return Err("Provider account name must be 1 to 48 characters.".into());
+    }
+    if !API_KEY_ACCOUNT_FAMILIES.contains(&family.as_str()) {
+        return Err(format!(
+            "Provider family '{family}' does not support multiple accounts."
+        ));
+    }
+    storage
+        .allocate_api_key_account(&family, &account_name)
+        .map_err(|error| error.to_string())
+}
+
+/// Removes an API-key account by its derived provider id (e.g. `kimi@1a2b3c4d`). The credential
+/// entry is cleared, the account is graveyarded so its id cannot be reallocated to a different
+/// logical account, and the dashboard card disappears after restart (`RestartRequired`). The
+/// cached snapshot survives: `CacheIdentity::Unscoped` walls it off, so it is silently ignored
+/// when no runtime exists.
+#[tauri::command]
+pub async fn remove_api_key_account(
+    storage: tauri::State<'_, std::sync::Arc<crate::storage::Storage>>,
+    provider_id: String,
+) -> Result<(), String> {
+    if !crate::providers::api_key_account::is_api_key_account_provider_id(&provider_id) {
+        return Err(format!(
+            "'{provider_id}' is not an API-key account provider. Expected '<family>@<8 hex>'."
+        ));
+    }
+    let family = crate::providers::provider_family(&provider_id).to_owned();
+    // Deleting unknown families would expose an error path with no valid CS value; truncate to a
+    // non-sensitive prefix of the derived id instead.
+    let prefix = if provider_id.len() > 16 {
+        &provider_id[..16]
+    } else {
+        &provider_id
+    };
+    let identity_key = storage
+        .load_provider_account_records(&family)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|(_, stored_provider_id, _)| stored_provider_id == &provider_id)
+        .map(|(identity_key, _, _)| identity_key)
+        .ok_or_else(|| {
+            format!("API-key account '{prefix}...' could not be found. It may already have been removed.")
+        })?;
+    // The credential-store entry is tied to the derived provider id (e.g. `kimi@1a2b3c4d`);
+    // deleting the raw ApiKeyStore entry is sufficient: every family ultimately delegates to it,
+    // so calling it directly avoids depending on per-family ZaiAuthStore/KimiAuthStore privacy.
+    // Missing entries are not errors: the database record is the source of truth and a keyring
+    // miss simply means the secret was already absent.
+    if !crate::providers::api_key_account::supports_api_key_accounts(&family) {
+        return Err(format!(
+            "Provider family '{family}' does not support multiple accounts."
+        ));
+    }
+    let store = crate::providers::api_key::ApiKeyStore::new_with_sources(&provider_id, &[], &[]);
+    let _ = store.delete();
+    storage
+        .delete_provider_account_by_identity(&family, &identity_key)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{

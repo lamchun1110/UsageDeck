@@ -25,6 +25,12 @@ impl ZaiAuthStore {
         }
     }
 
+    pub fn new_with_identity(identity: &crate::providers::api_key_account::ApiKeyIdentity) -> Self {
+        Self {
+            store: identity.credential_store(ENVIRONMENT_NAMES, CONFIG_PATHS),
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn with_store(store: ApiKeyStore) -> Self {
         Self { store }

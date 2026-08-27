@@ -129,4 +129,18 @@ export const en = {
   'settings.log.copyError': "Couldn't copy the log path to the clipboard.",
   'settings.log.revealError': "Couldn't reveal the log file.",
   'settings.aria.settings': 'Settings',
+  'settings.section.account': 'Account',
+  'settings.account.hint':
+    'This is a named API account with its own API key. Removing it clears the key and retires its ID.',
+  'settings.account.remove': 'Remove Account…',
+  'settings.account.addHint':
+    'Add a named API account to track a second key for the same provider.',
+  'settings.account.familyAria': 'API provider family',
+  'settings.account.chooseFamily': 'Choose provider…',
+  'settings.account.namePlaceholder': 'Account name',
+  'settings.account.add': 'Add Account',
+  'settings.account.nameRequired': 'Enter an account name.',
+  'settings.accountRemovedRestart': 'Account removed — restart UsageDeck to update the dashboard.',
+  'settings.customize.accountHint':
+    'API accounts appear as separate cards. Add or remove them here.',
 } as const;

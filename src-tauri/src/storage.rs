@@ -160,6 +160,11 @@ impl Storage {
                PRIMARY KEY(provider_family, identity_key),
                UNIQUE(provider_family, provider_id)
              );
+             CREATE TABLE IF NOT EXISTS provider_account_graveyard (
+               provider_family TEXT NOT NULL,
+               identity_key TEXT NOT NULL,
+               PRIMARY KEY(provider_family, identity_key)
+             );
              CREATE TABLE IF NOT EXISTS quota_history (
                provider_id TEXT NOT NULL,
                quota_id TEXT NOT NULL,
@@ -197,6 +202,16 @@ impl Storage {
         // of a stored height no longer implies a manual preference.
         if !Self::has_column(&connection, "panel_state", "height_mode")? {
             connection.execute("ALTER TABLE panel_state ADD COLUMN height_mode TEXT", [])?;
+        }
+        if !Self::has_column(&connection, "provider_account_graveyard", "provider_family")? {
+            // New in the isolated comparison commit; creates are no-ops when absent.
+            connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS provider_account_graveyard (
+               provider_family TEXT NOT NULL,
+               identity_key TEXT NOT NULL,
+               PRIMARY KEY(provider_family, identity_key)
+             );",
+            )?;
         }
         Ok(Self {
             connection: Mutex::new(connection),
@@ -581,6 +596,119 @@ impl Storage {
             params![provider_family, identity_key, provider_id, payload],
         )?;
         Ok(())
+    }
+
+    pub fn delete_provider_account_by_identity(
+        &self,
+        provider_family: &str,
+        identity_key: &str,
+    ) -> Result<bool, StorageError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let deleted = transaction.execute(
+            "DELETE FROM provider_account_records WHERE provider_family = ?1 AND identity_key = ?2",
+            params![provider_family, identity_key],
+        )?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO provider_account_graveyard(provider_family, identity_key) VALUES (?1, ?2)",
+            params![provider_family, identity_key],
+        )?;
+        transaction.commit()?;
+        Ok(deleted > 0)
+    }
+
+    /// Allocates an API-key account under `family` with a stable `@<8 hex>` suffix. The suffix
+    /// is bounded to hash-miss attempts so it cannot grow without limit: absent `ApiKeyIdentity`
+    /// names and occupied provider ids fallback preserve the shared helpers. Returns the already
+    /// allocated provider id on re-entry for the same identity.
+    pub fn allocate_api_key_account(
+        &self,
+        provider_family: &str,
+        account_name: &str,
+    ) -> Result<String, StorageError> {
+        let account_name = account_name.trim();
+        if account_name.is_empty() || account_name.chars().count() > 48 {
+            return Err(StorageError::InvalidCache(
+                serde_json::from_str::<serde_json::Value>("\"invalid account name\"").unwrap_err(),
+            ));
+        }
+        let mut identity_suffix = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            account_name.to_ascii_lowercase().hash(&mut hasher);
+            provider_family.hash(&mut hasher);
+            format!("{:08x}", hasher.finish() & 0xffff_ffff)
+        };
+        let mut attempts: u32 = 0;
+        let raw_identity = format!("{provider_family}:{account_name}");
+        loop {
+            let identity_key = format!("{raw_identity}#{identity_suffix}");
+            let mut connection = self.connection()?;
+            let transaction = connection.transaction()?;
+            let exists: Option<(String, String)> = transaction
+                .query_row(
+                    "SELECT provider_id, payload FROM provider_account_records WHERE provider_family = ?1 AND identity_key = ?2",
+                    params![provider_family, identity_key],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((provider_id, _)) = exists {
+                return Ok(provider_id);
+            }
+            if transaction
+                .query_row(
+                    "SELECT 1 FROM provider_account_graveyard WHERE provider_family = ?1 AND identity_key = ?2",
+                    params![provider_family, identity_key],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .is_some()
+            {
+                // The identity was previously removed; keep its id retired so it cannot be
+                // reallocated to a different logical account.
+                attempts = attempts.saturating_add(1);
+                if attempts >= 32 {
+                    return Err(StorageError::Poisoned);
+                }
+                identity_suffix = format!("{:08x}", attempts.wrapping_mul(0x9e37_79b9));
+                continue;
+            }
+            let provider_id = format!("{provider_family}@{identity_suffix}");
+            let occupied: Option<i64> = transaction
+                .query_row(
+                    "SELECT 1 FROM provider_account_records WHERE provider_family = ?1 AND provider_id = ?2",
+                    params![provider_family, provider_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if occupied.is_some() {
+                attempts = attempts.saturating_add(1);
+                if attempts >= 32 {
+                    return Err(StorageError::Poisoned);
+                }
+                identity_suffix = format!("{:08x}", attempts.wrapping_mul(0x9e37_79b9));
+                continue;
+            }
+            let payload = serde_json::json!({"customName": account_name}).to_string();
+            let inserted =
+                transaction.execute(
+                    "INSERT OR IGNORE INTO provider_account_records(provider_family, identity_key, provider_id, payload) VALUES (?1, ?2, ?3, ?4)",
+                    params![provider_family, identity_key, provider_id, payload],
+                )?;
+            if inserted == 0 {
+                // Another process won the race; retry from a fresh read of the table.
+                transaction.commit()?;
+                attempts = attempts.saturating_add(1);
+                if attempts >= 32 {
+                    return Err(StorageError::Poisoned);
+                }
+                identity_suffix = format!("{:08x}", attempts.wrapping_mul(0x9e37_79b9));
+                continue;
+            }
+            transaction.commit()?;
+            return Ok(provider_id);
+        }
     }
 
     pub fn load_panel_height(&self) -> Result<Option<u32>, StorageError> {

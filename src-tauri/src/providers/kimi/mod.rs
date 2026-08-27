@@ -93,23 +93,42 @@ impl From<KimiError> for ProviderError {
 }
 
 pub struct KimiProvider {
+    identity: crate::providers::api_key_account::ApiKeyIdentity,
     auth: KimiAuthStore,
     client: Arc<KimiClient>,
 }
 
 impl KimiProvider {
     pub fn new() -> Result<Self, ProviderError> {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::base("kimi", "Kimi");
         Ok(Self {
-            auth: KimiAuthStore::new(),
+            identity: identity.clone(),
+            auth: KimiAuthStore::new_with_identity(&identity),
+            client: Arc::new(KimiClient::new().map_err(ProviderError::from)?),
+        })
+    }
+
+    /// A named account under Kimi with its own credential-store entry.
+    pub fn new_for_account(provider_id: &str, account_name: &str) -> Result<Self, ProviderError> {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::account(
+            provider_id,
+            account_name,
+            "Kimi",
+        );
+        Ok(Self {
+            identity: identity.clone(),
+            auth: KimiAuthStore::new_with_identity(&identity),
             client: Arc::new(KimiClient::new().map_err(ProviderError::from)?),
         })
     }
 
     #[cfg(test)]
     fn with_dependencies(auth: KimiAuthStore, client: KimiClient) -> Self {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::base("kimi", "Kimi");
         Self {
             auth,
             client: Arc::new(client),
+            identity,
         }
     }
 
@@ -140,7 +159,7 @@ impl KimiProvider {
 
 impl UsageProvider for KimiProvider {
     fn definition(&self) -> ProviderDefinition {
-        definition()
+        self.identity.definition(definition())
     }
 
     fn has_local_credentials(&self) -> bool {

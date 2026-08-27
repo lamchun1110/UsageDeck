@@ -137,15 +137,33 @@ impl From<OpenRouterError> for ProviderError {
 }
 
 pub struct OpenRouterProvider {
+    identity: crate::providers::api_key_account::ApiKeyIdentity,
     auth: ApiKeyStore,
     client: Arc<OpenRouterClient>,
 }
 
 impl OpenRouterProvider {
     pub fn new() -> Result<Self, ProviderError> {
+        let identity =
+            crate::providers::api_key_account::ApiKeyIdentity::base("openrouter", "OpenRouter");
         Ok(Self {
-            auth: ApiKeyStore::new_with_sources("openrouter", ENVIRONMENT_NAMES, CONFIG_PATHS),
+            auth: identity.credential_store(ENVIRONMENT_NAMES, CONFIG_PATHS),
             client: Arc::new(OpenRouterClient::new().map_err(ProviderError::from)?),
+            identity,
+        })
+    }
+
+    /// A named account under OpenRouter with its own credential-store entry.
+    pub fn new_for_account(provider_id: &str, account_name: &str) -> Result<Self, ProviderError> {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::account(
+            provider_id,
+            account_name,
+            "OpenRouter",
+        );
+        Ok(Self {
+            auth: identity.credential_store(&[], &[]),
+            client: Arc::new(OpenRouterClient::new().map_err(ProviderError::from)?),
+            identity,
         })
     }
 
@@ -154,6 +172,10 @@ impl OpenRouterProvider {
         Self {
             auth,
             client: Arc::new(client),
+            identity: crate::providers::api_key_account::ApiKeyIdentity::base(
+                "openrouter",
+                "OpenRouter",
+            ),
         }
     }
 
@@ -211,7 +233,7 @@ impl OpenRouterProvider {
 
 impl UsageProvider for OpenRouterProvider {
     fn definition(&self) -> ProviderDefinition {
-        definition()
+        self.identity.definition(definition())
     }
 
     fn has_local_credentials(&self) -> bool {

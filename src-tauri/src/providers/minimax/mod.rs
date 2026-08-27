@@ -96,23 +96,44 @@ impl From<MiniMaxError> for ProviderError {
 }
 
 pub struct MiniMaxProvider {
+    identity: crate::providers::api_key_account::ApiKeyIdentity,
     auth: MiniMaxAuthStore,
     client: Arc<MiniMaxClient>,
 }
 
 impl MiniMaxProvider {
     pub fn new() -> Result<Self, ProviderError> {
+        let identity =
+            crate::providers::api_key_account::ApiKeyIdentity::base("minimax", "MiniMax");
         Ok(Self {
-            auth: MiniMaxAuthStore::new(),
+            identity: identity.clone(),
+            auth: MiniMaxAuthStore::new_with_identity(&identity),
+            client: Arc::new(MiniMaxClient::new().map_err(ProviderError::from)?),
+        })
+    }
+
+    /// A named account under MiniMax with its own credential-store entry.
+    pub fn new_for_account(provider_id: &str, account_name: &str) -> Result<Self, ProviderError> {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::account(
+            provider_id,
+            account_name,
+            "MiniMax",
+        );
+        Ok(Self {
+            identity: identity.clone(),
+            auth: MiniMaxAuthStore::new_with_identity(&identity),
             client: Arc::new(MiniMaxClient::new().map_err(ProviderError::from)?),
         })
     }
 
     #[cfg(test)]
     fn with_dependencies(auth: MiniMaxAuthStore, client: MiniMaxClient) -> Self {
+        let identity =
+            crate::providers::api_key_account::ApiKeyIdentity::base("minimax", "MiniMax");
         Self {
             auth,
             client: Arc::new(client),
+            identity,
         }
     }
 
@@ -135,7 +156,7 @@ impl MiniMaxProvider {
 
 impl UsageProvider for MiniMaxProvider {
     fn definition(&self) -> ProviderDefinition {
-        definition()
+        self.identity.definition(definition())
     }
 
     fn has_local_credentials(&self) -> bool {

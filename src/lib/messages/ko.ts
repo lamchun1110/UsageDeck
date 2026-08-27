@@ -126,4 +126,16 @@ export const ko = {
   'settings.log.copyError': '로그 경로를 클립보드에 복사하지 못했습니다.',
   'settings.log.revealError': '로그 파일을 표시하지 못했습니다.',
   'settings.aria.settings': '설정',
+  'settings.section.account': '계정',
+  'settings.account.hint':
+    '이 명명된 계정은 독립된 API 키를 가집니다. 삭제하면 키와 ID가 폐기됩니다.',
+  'settings.account.remove': '계정 삭제…',
+  'settings.account.addHint': '같은 제공자의 두 번째 키를 추적할 명명 계정을 추가합니다.',
+  'settings.account.familyAria': 'API 제공자',
+  'settings.account.chooseFamily': '제공자 선택…',
+  'settings.account.namePlaceholder': '계정 이름',
+  'settings.account.add': '계정 추가',
+  'settings.account.nameRequired': '계정 이름을 입력하세요.',
+  'settings.accountRemovedRestart': '계정이 삭제되었습니다 — 재시작하면 반영됩니다.',
+  'settings.customize.accountHint': 'API 계정은 별도 카드로 표시됩니다.',
 } as const;

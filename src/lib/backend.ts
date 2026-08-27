@@ -58,6 +58,14 @@ export function deleteProviderApiKey(providerId: string) {
   return invoke<ApiKeyMutationOutcome>('delete_provider_api_key', { providerId });
 }
 
+export function addApiKeyAccount(family: string, accountName: string) {
+  return invoke<string>('add_api_key_account', { family, accountName });
+}
+
+export function removeApiKeyAccount(providerId: string) {
+  return invoke<void>('remove_api_key_account', { providerId });
+}
+
 export function getAppSettings() {
   return invoke<SettingsViewState>('get_app_settings');
 }
