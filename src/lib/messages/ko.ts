@@ -3,7 +3,6 @@ export const ko = {
   'app.backendUnavailable': 'UsageDeck 백엔드를 사용할 수 없습니다.',
   'app.retry': '다시 시도',
   'app.dismiss': '메시지 닫기',
-  'app.refreshStartFailed': '제공자 새로 고침을 시작할 수 없습니다.',
   'app.refreshProviderFailed': '{provider} 사용량을 새로 고침할 수 없습니다.',
 
   'quota.used': '사용됨',

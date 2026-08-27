@@ -3,7 +3,6 @@ export const zhCN = {
   'app.backendUnavailable': 'UsageDeck 后端不可用。',
   'app.retry': '重试',
   'app.dismiss': '关闭提示',
-  'app.refreshStartFailed': 'UsageDeck 无法启动服务刷新。',
   'app.refreshProviderFailed': '无法刷新 {provider} 的用量。',
 
   'quota.used': '已用',

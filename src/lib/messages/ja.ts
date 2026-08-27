@@ -3,7 +3,6 @@ export const ja = {
   'app.backendUnavailable': 'UsageDeck のバックエンドを利用できません。',
   'app.retry': '再試行',
   'app.dismiss': 'メッセージを閉じる',
-  'app.refreshStartFailed': 'プロバイダーの更新を開始できませんでした。',
   'app.refreshProviderFailed': '{provider} の使用量を更新できませんでした。',
 
   'quota.used': '使用済み',

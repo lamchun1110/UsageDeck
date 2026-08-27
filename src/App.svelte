@@ -316,18 +316,10 @@
     try {
       viewState = await refreshUsage();
       settingsError = null;
-    } catch {
-      viewState = {
-        ...viewState,
-        providers: Object.fromEntries(
-          Object.entries(viewState.providers).map(([id, state]) => [
-            id,
-            { ...state, refreshing: false },
-          ]),
-        ),
-      };
-      settingsError = t('app.refreshStartFailed');
     } finally {
+      // refresh_usage resolves with the final state even when every provider
+      // fails, so there is no rejection path: progress liveness is owned by
+      // the usage-state events and activeRefreshCount.
       activeRefreshCount -= 1;
     }
   }

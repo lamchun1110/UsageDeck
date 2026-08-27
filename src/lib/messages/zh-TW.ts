@@ -3,7 +3,6 @@ export const zhTW = {
   'app.backendUnavailable': 'UsageDeck 後端無法使用。',
   'app.retry': '重試',
   'app.dismiss': '關閉提示',
-  'app.refreshStartFailed': 'UsageDeck 無法啟動服務重新整理。',
   'app.refreshProviderFailed': '無法重新整理 {provider} 的用量。',
 
   'quota.used': '已用',

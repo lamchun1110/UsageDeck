@@ -3,7 +3,6 @@ export const en = {
   'app.backendUnavailable': 'UsageDeck backend is unavailable.',
   'app.retry': 'Retry',
   'app.dismiss': 'Dismiss message',
-  'app.refreshStartFailed': 'UsageDeck could not start a provider refresh.',
   'app.refreshProviderFailed': '{provider} usage could not be refreshed.',
 
   'quota.used': 'used',
