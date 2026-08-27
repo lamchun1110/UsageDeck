@@ -19,11 +19,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
 </p>
 
-Thirteen coding assistants, thirteen billing dashboards, thirteen different words for "you are out
-of quota." UsageDeck is a small desktop app that reads the credentials already sitting on your
-machine and answers the only questions that matter: how much is left and when does it reset.
+UsageDeck is an open-source, privacy-first desktop dashboard for Windows, Linux, and macOS. It
+tracks usage limits, reset times, token history, and estimated spend across 13 AI coding assistants.
 
-It lives in your tray or menu bar. There is no account to create and nothing to sign in to.
+It lives in your tray or menu bar and reuses credentials already stored on your machine. Everything
+runs locally—there is no UsageDeck account, backend, analytics, or telemetry.
 
 ## What it tracks
 
@@ -102,7 +102,14 @@ stored in `~/.config/openquota/{kimi,minimax,zai}.json` are still read; new keys
 - **Used or remaining.** Whichever way round you think about quota.
 - **Pacing.** Tells you whether today's burn rate lasts until the reset, before it doesn't.
 - **History.** Today, yesterday, and the trailing 30 days of tokens and estimated spend.
+- **Heads-up before it hurts.** Optional desktop notifications when a quota is almost out, when
+  you are cutting it close, and when your pace says you will run out before the reset.
 - **Yours to arrange.** Reorder providers and metrics, hide rows, collapse sections.
+- **Yours to look at.** Light, dark, or system, five accent colours, a compact density, and 12- or
+  24-hour clocks.
+- **Share a card.** Copy any provider's panel as an image, ready to paste.
+- **Speaks your language.** English, 繁體中文, 简体中文, 日本語, and 한국어 — or whatever your
+  system is set to.
 - **Stays out of the way.** Launch at login, global shortcut, follows your system theme.
 
 Everything runs on your machine. No account, no backend, no analytics, no telemetry.

@@ -19,13 +19,13 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT 라이선스"></a>
 </p>
 
-코딩 어시스턴트 열세 개, 결제 대시보드 열세 개, 그리고 "한도를 모두 사용했습니다"라는 말의 열세 가지 표현. UsageDeck는 이미 컴퓨터에 저장된 인증 정보를 그대로 읽어, 정말 중요한 세 가지 질문에만 답하는 작은 데스크톱 앱입니다. 얼마나 남았는지, 언제 초기화되는지, 지금까지 얼마를 썼는지.
+UsageDeck은 Windows, Linux, macOS를 지원하는 오픈 소스·개인정보 보호 중심 데스크톱 대시보드입니다. 13개 AI 코딩 어시스턴트의 사용 한도, 초기화 시간, 토큰 기록, 예상 비용을 한곳에서 확인할 수 있습니다.
 
-트레이나 메뉴 막대에 상주합니다. 만들 계정도, 로그인할 것도 없습니다.
+트레이나 메뉴 막대에 상주하며 컴퓨터에 이미 저장된 인증 정보를 재사용합니다. 모든 기능은 로컬에서 실행되며 UsageDeck 계정, 백엔드, 분석, 원격 측정이 없습니다.
 
 ## OpenQuota에서 오신 분들
 
-UsageDeck은 OpenQuota 포크로 시작해 지금은 독립 프로젝트가 되었습니다. 데이터도 함께 가져옵니다: 첫 실행 시 UsageDeck은 기존 OpenQuota 설치에서 설정·사용 기록·가격 캐시를 자동으로 옮기고, OS 자격 증명 저장소에 저장된 API 키는 UsageDeck 고유 항목으로 이전합니다. 기존 위치에서 무언가를 삭제하지는 않습니다. `~/.config/openquota/<provider>.json`에 저장된 키도 계속 읽으며, 새 키는 `~/.config/usagedeck/`에 저장됩니다.
+UsageDeck은 OpenQuota 포크로 시작해 지금은 독립 프로젝트가 되었습니다. 데이터도 함께 가져옵니다: 첫 실행 시 UsageDeck은 기존 OpenQuota 설치에서 설정·사용 기록·가격 캐시·Antigravity 로컬 데이터를 자동으로 옮기고, OS 자격 증명 저장소에 저장된 API 키는 UsageDeck 고유 항목으로 이전합니다. 기존 위치에서 무언가를 삭제하지는 않습니다. `~/.config/openquota/{kimi,minimax,zai}.json`에 저장된 키도 계속 읽으며, 새 키는 `~/.config/usagedeck/`에 저장됩니다. OpenRouter는 기존 경로인 `~/.config/openrouter/key.json`을 계속 읽습니다.
 
 ## 설치
 
@@ -41,7 +41,7 @@ UsageDeck은 OpenQuota 포크로 시작해 지금은 독립 프로젝트가 되�
 
 ### 릴리스 서명
 
-- **macOS:** 공식 릴리스는 **Madness Technology Limited** 명의의 Apple Developer ID 인증서로 서명되고, 번들 ID는 `com.lamchun1110.usagedeck`이며 Apple 공증과 스테이플이 적용됩니다. 릴리스 워크플로는 게시 전에 코드 서명, Gatekeeper 평가, 공증 티켓, Hardened Runtime을 검증합니다.
+- **macOS:** 저장소 변수 `ENABLE_MACOS_NATIVE_SIGNING`이 `true`일 때 공식 릴리스는 Apple Developer ID 인증서로 서명되고 Apple 공증을 받습니다. 서명된 릴리스의 번들 ID는 `com.lamchun1110.usagedeck`입니다. 릴리스 워크플로는 게시 전에 코드 서명, Gatekeeper 평가, 공증 티켓, Hardened Runtime을 검증합니다.
 - **Linux:** 모든 `.AppImage`와 `.deb`에는 ASCII 아머 분리 서명 `<file>.asc`가 함께 제공됩니다. 릴리스에는 `SHA256SUMS`, GPG로 서명된 `SHA256SUMS.asc`, 검증에 필요한 공개 키 `usagedeck-gpg-public.asc`도 포함됩니다.
 
 Linux 다운로드를 검증하려면:
@@ -57,21 +57,21 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 
 ## 추적하는 항목
 
-| 서비스                                            | 인증 정보 | 확인할 수 있는 내용                                            |
-| ------------------------------------------------- | --------- | -------------------------------------------------------------- |
-| **[Claude Code](docs/providers/claude.md)**       | 로컬      | 다중 계정, 세션·주간 한도, 모델별 사용량, 토큰 기록, 예상 비용 |
-| **[Codex](docs/providers/codex.md)**              | 로컬      | 세션·주간 한도, 크레딧, 토큰 기록, 모델 분포, 예상 비용        |
-| **[Command Code](docs/providers/commandcode.md)** | 로컬      | 세션·주간·월간 한도 및 추가 크레딧                             |
-| **[Cursor](docs/providers/cursor.md)**            | 로컬      | 전체·Auto·API 사용량, 크레딧, 토큰 기록, 예상 비용             |
-| **[Antigravity](docs/providers/antigravity.md)**  | 로컬      | Gemini와 Claude가 공유하는 할당량                              |
-| **[Copilot](docs/providers/copilot.md)**          | 로컬      | 프리미엄 요청, 추가 사용량, 채팅·완성 한도, 조직 청구          |
-| **[Devin](docs/providers/devin.md)**              | 로컬      | 일간·주간 한도, 초기화 시간, 추가 사용량 잔액                  |
-| **[Grok](docs/providers/grok.md)**                | 로컬      | 주간 할당량, 추가 사용량 상태, 토큰 기록, 예상 비용            |
-| **[OpenCode](docs/providers/opencode.md)**        | 로컬      | Go의 세션·주간·월간 지출 한도 및 로컬 사용 기록                |
-| **[OpenRouter](docs/providers/openrouter.md)**    | API 키    | 크레딧 잔액과 일간·주간·월간 지출                              |
-| **[Z.ai](docs/providers/zai.md)**                 | API 키    | GLM Coding Plan의 세션·주간·웹 검색 한도                       |
-| **[Kimi](docs/providers/kimi.md)**                | API 키    | Kimi Code의 세션·주간 한도 (도메인 선택 가능)                  |
-| **[MiniMax](docs/providers/minimax.md)**          | API 키    | Token Plan의 세션·주간 한도                                    |
+| 서비스                                            | 인증 정보 | 확인할 수 있는 내용                                                       |
+| ------------------------------------------------- | --------- | ------------------------------------------------------------------------- |
+| **[Claude Code](docs/providers/claude.md)**       | 로컬      | 다중 계정, 세션·주간 한도, 모델별 사용량, 토큰 기록, 예상 비용            |
+| **[Codex](docs/providers/codex.md)**              | 로컬      | 세션·주간 한도, 속도 제한 초기화, 크레딧, 토큰 기록, 모델 분포, 예상 비용 |
+| **[Command Code](docs/providers/commandcode.md)** | 로컬      | 세션·주간·월간 한도 및 추가 크레딧                                        |
+| **[Cursor](docs/providers/cursor.md)**            | 로컬      | 전체·Auto·API 사용량, 크레딧, 토큰 기록, 예상 비용                        |
+| **[Antigravity](docs/providers/antigravity.md)**  | 로컬      | Gemini와 Claude가 공유하는 할당량                                         |
+| **[Copilot](docs/providers/copilot.md)**          | 로컬      | 프리미엄 요청, 추가 사용량, 채팅·완성 한도, 조직 청구                     |
+| **[Devin](docs/providers/devin.md)**              | 로컬      | 일간·주간 한도, 초기화 시간, 추가 사용량 잔액                             |
+| **[Grok](docs/providers/grok.md)**                | 로컬      | 주간 할당량, 추가 사용량 상태, 토큰 기록, 예상 비용                       |
+| **[OpenCode](docs/providers/opencode.md)**        | 로컬      | Go의 세션·주간·월간 지출 한도 및 로컬 사용 기록                           |
+| **[OpenRouter](docs/providers/openrouter.md)**    | API 키    | 크레딧 잔액과 일간·주간·월간 지출                                         |
+| **[Z.ai](docs/providers/zai.md)**                 | API 키    | GLM Coding Plan의 세션·주간·웹 검색 한도                                  |
+| **[Kimi](docs/providers/kimi.md)**                | API 키    | Kimi Code의 세션·주간 한도 (도메인 선택 가능)                             |
+| **[MiniMax](docs/providers/minimax.md)**          | API 키    | Token Plan의 세션·주간 한도                                               |
 
 **로컬** 서비스는 CLI나 편집기가 이미 만들어 둔 로그인을 그대로 사용하므로 따로 설정할 것이 없습니다. **API 키** 서비스는 '사용자 지정'에서 키를 한 번 붙여 넣어야 하며, 키는 설정 파일이 아니라 운영 체제의 자격 증명 저장소에 바로 저장됩니다. Codex의 구독 한도는 ChatGPT 로그인이 필요하며 API 키만 사용하는 환경에서는 표시되지 않습니다.
 
@@ -82,7 +82,11 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 - **사용량 또는 잔여량.** 익숙한 방식으로 표시하세요.
 - **소진 속도.** 한도가 실제로 바닥나기 전에, 지금 속도로 다음 초기화까지 버틸 수 있는지 알려 줍니다.
 - **기록.** 오늘, 어제, 그리고 최근 30일의 토큰 사용량과 예상 비용.
+- **늦기 전에 알림.** 한도가 거의 다 찼을 때, 아슬아슬할 때, 지금 속도로는 초기화 전에 소진될 때 데스크톱 알림을 받을 수 있습니다(선택 사항).
 - **원하는 대로 배치.** 서비스와 지표 순서 변경, 행 숨기기, 섹션 접기.
+- **원하는 대로 보기.** 라이트·다크·시스템 테마, 다섯 가지 강조 색상, 컴팩트 밀도, 12/24시간 표기.
+- **카드 공유.** 어떤 서비스의 패널이든 이미지로 복사해 바로 붙여넣을 수 있습니다.
+- **당신의 언어로.** English, 繁體中文, 简体中文, 日本語, 한국어 또는 시스템 설정 따르기.
 - **방해하지 않음.** 로그인 시 실행, 전역 단축키, 시스템 테마 따르기.
 
 모든 동작은 사용자의 컴퓨터에서 이루어집니다. 계정도, 백엔드도, 분석도, 텔레메트리도 없습니다.
