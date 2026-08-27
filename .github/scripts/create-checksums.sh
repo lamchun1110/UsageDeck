@@ -54,7 +54,11 @@ gpg --batch --yes --local-user "$fingerprint" \
   --output checksums/SHA256SUMS.asc checksums/SHA256SUMS
 # The clearsign was produced by the same key just above; trust it on the verify line so
 # gpg does not reject a freshly imported key as unsigned/unknown signer.
-gpg --batch --yes --trust-model always --verify checksums/SHA256SUMS.asc checksums/SHA256SUMS
+# `gpg --verify` consults the local trustdb, which has no ultimate trust for a key imported
+# into the ephemeral keyring during this step. `--trusted-key` pins the verifier to that
+# fingerprint regardless of trustdb state, so the clearsign the script just produced is
+# accepted without weakening the public key uploaded alongside it.
+gpg --batch --yes --trusted-key "$fingerprint" --verify checksums/SHA256SUMS.asc checksums/SHA256SUMS
 (cd checksums && sha256sum --check --strict SHA256SUMS)
 
 gpg --batch --armor --export "$fingerprint" > checksums/usagedeck-gpg-public.asc
