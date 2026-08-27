@@ -343,10 +343,12 @@ export const settingsState: SettingsViewState = {
   trayAvailable: true,
   platformSummary: null,
   settings: {
-    schemaVersion: 7,
+    // Keep in step with the Rust settings schema (models.rs pins 8): fixtures
+    // running on a stale schema test payloads the backend never sends.
+    schemaVersion: 8,
     providerNames: {},
     providerOptions: {},
-    knownProviderIds: ['claude', 'codex', 'antigravity'],
+    knownProviderIds: ['claude', 'codex', 'antigravity', 'openrouter'],
     theme: 'system',
     language: 'system',
     accent: 'iris',
