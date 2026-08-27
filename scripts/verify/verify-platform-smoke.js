@@ -41,7 +41,8 @@ const requireExactKeyLines = (source, content, expectations) => {
 };
 
 requireContracts('CI', ci, [
-  'os: [windows-latest, macos-latest, ubuntu-22.04]',
+  'os: [windows-latest, windows-11-arm, macos-latest, ubuntu-22.04, ubuntu-24.04]',
+  "continue-on-error: ${{ matrix.os == 'ubuntu-24.04' }}",
   'Test Windows Credential Manager integration',
   'Test macOS Keychain integration',
   'Test Linux Secret Service integration',
