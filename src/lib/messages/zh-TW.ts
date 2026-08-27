@@ -4,6 +4,7 @@ export const zhTW = {
   'app.retry': '重試',
   'app.dismiss': '關閉提示',
   'app.refreshProviderFailed': '無法重新整理 {provider} 的用量。',
+  'app.updateCheckNotRecorded': '無法儲存檢查更新的時間。',
 
   'quota.used': '已用',
   'quota.left': '剩餘',

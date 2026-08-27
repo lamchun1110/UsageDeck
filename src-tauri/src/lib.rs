@@ -624,6 +624,7 @@ pub fn run() {
             commands::usage::quota_history,
             commands::settings::get_app_settings,
             commands::settings::save_app_settings,
+            commands::settings::record_update_check,
             commands::settings::reset_customization,
             commands::settings::reset_all_settings,
             commands::settings::reset_provider_customization,

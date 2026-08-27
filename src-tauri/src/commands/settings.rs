@@ -254,6 +254,23 @@ async fn save_app_settings_inner(
     ))
 }
 
+/// Persists only the update-check timestamp; avoids the full save pipeline
+/// (and its side-effect checks) when the periodic auto-check stamps its clock.
+#[tauri::command]
+pub async fn record_update_check(
+    app: AppHandle,
+    settings: State<'_, Arc<SettingsService>>,
+    checked_at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), String> {
+    let service = settings.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || service.record_update_check(checked_at))
+        .await
+        .map_err(|_| "The update check could not be recorded.".to_owned())?
+        .map_err(|_| "The update check could not be recorded.".to_owned())?;
+    let _ = app.emit("settings-state", settings_view_state(&app, &settings));
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn reset_customization(
     app: AppHandle,

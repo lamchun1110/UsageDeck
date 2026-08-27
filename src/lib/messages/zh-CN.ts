@@ -4,6 +4,7 @@ export const zhCN = {
   'app.retry': '重试',
   'app.dismiss': '关闭提示',
   'app.refreshProviderFailed': '无法刷新 {provider} 的用量。',
+  'app.updateCheckNotRecorded': '无法保存检查更新的时间。',
 
   'quota.used': '已用',
   'quota.left': '剩余',

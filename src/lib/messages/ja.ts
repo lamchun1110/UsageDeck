@@ -4,6 +4,7 @@ export const ja = {
   'app.retry': '再試行',
   'app.dismiss': 'メッセージを閉じる',
   'app.refreshProviderFailed': '{provider} の使用量を更新できませんでした。',
+  'app.updateCheckNotRecorded': '更新チェックの時刻を保存できませんでした。',
 
   'quota.used': '使用済み',
   'quota.left': '残り',

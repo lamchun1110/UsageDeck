@@ -4,6 +4,7 @@ export const ko = {
   'app.retry': '다시 시도',
   'app.dismiss': '메시지 닫기',
   'app.refreshProviderFailed': '{provider} 사용량을 새로 고침할 수 없습니다.',
+  'app.updateCheckNotRecorded': '업데이트 확인 시간을 저장할 수 없습니다.',
 
   'quota.used': '사용됨',
   'quota.left': '남음',

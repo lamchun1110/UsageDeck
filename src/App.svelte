@@ -20,6 +20,7 @@
     quitApplication,
     refreshProviderUsage,
     refreshUsage,
+    recordUpdateCheck,
     requestNotificationPermission,
     resetAllSettings as resetAllSettingsCommand,
     resetCustomization as resetCustomizationCommand,
@@ -714,7 +715,11 @@
       manual,
       (checkedAt) => {
         if (!settingsState) return;
-        saveSettings({ ...settingsState.settings, lastUpdateCheckAt: checkedAt });
+        recordUpdateCheck(checkedAt).catch(() => {
+          // The stamp is cosmetic (it paces the next auto-check); a failure
+          // only means the check may re-run sooner than scheduled.
+          showConfirmation(t('app.updateCheckNotRecorded'));
+        });
       },
       showConfirmation,
     );

@@ -4,6 +4,7 @@ export const en = {
   'app.retry': 'Retry',
   'app.dismiss': 'Dismiss message',
   'app.refreshProviderFailed': '{provider} usage could not be refreshed.',
+  'app.updateCheckNotRecorded': 'The update-check time could not be saved.',
 
   'quota.used': 'used',
   'quota.left': 'left',
