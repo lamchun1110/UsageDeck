@@ -241,6 +241,8 @@ jobs:
       - name: Run the AppImage and assert startup
         env:
           USAGEDECK_COMPAT_CONTAINER: ${{ matrix.container }}
+        # Containers default to sh (dash), where `set -o pipefail` is not a thing.
+        shell: bash
         run: |
           set -euo pipefail
           ldd --version | head -n 1
