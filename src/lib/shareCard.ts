@@ -542,5 +542,8 @@ function ellipsize(context: CanvasRenderingContext2D, value: string, maxWidth: n
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
+  // Math.min/Math.max pass NaN through; share cards must render a flat gauge
+  // for a non-finite percent, never "NaN%".
+  if (!Number.isFinite(value)) return minimum;
   return Math.min(maximum, Math.max(minimum, value));
 }
