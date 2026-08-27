@@ -19,19 +19,19 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT 许可证"></a>
 </p>
 
-十三款编程助手，十三个计费后台，还有十三种“你的额度用完了”的说法。UsageDeck
-是一款小巧的桌面应用，直接读取你电脑上已有的登录凭据，只回答真正重要的三个问题：还剩多少、
-什么时候重置、到目前为止花了多少钱。
+UsageDeck 是一款面向 Windows、Linux 和 macOS 的开源、隐私优先桌面仪表板，可集中追踪 13 款
+AI 编程助手的用量限额、重置时间、Token 历史和预估支出。
 
-它常驻在系统托盘或菜单栏。无需注册账户，也没有任何需要登录的东西。
+它常驻于系统托盘或菜单栏，并复用电脑上已有的登录凭据。所有功能都在本地运行——无需注册
+UsageDeck 账户，也没有后端、分析或遥测。
 
 ## 从 OpenQuota 过来？
 
 UsageDeck 最初是 OpenQuota 的 fork，现在已是一个独立项目。你的数据会跟着你走：首次启动时，
-UsageDeck 会自动从现有的 OpenQuota 安装中迁移设置、用量历史和价格缓存，保存在系统凭据存储中的
-API 密钥也会移到 UsageDeck 自己的条目下。旧位置的数据一律不会被删除。存放在
-`~/.config/openquota/<provider>.json` 的密钥仍会继续读取；新密钥则存放在
-`~/.config/usagedeck/`。
+UsageDeck 会自动从现有的 OpenQuota 安装中迁移设置、用量历史、价格缓存和 Antigravity 本地数据，
+保存在系统凭据存储中的 API 密钥也会移到 UsageDeck 自己的条目下。旧位置的数据一律不会被删除。
+存放在 `~/.config/openquota/{kimi,minimax,zai}.json` 的密钥仍会继续读取；新密钥则存放在
+`~/.config/usagedeck/`。OpenRouter 会继续读取其旧路径 `~/.config/openrouter/key.json`。
 
 ## 安装
 
@@ -47,7 +47,7 @@ API 密钥也会移到 UsageDeck 自己的条目下。旧位置的数据一律�
 
 ### 发布签名
 
-- **macOS：** 正式发布版使用颁发给 **Madness Technology Limited** 的 Apple Developer ID 证书签名，bundle ID 为 `com.lamchun1110.usagedeck`，并经 Apple 公证和装订（staple）。发布工作流在发布前会验证代码签名、Gatekeeper 评估、公证票据与强化运行时（Hardened Runtime）。
+- **macOS：** 当仓库变量 `ENABLE_MACOS_NATIVE_SIGNING` 设为 `true` 时，正式发布版会使用 Apple Developer ID 证书签名并经 Apple 公证。已签名版本的 bundle ID 为 `com.lamchun1110.usagedeck`。发布工作流在发布前会验证代码签名、Gatekeeper 评估、公证票据与强化运行时（Hardened Runtime）。
 - **Linux：** 每个 `.AppImage` 和 `.deb` 都有对应的 ASCII 装甲分离签名文件 `<file>.asc`。发布内容还包含 `SHA256SUMS`、它的 GPG 签名副本 `SHA256SUMS.asc`，以及验证所需的公钥 `usagedeck-gpg-public.asc`。
 
 验证 Linux 下载：
@@ -64,21 +64,21 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 
 ## 可追踪的服务
 
-| 服务                                              | 凭据     | 追踪内容                                                 |
-| ------------------------------------------------- | -------- | -------------------------------------------------------- |
-| **[Claude Code](docs/providers/claude.md)**       | 本地     | 多账户、会话与每周限额、各模型用量、Token 历史、预估支出 |
-| **[Codex](docs/providers/codex.md)**              | 本地     | 会话与每周限额、点数、Token 历史、模型分布、预估支出     |
-| **[Command Code](docs/providers/commandcode.md)** | 本地     | 会话、每周与每月限额，以及额外点数                       |
-| **[Cursor](docs/providers/cursor.md)**            | 本地     | 总用量、Auto 与 API 用量、点数、Token 历史、预估支出     |
-| **[Antigravity](docs/providers/antigravity.md)**  | 本地     | Gemini 与 Claude 共享的额度池                            |
-| **[Copilot](docs/providers/copilot.md)**          | 本地     | 高级请求、额外用量、聊天与补全限额、组织计费             |
-| **[Devin](docs/providers/devin.md)**              | 本地     | 每日与每周限额、重置时间、额外用量余额                   |
-| **[Grok](docs/providers/grok.md)**                | 本地     | 每周配额、额外用量状态、Token 历史、预估支出             |
-| **[OpenCode](docs/providers/opencode.md)**        | 本地     | Go 的会话、每周与每月支出上限，以及本地用量历史          |
-| **[OpenRouter](docs/providers/openrouter.md)**    | API 密钥 | 点数余额与每日、每周、每月支出                           |
-| **[Z.ai](docs/providers/zai.md)**                 | API 密钥 | GLM Coding Plan 的会话、每周与网页搜索额度               |
-| **[Kimi](docs/providers/kimi.md)**                | API 密钥 | Kimi Code 的会话与每周额度，域名可自选                   |
-| **[MiniMax](docs/providers/minimax.md)**          | API 密钥 | Token Plan 的会话与每周额度                              |
+| 服务                                              | 凭据     | 追踪内容                                                           |
+| ------------------------------------------------- | -------- | ------------------------------------------------------------------ |
+| **[Claude Code](docs/providers/claude.md)**       | 本地     | 多账户、会话与每周限额、各模型用量、Token 历史、预估支出           |
+| **[Codex](docs/providers/codex.md)**              | 本地     | 会话与每周限额、速率限制重置、点数、Token 历史、模型分布、预估支出 |
+| **[Command Code](docs/providers/commandcode.md)** | 本地     | 会话、每周与每月限额，以及额外点数                                 |
+| **[Cursor](docs/providers/cursor.md)**            | 本地     | 总用量、Auto 与 API 用量、点数、Token 历史、预估支出               |
+| **[Antigravity](docs/providers/antigravity.md)**  | 本地     | Gemini 与 Claude 共享的额度池                                      |
+| **[Copilot](docs/providers/copilot.md)**          | 本地     | 高级请求、额外用量、聊天与补全限额、组织计费                       |
+| **[Devin](docs/providers/devin.md)**              | 本地     | 每日与每周限额、重置时间、额外用量余额                             |
+| **[Grok](docs/providers/grok.md)**                | 本地     | 每周配额、额外用量状态、Token 历史、预估支出                       |
+| **[OpenCode](docs/providers/opencode.md)**        | 本地     | Go 的会话、每周与每月支出上限，以及本地用量历史                    |
+| **[OpenRouter](docs/providers/openrouter.md)**    | API 密钥 | 点数余额与每日、每周、每月支出                                     |
+| **[Z.ai](docs/providers/zai.md)**                 | API 密钥 | GLM Coding Plan 的会话、每周与网页搜索额度                         |
+| **[Kimi](docs/providers/kimi.md)**                | API 密钥 | Kimi Code 的会话与每周额度，域名可自选                             |
+| **[MiniMax](docs/providers/minimax.md)**          | API 密钥 | Token Plan 的会话与每周额度                                        |
 
 标注**本地**的服务会直接复用你的 CLI 或编辑器已有的登录状态，无需任何配置。标注
 **API 密钥**的服务则需要你在“自定义”中粘贴一次密钥；密钥会直接存入操作系统的凭据存储，
@@ -91,7 +91,11 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 - **已用或剩余。** 按你习惯的方式显示额度。
 - **消耗节奏。** 在额度真正见底之前，提前告诉你按目前的消耗速度能否撑到下次重置。
 - **历史记录。** 今天、昨天，以及过去 30 天的 Token 用量与预估支出。
+- **提前提醒。** 可选的桌面通知：额度快用完、所剩不多，以及按当前速度会在重置前用光时。
 - **布局随你安排。** 重新排列服务与指标、隐藏某些行、折叠区块。
+- **外观随你调整。** 浅色、深色或跟随系统，五种强调色、紧凑密度，以及 12 或 24 小时制。
+- **分享卡片。** 把任意服务的面板复制为图片，直接粘贴即可分享。
+- **说你的语言。** English、繁體中文、简体中文、日本語、한국어，或跟随系统设置。
 - **不打扰你。** 开机自启、全局快捷键、跟随系统主题。
 
 一切都在你的电脑上运行。没有账户、没有后端、没有分析、也没有遥测。
