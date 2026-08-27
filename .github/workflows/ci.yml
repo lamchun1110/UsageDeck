@@ -205,3 +205,64 @@ jobs:
           path: src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
           retention-days: 14
+
+  # Runs the AppImage built on the ubuntu-22.04 floor inside stock distro containers to prove
+  # the real glibc/library compatibility of shipped artifacts. GitHub hosts no RHEL-family
+  # runners, so Rocky 9 stands in for RHEL/Alma/CentOS 9 — its glibc 2.34 is *older* than the
+  # 22.04 build floor (2.35), which is exactly the boundary that decides whether dropping the
+  # 22.04 build is safe. Canary failures do not block the build.
+  distro-compat:
+    name: distro-compat (${{ matrix.container }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        container: [rockylinux:9, debian:12, ubuntu:24.04]
+    container: ${{ matrix.container }}
+    steps:
+      - name: Install display and session dependencies
+        run: |
+          if command -v dnf >/dev/null 2>&1; then
+            dnf install -y --setopt=install_weak_deps=False xorg-x11-server-Xvfb dbus
+          else
+            apt-get update
+            apt-get install -y --no-install-recommends xvfb dbus
+          fi
+
+      - name: Download the AppImage
+        uses: actions/download-artifact@v7
+        with:
+          name: UsageDeck-Linux-AppImage
+          path: appimage
+
+      - name: Run the AppImage and assert startup
+        env:
+          USAGEDECK_COMPAT_CONTAINER: ${{ matrix.container }}
+        run: |
+          set -euo pipefail
+          ldd --version | head -n 1
+          image="$(echo appimage/*.AppImage)"
+          chmod +x "${image}"
+          export HOME="${RUNNER_TEMP}/usagedeck-home"
+          mkdir -p "${HOME}"
+          Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
+          export DISPLAY=:99
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          dbus-run-session -- bash -euo pipefail -c '
+            "${0}" >"${RUNNER_TEMP}/app-stdout.log" 2>&1 &
+            app_pid=$!
+            for attempt in $(seq 1 60); do
+              if grep -Fq "UsageDeck startup completed" "${HOME}/.local/state/usagedeck/logs/UsageDeck.log" 2>/dev/null; then
+                echo "UsageDeck started on ${USAGEDECK_COMPAT_CONTAINER}."
+                kill "${app_pid}" 2>/dev/null || true
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "UsageDeck did not report startup within 60s on ${USAGEDECK_COMPAT_CONTAINER}; app output follows:"
+            cat "${RUNNER_TEMP}/app-stdout.log" || true
+            exit 1
+          ' "${image}"
