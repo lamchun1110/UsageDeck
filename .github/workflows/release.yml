@@ -97,6 +97,8 @@ jobs:
           MACOS_SIGNING_ENABLED: ${{ steps.signing_policy.outputs.macos_signing }}
           LINUX_GPG_SIGNING_ENABLED: ${{ steps.signing_policy.outputs.linux_gpg_signing }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           ES_USERNAME: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_USERNAME || '' }}
           ES_PASSWORD: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_PASSWORD || '' }}
           ES_CREDENTIAL_ID: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_CREDENTIAL_ID || '' }}
