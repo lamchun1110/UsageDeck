@@ -166,9 +166,22 @@ struct NotificationState {
     primed: bool,
 }
 
+/// Consecutive failed delivery attempts before a metric stops retrying every
+/// cycle, and how many refresh cycles it then sits out (~1 hour at the default
+/// 5-minute refresh) before trying again.
+const DELIVERY_FAILURE_THRESHOLD: u32 = 3;
+const DELIVERY_SKIP_CYCLES: u32 = 12;
+
+#[derive(Default)]
+struct DeliveryBackoff {
+    consecutive_failures: u32,
+    skip_cycles_remaining: u32,
+}
+
 #[derive(Default)]
 pub struct NotificationEvaluator {
     states: Mutex<HashMap<String, NotificationState>>,
+    delivery: Mutex<HashMap<String, DeliveryBackoff>>,
 }
 
 impl NotificationEvaluator {
@@ -187,6 +200,59 @@ impl NotificationEvaluator {
             .collect::<HashSet<_>>();
         if let Ok(mut states) = self.states.lock() {
             states.retain(|metric_id, _| active.contains(metric_id));
+        }
+    }
+
+    /// Splits alerts into those whose delivery should be attempted now and
+    /// those sitting out a backoff window after repeated delivery failures.
+    /// Deferred alerts must still be rolled back so they stay pending.
+    pub fn partition_delivery(&self, alerts: Vec<PaceAlert>) -> (Vec<PaceAlert>, Vec<PaceAlert>) {
+        let Ok(mut delivery) = self.delivery.lock() else {
+            return (alerts, Vec::new());
+        };
+        let mut ready = Vec::new();
+        let mut deferred = Vec::new();
+        for alert in alerts {
+            let backoff = delivery.get_mut(&alert.metric_id);
+            let suppressed = backoff.is_some_and(|backoff| {
+                if backoff.skip_cycles_remaining > 0 {
+                    backoff.skip_cycles_remaining -= 1;
+                    true
+                } else {
+                    false
+                }
+            });
+            if suppressed {
+                deferred.push(alert);
+            } else {
+                ready.push(alert);
+            }
+        }
+        (ready, deferred)
+    }
+
+    /// Records failed deliveries; after repeated consecutive failures the
+    /// metric enters the skip window checked by [`partition_delivery`].
+    pub fn record_delivery_failure(&self, failed: &[PaceAlert]) {
+        let Ok(mut delivery) = self.delivery.lock() else {
+            return;
+        };
+        for alert in failed {
+            let backoff = delivery.entry(alert.metric_id.clone()).or_default();
+            backoff.consecutive_failures = backoff.consecutive_failures.saturating_add(1);
+            if backoff.consecutive_failures >= DELIVERY_FAILURE_THRESHOLD {
+                backoff.skip_cycles_remaining = DELIVERY_SKIP_CYCLES;
+            }
+        }
+    }
+
+    /// Clears the backoff for metrics whose alerts were delivered.
+    pub fn record_delivery_success(&self, delivered: &[PaceAlert]) {
+        let Ok(mut delivery) = self.delivery.lock() else {
+            return;
+        };
+        for alert in delivered {
+            delivery.remove(&alert.metric_id);
         }
     }
 
@@ -392,6 +458,69 @@ mod tests {
         UsageHistory,
     };
     use crate::providers::ProviderRegistry;
+
+    fn backoff_alert(metric_id: &str) -> PaceAlert {
+        PaceAlert {
+            milestone: Milestone::AlmostOut,
+            provider: "provider".into(),
+            metric: "metric".into(),
+            metric_id: metric_id.into(),
+            previous_severity: None,
+            previous_was_under_ten: false,
+        }
+    }
+
+    #[test]
+    fn repeated_delivery_failures_defer_then_recover() {
+        let evaluator = NotificationEvaluator::default();
+        let alerts = vec![backoff_alert("metric")];
+
+        // Below the threshold every cycle attempts delivery.
+        for _ in 0..super::DELIVERY_FAILURE_THRESHOLD {
+            let (ready, deferred) = evaluator.partition_delivery(alerts.clone());
+            assert!(deferred.is_empty());
+            assert_eq!(ready.len(), 1);
+            evaluator.record_delivery_failure(&ready);
+            evaluator.rollback(&ready);
+        }
+
+        // The threshold parks the metric for the skip window.
+        for cycle in 0..super::DELIVERY_SKIP_CYCLES {
+            let (ready, deferred) = evaluator.partition_delivery(alerts.clone());
+            assert!(ready.is_empty(), "cycle {cycle}");
+            assert_eq!(deferred.len(), 1);
+            evaluator.rollback(&deferred);
+        }
+
+        // After the window the delivery is attempted again.
+        let (ready, deferred) = evaluator.partition_delivery(alerts.clone());
+        assert_eq!(ready.len(), 1);
+        assert!(deferred.is_empty());
+
+        // A successful delivery clears the backoff entirely.
+        evaluator.record_delivery_success(&ready);
+        let (ready, deferred) = evaluator.partition_delivery(alerts);
+        assert_eq!(ready.len(), 1);
+        assert!(deferred.is_empty());
+    }
+
+    #[test]
+    fn independent_metrics_back_off_separately() {
+        let evaluator = NotificationEvaluator::default();
+        let alerts = vec![backoff_alert("a"), backoff_alert("b")];
+
+        for _ in 0..super::DELIVERY_FAILURE_THRESHOLD {
+            let (ready, _) = evaluator.partition_delivery(alerts.clone());
+            evaluator.record_delivery_failure(&ready);
+            evaluator.rollback(&ready);
+        }
+
+        // Metric "a" recovers; metric "b" is still parked.
+        evaluator.record_delivery_success(&[backoff_alert("a")]);
+        let (ready, deferred) = evaluator.partition_delivery(alerts);
+        assert_eq!(ready.iter().filter(|a| a.metric_id == "a").count(), 1);
+        assert_eq!(deferred.iter().filter(|a| a.metric_id == "b").count(), 1);
+    }
 
     fn window(used: f64, elapsed_fraction: f64) -> QuotaWindow {
         let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();

@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -9,6 +9,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tempfile::NamedTempFile;
+use zeroize::Zeroizing;
 
 use super::CodexError;
 
@@ -30,6 +31,11 @@ crate::redacted_debug!(CodexAuthState {
     refresh_token
 });
 
+/// Auth files are small JSON documents; the cap keeps a huge file, FIFO, or
+/// symlinked device from stalling the refresh worker, matching the other
+/// local-credential readers.
+const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
+
 #[derive(Debug, Clone)]
 enum AuthSource {
     File(PathBuf),
@@ -37,11 +43,28 @@ enum AuthSource {
     Keychain,
 }
 
+/// Reads an auth file bounded by [`MAX_AUTH_FILE_BYTES`]; `None` on any error,
+/// including non-regular files and oversized content.
+fn read_auth_file(path: &Path) -> Option<Zeroizing<String>> {
+    let file = fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_AUTH_FILE_BYTES {
+        return None;
+    }
+    let mut text = Zeroizing::new(String::with_capacity(metadata.len() as usize));
+    file.take(MAX_AUTH_FILE_BYTES + 1)
+        .read_to_string(&mut text)
+        .ok()?;
+    if text.len() as u64 > MAX_AUTH_FILE_BYTES {
+        return None;
+    }
+    Some(text)
+}
+
 impl CodexAuthState {
     pub fn has_local_credentials() -> bool {
         let file_credentials = auth_paths().into_iter().any(|path| {
-            fs::read_to_string(path)
-                .ok()
+            read_auth_file(&path)
                 .and_then(|text| parse_auth_document(&text))
                 .is_some_and(|document| auth_document_has_credentials(&document))
         });
@@ -53,13 +76,8 @@ impl CodexAuthState {
         let mut candidates = Vec::new();
         let mut api_key_only = false;
         for path in auth_paths() {
-            if !path.is_file() {
-                continue;
-            }
-            let Ok(text) = fs::read_to_string(&path) else {
-                continue;
-            };
-            let Some(document) = parse_auth_document(&text) else {
+            let Some(document) = read_auth_file(&path).and_then(|text| parse_auth_document(&text))
+            else {
                 continue;
             };
             let access_token = document
@@ -183,7 +201,7 @@ impl CodexAuthState {
 }
 
 fn load_from_path(path: &Path) -> Result<CodexAuthState, CodexError> {
-    let text = fs::read_to_string(path).map_err(|_| CodexError::InvalidAuth)?;
+    let text = read_auth_file(path).ok_or(CodexError::InvalidAuth)?;
     let document = parse_auth_document(&text).ok_or(CodexError::InvalidAuth)?;
     let access_token = string_at(&document, "/tokens/access_token")
         .filter(|value| !value.is_empty())

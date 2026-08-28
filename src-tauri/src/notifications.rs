@@ -39,10 +39,21 @@ pub fn finish_refresh(
             settings.registry(),
             chrono::Utc::now(),
         );
-        let failed = deliver(app, &alerts);
-        if !failed.is_empty() {
-            notifications.rollback(&failed);
-        }
+        // A metric whose delivery keeps failing (no notification daemon, a
+        // broken permission state) would otherwise retry — and log — on every
+        // refresh forever. Back off after repeated failures, keep the alerts
+        // pending via rollback, and retry one more time about once an hour.
+        let (ready, deferred) = notifications.partition_delivery(alerts);
+        let failed = deliver(app, &ready);
+        let delivered = ready
+            .iter()
+            .filter(|alert| !failed.contains(alert))
+            .cloned()
+            .collect::<Vec<_>>();
+        notifications.record_delivery_failure(&failed);
+        notifications.record_delivery_success(&delivered);
+        notifications.rollback(&failed);
+        notifications.rollback(&deferred);
     }
 }
 

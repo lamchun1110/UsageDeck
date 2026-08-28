@@ -654,15 +654,6 @@ pub fn prepare_native_panel_resize(window: &WebviewWindow) -> Result<PanelResize
     Ok(edge)
 }
 
-pub fn set_manual_panel_height(window: &WebviewWindow) -> Result<(), String> {
-    let height = current_logical_height(&window.as_ref().window())
-        .ok_or("UsageDeck content size is unavailable.")?;
-    window
-        .app_handle()
-        .state::<Arc<PanelResizeSession>>()
-        .set_manual(height)
-}
-
 pub fn finish_native_panel_resize(window: &WebviewWindow) {
     if let Some(session) = window.app_handle().try_state::<Arc<PanelResizeSession>>() {
         session.finish(current_logical_height(&window.as_ref().window()));
@@ -700,7 +691,7 @@ pub fn lock_native_panel_resize_axis(window: &WebviewWindow) -> Result<(), Strin
         .map_err(|_| "UsageDeck panel resize could not be settled.".to_owned())
 }
 
-fn current_logical_height(window: &Window) -> Option<u32> {
+pub(crate) fn current_logical_height(window: &Window) -> Option<u32> {
     let size = window.inner_size().ok()?;
     let scale = window.scale_factor().ok()?;
     Some(

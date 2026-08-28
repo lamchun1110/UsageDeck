@@ -62,9 +62,13 @@ impl Storage {
         match Self::open_at(path) {
             Ok(storage) => Ok(storage),
             Err(error) => {
-                // A malformed (or externally locked) database used to abort startup with no
-                // recovery path. Snapshots and caches are all rebuildable from providers, so set
-                // the file aside and start fresh rather than refusing to launch.
+                // Quarantine only on SQLite-reported corruption. Transient failures (an
+                // externally locked file, a full disk during WAL recovery) must surface as
+                // errors instead of moving settings aside: unlike cached snapshots, settings
+                // are not rebuildable, so a false-positive here looks like a total wipe.
+                if !Self::is_database_corruption(&error) {
+                    return Err(error);
+                }
                 if !Self::quarantine_corrupt_database(path) {
                     return Err(error);
                 }
@@ -75,6 +79,18 @@ impl Storage {
                 Self::open_at(path)
             }
         }
+    }
+
+    /// True only when the open failure is a corruption class SQLite cannot recover from on its
+    /// own; busy/locked, I/O, and full-disk errors must not quarantine the database.
+    fn is_database_corruption(error: &StorageError) -> bool {
+        let StorageError::Database(rusqlite::Error::SqliteFailure(library, _)) = error else {
+            return false;
+        };
+        matches!(
+            library.code,
+            rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+        )
     }
 
     /// Moves an unopenable database (and its WAL/SHM sidecars) aside so a fresh one can be created.

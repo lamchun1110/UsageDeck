@@ -81,8 +81,9 @@ impl From<KimiError> for ProviderError {
             KimiError::MissingKey | KimiError::InvalidKey => ProviderErrorKind::Authentication,
             KimiError::ConnectionFailed => ProviderErrorKind::Network,
             KimiError::RequestFailed(429) => ProviderErrorKind::RateLimited,
-            KimiError::RequestFailed(401) => ProviderErrorKind::Authentication,
-            KimiError::RequestFailed(403) => ProviderErrorKind::Permission,
+            // Aligned with the other API-key providers: a forbidden key is an
+            // account/credential problem, not a separate plan-permission state.
+            KimiError::RequestFailed(401 | 403) => ProviderErrorKind::Authentication,
             KimiError::RequestFailed(_) | KimiError::InvalidResponse => {
                 ProviderErrorKind::InvalidResponse
             }
@@ -326,7 +327,7 @@ mod tests {
         )
         .refresh()
         .unwrap_err();
-        assert_eq!(forbidden.kind(), ProviderErrorKind::Permission);
+        assert_eq!(forbidden.kind(), ProviderErrorKind::Authentication);
 
         let rate_limited = KimiProvider::with_dependencies(
             auth(Some("limited-secret")),

@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -15,6 +15,29 @@ use tempfile::NamedTempFile;
 
 use super::GrokError;
 use crate::providers::paths::home_directory;
+
+/// Auth files are small JSON documents; the cap keeps a huge file, FIFO, or
+/// symlinked device from stalling the refresh worker, matching the other
+/// local-credential readers.
+const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
+
+/// Reads the auth file bounded by [`MAX_AUTH_FILE_BYTES`]; `None` on any error,
+/// including non-regular files and oversized content.
+fn read_auth_file(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_AUTH_FILE_BYTES {
+        return None;
+    }
+    let mut text = String::with_capacity(metadata.len() as usize);
+    file.take(MAX_AUTH_FILE_BYTES + 1)
+        .read_to_string(&mut text)
+        .ok()?;
+    if text.len() as u64 > MAX_AUTH_FILE_BYTES {
+        return None;
+    }
+    Some(text)
+}
 
 const DEFAULT_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const REFRESH_BUFFER_MINUTES: i64 = 5;
@@ -76,7 +99,7 @@ impl GrokAuthStore {
         if !self.path.is_file() {
             return Err(GrokError::NotLoggedIn);
         }
-        let text = fs::read_to_string(&self.path).map_err(|_| GrokError::InvalidAuth)?;
+        let text = read_auth_file(&self.path).ok_or(GrokError::InvalidAuth)?;
         let document = parse_auth_document(&text).ok_or(GrokError::InvalidAuth)?;
         let entries = document.as_object().ok_or(GrokError::InvalidAuth)?;
         let candidates = entries
@@ -158,7 +181,7 @@ impl GrokAuthStore {
     /// retained. A present but unreadable file is never rebuilt from stale in-memory state.
     pub fn save(&self, state: &mut GrokAuthState) -> Result<(), GrokError> {
         let mut document = if self.path.exists() {
-            let text = fs::read_to_string(&self.path).map_err(|_| GrokError::InvalidAuth)?;
+            let text = read_auth_file(&self.path).ok_or(GrokError::InvalidAuth)?;
             parse_auth_document(&text).ok_or(GrokError::InvalidAuth)?
         } else {
             state.document.clone()

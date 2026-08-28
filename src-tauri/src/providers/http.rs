@@ -49,6 +49,21 @@ const RATE_LIMIT_DEFAULT_COOLDOWN: Duration = Duration::from_secs(60);
 /// cannot park a provider for hours.
 const RATE_LIMIT_MAX_COOLDOWN: Duration = Duration::from_secs(600);
 
+/// Parses the `Retry-After` header: delay seconds or an HTTP-date (RFC 2822),
+/// as sent by some gateways. A past date cools down for zero seconds.
+fn parse_retry_after(value: &str) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let date = chrono::DateTime::parse_from_rfc2822(value).ok()?.to_utc();
+    let milliseconds = date
+        .signed_duration_since(chrono::Utc::now())
+        .num_milliseconds()
+        .max(0) as u64;
+    Some(Duration::from_secs(milliseconds.div_ceil(1000)))
+}
+
 fn cooldowns() -> &'static Mutex<HashMap<String, Instant>> {
     static COOLDOWNS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
     COOLDOWNS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -169,8 +184,7 @@ pub(crate) fn get_json(
                 .headers()
                 .get("Retry-After")
                 .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok())
-                .map(Duration::from_secs);
+                .and_then(parse_retry_after);
             let cooldown = record_rate_limit(provider, api_key, retry_after);
             crate::app_warn!(
                 "http",
@@ -219,6 +233,27 @@ fn is_transient(status: StatusCode) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parse_retry_after_accepts_seconds_and_http_dates() {
+        assert_eq!(
+            super::parse_retry_after("120"),
+            Some(Duration::from_secs(120))
+        );
+        let future = (chrono::Utc::now() + chrono::Duration::seconds(90))
+            .format("%a, %d %b %Y %H:%M:%S GMT")
+            .to_string();
+        let parsed = super::parse_retry_after(&future).map(|d| d.as_secs());
+        assert!(
+            parsed.is_some_and(|secs| (85..=90).contains(&secs)),
+            "{parsed:?}"
+        );
+        assert_eq!(
+            super::parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT"),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(super::parse_retry_after("garbage"), None);
+    }
+
     use std::time::Duration;
 
     use super::{client, get_json, rate_limit_remaining};

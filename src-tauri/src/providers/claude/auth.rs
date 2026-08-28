@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -15,6 +15,29 @@ use crate::{
 
 use super::ClaudeError;
 use crate::providers::paths::home_directory;
+
+/// Credential files are small JSON documents; the cap keeps a huge file, FIFO,
+/// or symlinked device from stalling the refresh worker, matching the other
+/// local-credential readers.
+const MAX_CREDENTIAL_FILE_BYTES: u64 = 1024 * 1024;
+
+/// Reads a credential file bounded by [`MAX_CREDENTIAL_FILE_BYTES`]; `None` on
+/// any error, including non-regular files and oversized content.
+fn read_bounded(path: &Path) -> Option<Vec<u8>> {
+    let file = fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_CREDENTIAL_FILE_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_CREDENTIAL_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_CREDENTIAL_FILE_BYTES {
+        return None;
+    }
+    Some(bytes)
+}
 
 const DEFAULT_API_BASE: &str = "https://api.anthropic.com";
 const DEFAULT_REFRESH_URL: &str = "https://platform.claude.com/v1/oauth/token";
@@ -338,8 +361,7 @@ fn load_candidates_with_environment(
 ) -> Vec<ClaudeCredential> {
     let file = {
         let path = credential_path(scope);
-        fs::read(&path)
-            .ok()
+        read_bounded(&path)
             .and_then(|bytes| parse_candidate(&bytes, CredentialSource::File(path), false))
     };
     let load_keychain = || {
@@ -411,7 +433,9 @@ fn load_candidates_with_environment(
 pub fn oauth_config() -> Result<ClaudeOAuthConfig, ClaudeError> {
     let (base, refresh_url, default_client_id, _) = resolved_oauth_settings();
     let usage_url = format!("{base}/api/oauth/usage");
-    validate_http_url(&usage_url)?;
+    // The bearer token is sent to both endpoints, so like the refresh URL the
+    // usage URL only allows cleartext HTTP on loopback; any other host needs HTTPS.
+    validate_http_url_with_loopback(&usage_url)?;
     validate_http_url_with_loopback(&refresh_url)?;
     Ok(ClaudeOAuthConfig {
         usage_url,
@@ -445,14 +469,6 @@ fn resolved_oauth_settings() -> (String, String, String, &'static str) {
         suffix = "-custom-oauth";
     }
     (base, refresh, client_id, suffix)
-}
-
-fn validate_http_url(value: &str) -> Result<(), ClaudeError> {
-    let url = reqwest::Url::parse(value).map_err(|_| ClaudeError::InvalidOAuthUrl)?;
-    if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
-        return Err(ClaudeError::InvalidOAuthUrl);
-    }
-    Ok(())
 }
 
 fn validate_http_url_with_loopback(value: &str) -> Result<(), ClaudeError> {
@@ -597,10 +613,23 @@ mod tests {
 
     use super::{
         has_desktop_app_material_at, load_candidates_with_environment, parse_credentials,
-        write_private_file_atomic, ClaudeCredential, ClaudeCredentialGeneration,
-        ClaudeCredentialScope, ClaudeCredentialsFile, ClaudeOAuth, CredentialSource,
+        validate_http_url_with_loopback, write_private_file_atomic, ClaudeCredential,
+        ClaudeCredentialGeneration, ClaudeCredentialScope, ClaudeCredentialsFile, ClaudeOAuth,
+        CredentialSource,
     };
     use crate::providers::claude::ClaudeError;
+
+    #[test]
+    fn oauth_urls_require_https_off_loopback() {
+        assert!(
+            validate_http_url_with_loopback("https://api.anthropic.com/v1/oauth/token").is_ok()
+        );
+        assert!(validate_http_url_with_loopback("http://localhost:8000/v1/oauth/token").is_ok());
+        assert!(validate_http_url_with_loopback("http://127.0.0.1:8000/v1/oauth/token").is_ok());
+        assert!(validate_http_url_with_loopback("http://example.com/v1/oauth/token").is_err());
+        assert!(validate_http_url_with_loopback("ftp://example.com").is_err());
+        assert!(validate_http_url_with_loopback("not a url").is_err());
+    }
 
     #[test]
     fn parses_claude_credentials_and_hex_fallback() {

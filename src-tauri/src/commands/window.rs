@@ -3,10 +3,10 @@ use tauri::{AppHandle, Manager};
 use crate::{
     desktop_integration::DesktopIntegration,
     window::{
-        finish_native_panel_resize, fit_panel_to_content as fit_native_panel_to_content,
-        hide_main_window, lock_native_panel_resize_axis, panel_resize_edge,
-        prepare_native_panel_resize, set_manual_panel_height, PanelHeightMode, PanelResizeEdge,
-        PanelResizeSession, MAIN_WINDOW,
+        current_logical_height, finish_native_panel_resize,
+        fit_panel_to_content as fit_native_panel_to_content, hide_main_window,
+        lock_native_panel_resize_axis, panel_resize_edge, prepare_native_panel_resize,
+        PanelHeightMode, PanelResizeEdge, PanelResizeSession, MAIN_WINDOW,
     },
 };
 
@@ -44,18 +44,34 @@ pub fn fit_panel_to_content(app: AppHandle, height: u32) -> Result<bool, String>
     fit_native_panel_to_content(&window, height.max(1))
 }
 
+// Like the other persistence-bearing commands, panel height changes write
+// through SQLite; run them on the blocking pool so a refresh-batch write
+// holding the storage mutex cannot freeze the panel on the main thread.
 #[tauri::command]
-pub fn set_panel_height_automatic(app: AppHandle) -> Result<(), String> {
-    app.state::<std::sync::Arc<PanelResizeSession>>()
-        .set_automatic()
+pub async fn set_panel_height_automatic(app: AppHandle) -> Result<(), String> {
+    let session = app
+        .state::<std::sync::Arc<PanelResizeSession>>()
+        .inner()
+        .clone();
+    tauri::async_runtime::spawn_blocking(move || session.set_automatic())
+        .await
+        .map_err(|_| "UsageDeck panel height mode could not be saved.".to_owned())?
 }
 
 #[tauri::command]
-pub fn set_panel_height_manual(app: AppHandle) -> Result<(), String> {
+pub async fn set_panel_height_manual(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window(MAIN_WINDOW)
         .ok_or("UsageDeck window is unavailable.")?;
-    set_manual_panel_height(&window)
+    let session = app
+        .state::<std::sync::Arc<PanelResizeSession>>()
+        .inner()
+        .clone();
+    let height = current_logical_height(&window.as_ref().window())
+        .ok_or("UsageDeck content size is unavailable.")?;
+    tauri::async_runtime::spawn_blocking(move || session.set_manual(height))
+        .await
+        .map_err(|_| "UsageDeck panel height could not be saved.".to_owned())?
 }
 
 #[tauri::command]
