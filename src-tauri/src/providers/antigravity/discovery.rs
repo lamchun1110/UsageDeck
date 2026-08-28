@@ -266,7 +266,7 @@ fn command_matches_process(command: &str, process_name: &str) -> bool {
     }
     let command = command.to_ascii_lowercase();
     if process_name.len() >= 8 {
-        executable.starts_with(&format!("{process_name}_")) || command.contains(&process_name)
+        executable.starts_with(&format!("{process_name}_"))
     } else {
         let normalized = command.replace('\\', "/");
         normalized.ends_with(&format!("/{process_name}"))
