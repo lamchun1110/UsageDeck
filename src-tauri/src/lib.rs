@@ -207,18 +207,69 @@ fn spawn_status_notifier_monitor(app: AppHandle) {
     if std::thread::Builder::new()
         .name("usagedeck-tray-monitor".to_owned())
         .spawn(move || {
-            if let Err(error) = desktop_integration::wait_for_status_notifier_loss() {
-                app_warn!("lifecycle", "system tray monitor stopped: {error}");
-            }
-            let fallback_app = monitor_app.clone();
-            if monitor_app
-                .run_on_main_thread(move || apply_linux_tray_fallback(&fallback_app))
-                .is_err()
-            {
-                app_warn!(
-                    "lifecycle",
-                    "standalone tray fallback could not be scheduled"
-                );
+            loop {
+                match desktop_integration::wait_for_status_notifier_loss() {
+                    // A true loss: the watcher's owner went away. Keep the
+                    // current behavior (log + standalone fallback).
+                    Ok(()) => {
+                        let fallback_app = monitor_app.clone();
+                        if monitor_app
+                            .run_on_main_thread(move || {
+                                apply_linux_tray_fallback(&fallback_app)
+                            })
+                            .is_err()
+                        {
+                            app_warn!(
+                                "lifecycle",
+                                "standalone tray fallback could not be scheduled"
+                            );
+                        }
+                        return;
+                    }
+                    // The signal stream ended without a loss event — a
+                    // session-bus restart can do this while the watcher stays
+                    // registered. Re-probe; if still registered, restart the
+                    // monitor instead of permanently floating the session.
+                    Err(error) if error.contains("watcher signal stream ended") => {
+                        if desktop_integration::probe_status_notifier_watcher_available() {
+                            crate::app_debug!(
+                                "lifecycle",
+                                "StatusNotifier monitor stream ended; watcher still registered, restarting monitor"
+                            );
+                            continue;
+                        }
+                        app_warn!("lifecycle", "system tray monitor stopped: {error}");
+                        let fallback_app = monitor_app.clone();
+                        if monitor_app
+                            .run_on_main_thread(move || {
+                                apply_linux_tray_fallback(&fallback_app)
+                            })
+                            .is_err()
+                        {
+                            app_warn!(
+                                "lifecycle",
+                                "standalone tray fallback could not be scheduled"
+                            );
+                        }
+                        return;
+                    }
+                    Err(error) => {
+                        app_warn!("lifecycle", "system tray monitor stopped: {error}");
+                        let fallback_app = monitor_app.clone();
+                        if monitor_app
+                            .run_on_main_thread(move || {
+                                apply_linux_tray_fallback(&fallback_app)
+                            })
+                            .is_err()
+                        {
+                            app_warn!(
+                                "lifecycle",
+                                "standalone tray fallback could not be scheduled"
+                            );
+                        }
+                        return;
+                    }
+                }
             }
         })
         .is_err()
