@@ -105,8 +105,49 @@ fn hosted_cost_sql(has_parts: bool) -> String {
 }
 
 fn open_read_only(path: &Path) -> Result<Connection, ()> {
-    let connection = Connection::open_with_flags(
+    match Connection::open_with_flags(
         path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .and_then(|connection| {
+        connection.busy_timeout(Duration::from_millis(150))?;
+        Ok(connection)
+    }) {
+        Ok(connection) => Ok(connection),
+        Err(_) => {
+            // A foreign WAL-mode database whose -shm was cleaned up after an
+            // unclean shutdown cannot be opened read-only (it would need to
+            // recreate the shm). Read temp copies of db + wal instead.
+            crate::app_debug!(
+                "opencode",
+                "foreign database read-only open failed; retrying from temp copies"
+            );
+            open_temp_copy(path)
+        }
+    }
+}
+
+fn open_temp_copy(path: &Path) -> Result<Connection, ()> {
+    let directory = path.parent().ok_or(())?.to_path_buf();
+    let prefix = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("opencode");
+    let mut primary = tempfile::Builder::new()
+        .prefix(&format!("{prefix}-"))
+        .suffix(".db")
+        .tempfile_in(&directory)
+        .map_err(|_| ())?;
+    std::fs::copy(path, primary.path()).map_err(|_| ())?;
+    let wal_source = path.with_extension("db-wal");
+    if wal_source.is_file() {
+        use std::io::Write;
+        let wal_dest = primary.path().with_extension("db-wal");
+        std::fs::copy(&wal_source, &wal_dest).map_err(|_| ())?;
+        primary.flush().map_err(|_| ())?;
+    }
+    let connection = Connection::open_with_flags(
+        primary.path(),
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|_| ())?;
@@ -261,9 +302,20 @@ fn load_parts(
     } else {
         String::new()
     };
+    // Only step-finish parts carry hosted cost carriers; text, reasoning,
+    // and tool-call parts cannot contribute and on a heavy user constitute
+    // the bulk of the 33-day window. Filtering in SQL keeps the bulk out of
+    // the SQLite boundary and avoids paging+JSON-parsing it per refresh.
+    let part_filter =
+        "json_extract(p.data,'$.type') IN ('step-finish','step_finish') AND json_valid(p.data)";
+    let where_keyword = if filter.is_empty() {
+        " WHERE "
+    } else {
+        " AND "
+    };
     let sql = format!(
         "SELECT p.message_id, p.data FROM part p \
-         INNER JOIN message m ON m.id = p.message_id{filter}"
+         INNER JOIN message m ON m.id = p.message_id{filter}{where_keyword}{part_filter}"
     );
     let mut statement = connection.prepare(&sql).map_err(|_| ())?;
     let mut rows = if schema.message_time_created || part_schema.time_created {
