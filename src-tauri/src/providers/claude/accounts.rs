@@ -344,6 +344,21 @@ fn observe_default(home: &Path, config: Option<&str>) -> DefaultAccount {
         }
         Err(_) => return DefaultAccount::Unresolved,
     };
+    let state = match state {
+        Some(value) => Some(value),
+        None => {
+            // Claude CLI rewrites .claude.json via atomic replace — a
+            // concurrent read can catch a torn file. Retry once after the
+            // writer settles; an unreadable file still falls through to the
+            // unresolved state, but an account-identity parse failure is no
+            // longer enough to suppress every card for one cycle.
+            std::thread::sleep(std::time::Duration::from_millis(35));
+            match fs::read(&identity_path) {
+                Ok(bytes) => parse_identity(&bytes),
+                Err(_) => return DefaultAccount::Unresolved,
+            }
+        }
+    };
     state
         .map(|(identity, label)| DefaultAccount::Resolved { identity, label })
         .unwrap_or(DefaultAccount::Unresolved)

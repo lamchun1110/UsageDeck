@@ -91,10 +91,33 @@ fn supports_in_app_install_for(is_linux: bool, appimage_present: bool) -> bool {
     !is_linux || appimage_present
 }
 
-fn classify_updater_error(error: &UpdaterError, operation: &'static str) -> UpdateFailure {
+fn status_in_error(error: &UpdaterError) -> Option<u16> {
     let detail = error.to_string();
+    // The tauri-plugin-updater formats its transport errors as "...failed
+    // with status: 403" and similar; a bare "...: 403" fallback catches
+    // Reqwest-based variants. A version like "1.403.0" is not matched.
     let normalized = detail.to_ascii_lowercase();
-    if normalized.contains("403") || normalized.contains("forbidden") {
+    for keyword in ["failed with status:", "status:", "status code:"] {
+        if let Some(marker) = normalized.find(keyword) {
+            let rest = normalized[marker + keyword.len()..].trim_start();
+            let digits = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_digit())
+                .collect::<String>();
+            if let Ok(code) = digits.parse::<u16>() {
+                if (100..=599).contains(&code) {
+                    return Some(code);
+                }
+            }
+        }
+    }
+    // No structured status: fall back to gateway codes only when the body
+    // literally calls them out; 403/429 are handled via status extraction.
+    None
+}
+
+fn classify_updater_error(error: &UpdaterError, operation: &'static str) -> UpdateFailure {
+    if status_in_error(error) == Some(403) {
         return UpdateFailure::new(
             "download_forbidden",
             "GitHub refused the update download.",
@@ -102,7 +125,7 @@ fn classify_updater_error(error: &UpdaterError, operation: &'static str) -> Upda
             true,
         );
     }
-    if normalized.contains("429") || normalized.contains("rate limit") {
+    if status_in_error(error) == Some(429) {
         return UpdateFailure::new(
             "rate_limited",
             "GitHub temporarily limited update requests.",
@@ -138,13 +161,10 @@ fn classify_updater_error(error: &UpdaterError, operation: &'static str) -> Upda
 }
 
 fn retryable_download_error(error: &UpdaterError) -> bool {
-    let detail = error.to_string().to_ascii_lowercase();
-    matches!(error, UpdaterError::Reqwest(_) | UpdaterError::Network(_))
-        || detail.contains("403")
-        || detail.contains("429")
-        || detail.contains("502")
-        || detail.contains("503")
-        || detail.contains("504")
+    if matches!(error, UpdaterError::Reqwest(_) | UpdaterError::Network(_)) {
+        return true;
+    }
+    matches!(status_in_error(error), Some(403 | 429 | 502 | 503 | 504))
 }
 
 async fn download_and_install_once(app: &AppHandle, update: &Update) -> Result<(), UpdaterError> {

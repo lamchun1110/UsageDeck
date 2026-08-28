@@ -856,6 +856,17 @@ impl AppSettings {
     }
 }
 
+/// The OS notification authorization state. Typed as an enum so the wire
+/// contract with the frontend's union type is guaranteed, not assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NotificationPermission {
+    Granted,
+    Denied,
+    Prompt,
+    Unavailable,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsViewState {
@@ -863,7 +874,7 @@ pub struct SettingsViewState {
     pub settings_revision: u64,
     pub account_revision: u64,
     pub renamable_provider_ids: Vec<String>,
-    pub notification_permission: String,
+    pub notification_permission: NotificationPermission,
     pub integration_error: Option<String>,
     pub tray_available: bool,
     pub platform_summary: Option<String>,
@@ -876,6 +887,23 @@ mod tests {
         ProviderErrorKind, ProviderLink, ProviderSnapshot, ProviderViewState, UsagePeriod,
         WindowMode,
     };
+
+    #[test]
+    fn notification_permission_serializes_as_the_frontend_union_literals() {
+        use super::NotificationPermission;
+        for (value, expected) in [
+            (NotificationPermission::Granted, "\"granted\""),
+            (NotificationPermission::Denied, "\"denied\""),
+            (NotificationPermission::Prompt, "\"prompt\""),
+            (NotificationPermission::Unavailable, "\"unavailable\""),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&value).unwrap(),
+                expected,
+                "the frontend's notificationPermission union depends on these literals"
+            );
+        }
+    }
 
     #[test]
     fn older_settings_default_new_update_state_fields() {

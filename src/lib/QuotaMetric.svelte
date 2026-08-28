@@ -36,7 +36,12 @@
     onToggleUsage,
     onToggleReset,
   }: Props = $props();
-  const used = $derived(Math.min(100, Math.max(0, quota.usedPercent)));
+  // A non-finite percent (a provider regression) must not leak into the
+  // reading, aria values, or the fill style; clamp cannot catch NaN, so it is
+  // filtered before anything downstream consumes it.
+  const used = $derived(
+    Number.isFinite(quota.usedPercent) ? Math.min(100, Math.max(0, quota.usedPercent)) : 0,
+  );
   const remaining = $derived(Math.max(0, 100 - used));
   const countUnit = $derived(quota.unit?.trim() || t('quota.requests'));
   const usedWord = $derived(t('quota.used'));

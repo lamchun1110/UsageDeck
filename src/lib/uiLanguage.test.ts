@@ -48,9 +48,12 @@ describe('native UI language contract', () => {
     expect(customizeList).not.toContain('screen-intro');
     expect(customizeList).not.toContain('pinned\n');
     expect(customizeDetail).toContain('Drag metrics here');
-    expect(customizeDetail).toContain('Starred for menu bar');
-    expect(customizeDetail).toContain('Removed from menu bar');
-    expect(customizeDetail).toContain('Up to 2 stars per provider');
+    expect(customizeDetail).toContain("t('customize.starred')");
+    expect(enMessages).toContain("'customize.starred': 'Starred for menu bar'");
+    expect(customizeDetail).toContain("t('customize.unstarred')");
+    expect(enMessages).toContain("'customize.unstarred': 'Removed from menu bar'");
+    expect(customizeDetail).toContain("t('customize.starsLimit')");
+    expect(enMessages).toContain("'customize.starsLimit': 'Up to 2 stars per provider'");
     expect(customizeDetail).not.toContain('provider-toggle-row');
     expect(customizeDetail).not.toContain('section-divider');
     expect(customizeDetail).not.toContain('of 2 pinned');
@@ -97,11 +100,16 @@ describe('native UI language contract', () => {
   });
 
   it('keeps dashboard onboarding, empty state, and menus on the shared wording', () => {
-    expect(dashboard).toContain('Welcome to UsageDeck');
-    expect(dashboard).toContain('Open Customize');
-    expect(dashboard).toContain('Turn on Customize to choose what to show.');
-    expect(dashboard).toContain('Customize…');
-    expect(dashboard).toContain('Refresh {providerDisplayName(menuProvider.id)}');
+    expect(dashboard).toContain("t('dashboard.welcome.title')");
+    expect(dashboard).toContain("t('dashboard.welcome.openCustomize')");
+    expect(dashboard).toContain("t('dashboard.empty')");
+    expect(dashboard).toContain("t('dashboard.menu.customize')");
+    expect(dashboard).toContain("t('dashboard.menu.refreshProvider', {");
+    // The English catalog carries the canonical wording these surfaces show.
+    expect(enMessages).toContain("'dashboard.welcome.title': 'Welcome to UsageDeck'");
+    expect(enMessages).toContain("'dashboard.welcome.openCustomize': 'Open Customize'");
+    expect(enMessages).toContain("'dashboard.empty': 'Turn on Customize to choose what to show.'");
+    expect(enMessages).toContain("'dashboard.menu.customize': 'Customize…'");
     expect(dashboard).not.toContain('Providers Detected');
     expect(dashboard).not.toContain('Starter Provider');
     expect(dashboard).not.toContain("Expand'} On Demand");

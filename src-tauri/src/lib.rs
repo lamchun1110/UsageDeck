@@ -207,18 +207,69 @@ fn spawn_status_notifier_monitor(app: AppHandle) {
     if std::thread::Builder::new()
         .name("usagedeck-tray-monitor".to_owned())
         .spawn(move || {
-            if let Err(error) = desktop_integration::wait_for_status_notifier_loss() {
-                app_warn!("lifecycle", "system tray monitor stopped: {error}");
-            }
-            let fallback_app = monitor_app.clone();
-            if monitor_app
-                .run_on_main_thread(move || apply_linux_tray_fallback(&fallback_app))
-                .is_err()
-            {
-                app_warn!(
-                    "lifecycle",
-                    "standalone tray fallback could not be scheduled"
-                );
+            loop {
+                match desktop_integration::wait_for_status_notifier_loss() {
+                    // A true loss: the watcher's owner went away. Keep the
+                    // current behavior (log + standalone fallback).
+                    Ok(()) => {
+                        let fallback_app = monitor_app.clone();
+                        if monitor_app
+                            .run_on_main_thread(move || {
+                                apply_linux_tray_fallback(&fallback_app)
+                            })
+                            .is_err()
+                        {
+                            app_warn!(
+                                "lifecycle",
+                                "standalone tray fallback could not be scheduled"
+                            );
+                        }
+                        return;
+                    }
+                    // The signal stream ended without a loss event — a
+                    // session-bus restart can do this while the watcher stays
+                    // registered. Re-probe; if still registered, restart the
+                    // monitor instead of permanently floating the session.
+                    Err(error) if error.contains("watcher signal stream ended") => {
+                        if desktop_integration::probe_status_notifier_watcher_available() {
+                            crate::app_debug!(
+                                "lifecycle",
+                                "StatusNotifier monitor stream ended; watcher still registered, restarting monitor"
+                            );
+                            continue;
+                        }
+                        app_warn!("lifecycle", "system tray monitor stopped: {error}");
+                        let fallback_app = monitor_app.clone();
+                        if monitor_app
+                            .run_on_main_thread(move || {
+                                apply_linux_tray_fallback(&fallback_app)
+                            })
+                            .is_err()
+                        {
+                            app_warn!(
+                                "lifecycle",
+                                "standalone tray fallback could not be scheduled"
+                            );
+                        }
+                        return;
+                    }
+                    Err(error) => {
+                        app_warn!("lifecycle", "system tray monitor stopped: {error}");
+                        let fallback_app = monitor_app.clone();
+                        if monitor_app
+                            .run_on_main_thread(move || {
+                                apply_linux_tray_fallback(&fallback_app)
+                            })
+                            .is_err()
+                        {
+                            app_warn!(
+                                "lifecycle",
+                                "standalone tray fallback could not be scheduled"
+                            );
+                        }
+                        return;
+                    }
+                }
             }
         })
         .is_err()
@@ -230,9 +281,10 @@ fn spawn_status_notifier_monitor(app: AppHandle) {
 
 /// One-time legacy OpenQuota → UsageDeck migrations: the in-place database
 /// rename (ahead of the copy pass so a user's own newer file wins), the data
-/// directory copy, and credential-store re-keying. All steps are best-effort
-/// and logged; none may block startup.
-fn migrate_legacy_data(app_data_dir: &std::path::Path) {
+/// directory copy, and credential-store re-keying. Directory and credential
+/// copies are best-effort; an incomplete in-place database rename aborts
+/// startup so a new database cannot mask retryable legacy data.
+fn migrate_legacy_data(app_data_dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     match migration::rename_legacy_database(app_data_dir) {
         Ok(true) => {
             app_info!(
@@ -241,9 +293,10 @@ fn migrate_legacy_data(app_data_dir: &std::path::Path) {
             );
         }
         Ok(false) => {}
-        Err(error) => {
-            app_warn!("lifecycle", "legacy database rename failed: {error}");
-        }
+        // Do not continue into Storage::open after an incomplete in-place
+        // database migration: that would create a fresh current database and
+        // permanently mask the still-retryable legacy database on next launch.
+        Err(error) => return Err(std::io::Error::other(error).into()),
     }
     let data_migration = migration::migrate_app_data(app_data_dir);
     for copied in &data_migration.copied {
@@ -266,6 +319,7 @@ fn migrate_legacy_data(app_data_dir: &std::path::Path) {
             "API key migration failed for {account}: {error}"
         );
     }
+    Ok(())
 }
 
 /// Opens the database, restores the persisted provider environment, and wires
@@ -561,7 +615,7 @@ pub fn run() {
             app.manage(desktop_integration.clone());
 
             let app_data_dir = app.path().app_data_dir()?;
-            migrate_legacy_data(&app_data_dir);
+            migrate_legacy_data(&app_data_dir)?;
             let storage = open_application_storage(app, &app_data_dir)?;
             let pricing = Arc::new(PricingStore::new(app_data_dir.join("pricing"))?);
             let registry = build_provider_registry(&app_data_dir, &storage, &pricing)?;
@@ -624,6 +678,7 @@ pub fn run() {
             commands::usage::quota_history,
             commands::settings::get_app_settings,
             commands::settings::save_app_settings,
+            commands::settings::record_update_check,
             commands::settings::reset_customization,
             commands::settings::reset_all_settings,
             commands::settings::reset_provider_customization,

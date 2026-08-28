@@ -53,6 +53,24 @@ function showAlways(value: QuotaWindow) {
   });
 }
 
+describe('non-finite percents', () => {
+  it('renders a flat full gauge instead of NaN', () => {
+    const { container } = show(quota(Number.NaN));
+    const fill = container.querySelector<HTMLElement>('.meter__fill');
+    expect(fill).toHaveStyle('--fill-percent: 100%');
+    expect(fill?.getAttribute('style')).not.toContain('NaN');
+    const button = screen.getByRole('button', { name: '100% left' });
+    expect(button.textContent).not.toContain('NaN');
+  });
+
+  it('renders a flat full gauge for infinity', () => {
+    const { container } = show(quota(Number.POSITIVE_INFINITY));
+    expect(container.querySelector<HTMLElement>('.meter__fill')).toHaveStyle(
+      '--fill-percent: 100%',
+    );
+  });
+});
+
 describe('quota pacing presentation', () => {
   it('shows the flame, run-out time, and projection tooltip', async () => {
     const onToggleReset = vi.fn();

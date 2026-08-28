@@ -19,6 +19,22 @@ if (missingCommands.length > 0) {
   throw new Error(`Frontend invokes unregistered Tauri commands: ${missingCommands.join(', ')}`);
 }
 
+// Commands the frontend never invokes are dead registrations unless something
+// else drives them; list each exception here with its driver.
+const rustDrivenCommands = new Set([
+  // None today: the tray menu and refresh loop call shared helpers directly
+  // rather than the #[tauri::command] wrappers.
+]);
+const deadCommands = [...registeredCommands].filter(
+  (command) => !invokedCommands.has(command) && !rustDrivenCommands.has(command),
+);
+if (deadCommands.length > 0) {
+  throw new Error(
+    `Registered Tauri commands the frontend never invokes: ${deadCommands.join(', ')}`,
+  );
+}
+
 console.log(
-  `${invokedCommands.size} frontend Tauri commands match registered Rust command handlers.`,
+  `${invokedCommands.size} frontend Tauri commands match registered Rust command handlers ` +
+    `(no dead registrations).`,
 );

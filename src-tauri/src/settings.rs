@@ -652,6 +652,28 @@ impl SettingsService {
         self.credential_revision.fetch_add(1, Ordering::SeqCst);
     }
 
+    /// Stamps the update-check timestamp without a full settings save. The
+    /// periodic auto-check used to ride the whole save pipeline — shortcut,
+    /// autostart, and window-mode side effects included — and could race a
+    /// user edit into a spurious revision conflict.
+    pub fn record_update_check(
+        &self,
+        checked_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), StorageError> {
+        let _commit = self.commit.lock().map_err(|_| StorageError::Poisoned)?;
+        let mut next = self
+            .settings
+            .read()
+            .map_err(|_| StorageError::Poisoned)?
+            .as_ref()
+            .clone();
+        next.last_update_check_at = Some(checked_at);
+        self.storage.save_settings(&next)?;
+        *self.settings.write().map_err(|_| StorageError::Poisoned)? = Arc::new(next);
+        self.settings_revision.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
     pub fn reconcile_provider_credential_state(
         &self,
         provider_id: &str,
@@ -707,7 +729,7 @@ impl SettingsService {
 
     pub fn view_state(
         &self,
-        notification_permission: impl Into<String>,
+        notification_permission: crate::models::NotificationPermission,
         integration_error: Option<String>,
         tray_available: bool,
         platform_summary: Option<String>,
@@ -728,7 +750,7 @@ impl SettingsService {
             settings_revision,
             account_revision,
             renamable_provider_ids,
-            notification_permission: notification_permission.into(),
+            notification_permission,
             integration_error,
             tray_available,
             platform_summary,
@@ -1522,7 +1544,12 @@ mod tests {
         drop(first);
 
         let (second, _) = SettingsService::new_deferred(storage, registry).unwrap();
-        let state = second.view_state("prompt", None, false, None);
+        let state = second.view_state(
+            crate::models::NotificationPermission::Prompt,
+            None,
+            false,
+            None,
+        );
 
         assert_eq!(
             state
@@ -1704,7 +1731,12 @@ mod tests {
         assert_eq!(service.settings_revision(), revision);
         assert_eq!(
             service
-                .view_state("prompt", None, true, None)
+                .view_state(
+                    crate::models::NotificationPermission::Prompt,
+                    None,
+                    true,
+                    None
+                )
                 .settings_revision,
             revision
         );

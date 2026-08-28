@@ -480,6 +480,10 @@ fn aggregate_into(
     let mut seen = HashSet::new();
 
     for event in events {
+        // The exact-tuple key must not collapse events from distinct sessions
+        // whose replay happened to share a timestamp — an archived/active
+        // mirror pair is the only intended hit, and even there the tier
+        // distinguishes a cached fast turn from a placement variant.
         let key = (
             event.timestamp,
             event.model.clone(),
@@ -488,6 +492,7 @@ fn aggregate_into(
             event.output,
             event.reasoning,
             event.total,
+            event.is_fast,
         );
         if !seen.insert(key) {
             continue;

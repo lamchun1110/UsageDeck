@@ -412,7 +412,7 @@ pub fn oauth_config() -> Result<ClaudeOAuthConfig, ClaudeError> {
     let (base, refresh_url, default_client_id, _) = resolved_oauth_settings();
     let usage_url = format!("{base}/api/oauth/usage");
     validate_http_url(&usage_url)?;
-    validate_http_url(&refresh_url)?;
+    validate_http_url_with_loopback(&refresh_url)?;
     Ok(ClaudeOAuthConfig {
         usage_url,
         refresh_url,
@@ -451,6 +451,25 @@ fn validate_http_url(value: &str) -> Result<(), ClaudeError> {
     let url = reqwest::Url::parse(value).map_err(|_| ClaudeError::InvalidOAuthUrl)?;
     if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
         return Err(ClaudeError::InvalidOAuthUrl);
+    }
+    Ok(())
+}
+
+fn validate_http_url_with_loopback(value: &str) -> Result<(), ClaudeError> {
+    let url = reqwest::Url::parse(value).map_err(|_| ClaudeError::InvalidOAuthUrl)?;
+    match url.scheme() {
+        "https" => {
+            if url.host().is_none() {
+                return Err(ClaudeError::InvalidOAuthUrl);
+            }
+        }
+        "http" => {
+            let host = url.host_str().unwrap_or("");
+            if !matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]") {
+                return Err(ClaudeError::InvalidOAuthUrl);
+            }
+        }
+        _ => return Err(ClaudeError::InvalidOAuthUrl),
     }
     Ok(())
 }
