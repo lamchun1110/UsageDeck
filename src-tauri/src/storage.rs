@@ -36,8 +36,15 @@ pub struct Storage {
     /// Dedicated read-only path. WAL mode allows readers to proceed while a
     /// writer commits, but only through separate connections — routing reads
     /// here keeps UI-facing queries from queueing behind snapshot saves on
-    /// the write connection's mutex.
-    reader_connection: Mutex<Connection>,
+    /// the write connection's mutex. A failure to open the second connection
+    /// (fd exhaustion, an AV scan lock) degrades to sharing the writer
+    /// instead of failing `open_at`, whose errors quarantine the database.
+    reader_connection: ReaderConnection,
+}
+
+enum ReaderConnection {
+    Dedicated(Mutex<Connection>),
+    Shared,
 }
 
 pub struct ProviderAccountUpdate {
@@ -221,16 +228,30 @@ impl Storage {
                 "dead daily_usage table could not be dropped: {error}"
             );
         }
-        let reader_connection = Connection::open(path)?;
-        reader_connection.execute_batch(
+        let reader_connection = match Self::open_reader(path) {
+            Ok(reader) => ReaderConnection::Dedicated(Mutex::new(reader)),
+            Err(error) => {
+                crate::app_warn!(
+                    "storage",
+                    "dedicated read connection could not be opened; reads share the writer: {error}"
+                );
+                ReaderConnection::Shared
+            }
+        };
+        Ok(Self {
+            connection: Mutex::new(connection),
+            reader_connection,
+        })
+    }
+
+    fn open_reader(path: &Path) -> Result<Connection, StorageError> {
+        let reader = Connection::open(path)?;
+        reader.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA foreign_keys = ON;
              PRAGMA busy_timeout = 2000;",
         )?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-            reader_connection: Mutex::new(reader_connection),
-        })
+        Ok(reader)
     }
 
     #[cfg(test)]
@@ -810,11 +831,13 @@ impl Storage {
     }
 
     /// Lock for read-only queries. Separate from the write connection so WAL
-    /// readers never queue behind a snapshot save.
+    /// readers never queue behind a snapshot save; falls back to the writer
+    /// when the dedicated reader could not be opened.
     fn reader(&self) -> Result<MutexGuard<'_, Connection>, StorageError> {
-        self.reader_connection
-            .lock()
-            .map_err(|_| StorageError::Poisoned)
+        match &self.reader_connection {
+            ReaderConnection::Dedicated(mutex) => mutex.lock().map_err(|_| StorageError::Poisoned),
+            ReaderConnection::Shared => self.connection.lock().map_err(|_| StorageError::Poisoned),
+        }
     }
 
     fn has_column(
