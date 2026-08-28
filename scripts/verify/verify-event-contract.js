@@ -1,20 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const root = new URL('../../', import.meta.url);
 
 function readRustSources() {
-  const directory = new URL('src-tauri/src/', root);
+  // Walk real paths, not URL pathnames: pathname keeps a leading slash before
+  // the drive letter on Windows, which produced D:\D:\... joins.
+  const rustRoot = fileURLToPath(new URL('src-tauri/src/', root));
   const files = [];
   const walk = (folder) => {
     for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
       if (entry.name === 'tests') continue;
-      const full = path.join(folder.pathname, entry.name);
-      if (entry.isDirectory()) walk(new URL(`${entry.name}/`, folder));
+      const full = path.join(folder, entry.name);
+      if (entry.isDirectory()) walk(full);
       else if (entry.name.endsWith('.rs')) files.push(fs.readFileSync(full, 'utf8'));
     }
   };
-  walk(directory);
+  walk(rustRoot);
   return files.join('\n');
 }
 
