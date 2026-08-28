@@ -176,7 +176,12 @@ fn apply_linux_tray_fallback(app: &AppHandle) {
         "lifecycle",
         "system tray became unavailable; using standalone window"
     );
-    let _ = app.remove_tray_by_id("usagedeck-tray");
+    // The tray icon is deliberately left in place. Every caller reaches this
+    // fallback only after the StatusNotifierWatcher is confirmed gone, and
+    // destroying the status-notifier item against a dead watcher is the one
+    // native-teardown step in this window that can abort the process (the
+    // v0.7.1 release smoke hit a silent exit here once). An orphaned icon is
+    // harmless — it has no host to render it — and is freed with the process.
     app.state::<PopupDismissGuard>().cancel_pending();
 
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {

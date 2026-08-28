@@ -1,4 +1,4 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 #[cfg(not(target_os = "linux"))]
 use tauri::image::Image;
@@ -6,6 +6,7 @@ use tauri::image::Image;
 #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 use crate::tray_icon;
 use crate::{
+    desktop_integration::DesktopIntegration,
     models::{
         AppSettings, MetricDefinition, MetricSource, MetricValue, MetricValueKind,
         ProviderSnapshot, QuotaFormat, UsageDisplay, UsagePeriod, UsagePeriodSelection,
@@ -75,6 +76,13 @@ pub fn update(
     settings: &AppSettings,
     registry: &ProviderRegistry,
 ) {
+    // After the Linux tray-loss fallback the icon object is deliberately kept
+    // (destroying it against a dead StatusNotifierWatcher can abort the
+    // process), so its mere presence must not gate this update: touching the
+    // orphaned icon sends status-notifier calls to a host that is gone.
+    if !app.state::<DesktopIntegration>().tray_available() {
+        return;
+    }
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
