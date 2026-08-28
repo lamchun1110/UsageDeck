@@ -281,9 +281,10 @@ fn spawn_status_notifier_monitor(app: AppHandle) {
 
 /// One-time legacy OpenQuota → UsageDeck migrations: the in-place database
 /// rename (ahead of the copy pass so a user's own newer file wins), the data
-/// directory copy, and credential-store re-keying. All steps are best-effort
-/// and logged; none may block startup.
-fn migrate_legacy_data(app_data_dir: &std::path::Path) {
+/// directory copy, and credential-store re-keying. Directory and credential
+/// copies are best-effort; an incomplete in-place database rename aborts
+/// startup so a new database cannot mask retryable legacy data.
+fn migrate_legacy_data(app_data_dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     match migration::rename_legacy_database(app_data_dir) {
         Ok(true) => {
             app_info!(
@@ -292,9 +293,10 @@ fn migrate_legacy_data(app_data_dir: &std::path::Path) {
             );
         }
         Ok(false) => {}
-        Err(error) => {
-            app_warn!("lifecycle", "legacy database rename failed: {error}");
-        }
+        // Do not continue into Storage::open after an incomplete in-place
+        // database migration: that would create a fresh current database and
+        // permanently mask the still-retryable legacy database on next launch.
+        Err(error) => return Err(std::io::Error::other(error).into()),
     }
     let data_migration = migration::migrate_app_data(app_data_dir);
     for copied in &data_migration.copied {
@@ -317,6 +319,7 @@ fn migrate_legacy_data(app_data_dir: &std::path::Path) {
             "API key migration failed for {account}: {error}"
         );
     }
+    Ok(())
 }
 
 /// Opens the database, restores the persisted provider environment, and wires
@@ -612,7 +615,7 @@ pub fn run() {
             app.manage(desktop_integration.clone());
 
             let app_data_dir = app.path().app_data_dir()?;
-            migrate_legacy_data(&app_data_dir);
+            migrate_legacy_data(&app_data_dir)?;
             let storage = open_application_storage(app, &app_data_dir)?;
             let pricing = Arc::new(PricingStore::new(app_data_dir.join("pricing"))?);
             let registry = build_provider_registry(&app_data_dir, &storage, &pricing)?;

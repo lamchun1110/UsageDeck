@@ -150,7 +150,7 @@ fn status_notifier_host_available() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn probe_status_notifier_watcher_available() -> bool {
+pub(crate) fn probe_status_notifier_watcher_available() -> bool {
     probe_status_notifier_watcher_with_timeout(std::time::Duration::from_secs(3))
 }
 
@@ -158,7 +158,7 @@ fn probe_status_notifier_watcher_available() -> bool {
 fn probe_status_notifier_watcher_with_timeout(timeout: std::time::Duration) -> bool {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let available = {
+        let available = (|| {
             let Ok(connection) = zbus::blocking::Connection::session() else {
                 return false;
             };
@@ -170,7 +170,7 @@ fn probe_status_notifier_watcher_with_timeout(timeout: std::time::Duration) -> b
                     .iter()
                     .any(|name| name.as_str() == "org.kde.StatusNotifierWatcher")
             })
-        };
+        })();
         let _ = sender.send(available);
     });
     // A wedged or unreachable session bus must not park the setup thread

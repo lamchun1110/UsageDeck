@@ -190,8 +190,10 @@ pub fn rename_legacy_database(app_data_dir: &Path) -> Result<bool, String> {
     // ahead of the primary so an interrupted rename cannot strand them: a
     // sidecar already under the current name is picked up when the next launch
     // retries the primary, while the reverse order would leave the promoted
-    // database looking complete without its WAL. A sidecar that cannot move is
-    // reported rather than ignored — its transactions would be lost silently.
+    // database looking complete without its WAL. A sidecar that cannot move
+    // aborts the migration and rolls prior moves back so the next launch can
+    // retry without losing committed transactions.
+    let mut moved_sidecars = Vec::new();
     for suffix in ["-wal", "-shm"] {
         let source = app_data_dir.join(format!("{LEGACY_DATABASE_FILE}{suffix}"));
         if !source.is_file() {
@@ -199,15 +201,30 @@ pub fn rename_legacy_database(app_data_dir: &Path) -> Result<bool, String> {
         }
         let destination = app_data_dir.join(format!("{DATABASE_FILE}{suffix}"));
         if let Err(error) = fs::rename(&source, &destination) {
+            rollback_sidecar_renames(&moved_sidecars);
+            return Err(format!(
+                "{LEGACY_DATABASE_FILE}{suffix}: {error}; database migration was not completed"
+            ));
+        }
+        moved_sidecars.push((source, destination));
+    }
+    if let Err(error) = fs::rename(&legacy, app_data_dir.join(DATABASE_FILE)) {
+        rollback_sidecar_renames(&moved_sidecars);
+        return Err(format!("{LEGACY_DATABASE_FILE}: {error}"));
+    }
+    Ok(true)
+}
+
+fn rollback_sidecar_renames(moved: &[(PathBuf, PathBuf)]) {
+    for (source, destination) in moved.iter().rev() {
+        if let Err(error) = fs::rename(destination, source) {
             crate::app_warn!(
                 "migration",
-                "legacy database sidecar rename failed ({suffix}): {error}"
+                "legacy database sidecar rollback failed ({}): {error}",
+                destination.display()
             );
         }
     }
-    fs::rename(&legacy, app_data_dir.join(DATABASE_FILE))
-        .map_err(|error| format!("{LEGACY_DATABASE_FILE}: {error}"))?;
-    Ok(true)
 }
 
 fn copy_file_if_absent(
@@ -519,6 +536,26 @@ mod tests {
             );
             assert!(!directory.path().join(legacy_name).exists());
         }
+    }
+
+    #[test]
+    fn a_sidecar_rename_failure_keeps_the_primary_and_rolls_back_prior_sidecars() {
+        let directory = tempdir().unwrap();
+        for name in ["openquota.db", "openquota.db-wal", "openquota.db-shm"] {
+            std::fs::write(directory.path().join(name), name.as_bytes()).unwrap();
+        }
+        // The WAL moves first; blocking the SHM destination proves that a
+        // later sidecar failure restores the earlier move before returning.
+        std::fs::create_dir(directory.path().join("usagedeck.db-shm")).unwrap();
+
+        let result = rename_legacy_database(directory.path());
+
+        assert!(result.is_err());
+        for name in ["openquota.db", "openquota.db-wal", "openquota.db-shm"] {
+            assert!(directory.path().join(name).is_file());
+        }
+        assert!(!directory.path().join("usagedeck.db").exists());
+        assert!(!directory.path().join("usagedeck.db-wal").exists());
     }
 
     #[test]

@@ -119,10 +119,17 @@ pub fn map_live_usage(
             // plan_usage["remaining"] is an explicit per-plan field; when it
             // is absent, remaining defaults to 0 and fabricates used == limit
             // (100% consumed) out of nowhere.
-            let Some(remaining) = plan_usage.get("remaining").and_then(number) else {
-                return 0.0;
-            };
-            (facts.limit.unwrap_or_default() - remaining).max(0.0)
+            if let Some(remaining) = plan_usage.get("remaining").and_then(number) {
+                return (facts.limit.unwrap_or_default() - remaining).max(0.0);
+            }
+            // Some team payloads expose only the dollar limit and aggregate
+            // percentage. Preserve that measurement instead of replacing it
+            // with an authoritative-looking $0 used value.
+            facts
+                .limit
+                .zip(facts.total_percent_used)
+                .map(|(limit, percent)| limit * percent.max(0.0) / 100.0)
+                .unwrap_or_default()
         })
         .max(0.0);
     let computed_percent = facts
@@ -720,6 +727,21 @@ mod tests {
         assert_eq!(mapped.quotas[0].used_value, Some(125.0));
         assert_eq!(mapped.value_metrics[0].id, "onDemand");
         assert_eq!(mapped.value_metrics[0].values[0].number, 42.0);
+    }
+
+    #[test]
+    fn team_total_uses_percentage_when_spend_and_remaining_are_absent() {
+        let usage = json!({
+            "enabled": true,
+            "planUsage": {"limit": 40000, "totalPercentUsed": 25},
+            "spendLimitUsage": {"limitType": "team"}
+        });
+
+        let mapped = map_live_usage(&usage, Some("team"), None, 0.0).unwrap();
+
+        assert_eq!(mapped.quotas[0].format, QuotaFormat::Dollars);
+        assert_eq!(mapped.quotas[0].used_value, Some(100.0));
+        assert_eq!(mapped.quotas[0].limit_value, Some(400.0));
     }
 
     #[test]
