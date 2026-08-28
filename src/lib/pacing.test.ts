@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatLimit, formatReset, paceTooltip, projectPace } from './pacing';
+import { formatLimit, formatReset, formatResetParts, paceTooltip, projectPace } from './pacing';
 import type { QuotaWindow } from './types';
 
 const now = new Date('2026-07-10T12:00:00Z').getTime();
@@ -106,6 +106,20 @@ describe('quota pacing', () => {
     expect(formatReset(new Date(now + 72 * 60 * 60_000).toISOString(), now, 'exact')).toMatch(
       /^Resets .+ at /,
     );
+  });
+
+  it('exposes locale-independent deadline kinds for unprefixed reset text', () => {
+    expect(formatResetParts(new Date(now - 1).toISOString(), now, 'countdown')?.kind).toBe('soon');
+    expect(formatResetParts(new Date(now + 60 * 60_000).toISOString(), now, 'countdown')).toEqual({
+      kind: 'countdown',
+      text: 'in 1h',
+    });
+    const laterToday = new Date(now);
+    laterToday.setHours(23, 59, 0, 0);
+    const today = formatResetParts(laterToday.toISOString(), now, 'exact');
+    expect(today?.kind).toBe('today');
+    expect(today?.text).toContain('today at');
+    expect(formatResetParts('not-a-date', now, 'countdown')).toBeNull();
   });
 
   it('honors explicit 12-hour and 24-hour clock preferences', () => {

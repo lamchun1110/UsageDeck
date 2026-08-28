@@ -3,7 +3,7 @@
   import { t } from './i18n.svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { claimCodexResetCredit } from './backend';
-  import { formatReset } from './pacing';
+  import { formatResetParts } from './pacing';
   import type { ResetClaimOutcome } from './types';
 
   interface Props {
@@ -38,19 +38,16 @@
           : remaining <= 7 * 24 * 60 * 60 * 1000
             ? 'warning'
             : 'normal';
-      const relative = formatReset(expiry, now, 'countdown', timeFormat).replace(
-        /^Resets(?: in)?\s*/,
-        '',
-      );
-      const exact = formatReset(expiry, now, 'exact', timeFormat).replace(/^Resets\s*/, '');
-      const imminent = relative === 'soon';
+      const countdown = formatResetParts(expiry, now, 'countdown', timeFormat);
+      const exact = formatResetParts(expiry, now, 'exact', timeFormat);
+      const imminent = countdown?.kind === 'soon';
       return {
         id: `${expiry}:${index}`,
         expiry,
         number: index + 1,
         severity,
-        exact: imminent ? t('reset.expiringSoon') : exact,
-        relative: imminent ? null : relative,
+        exact: imminent ? t('reset.expiringSoon') : (exact?.text ?? t('quota.resetUnavailable')),
+        relative: imminent ? null : (countdown?.text ?? null),
       };
     }),
   );

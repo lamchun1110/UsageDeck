@@ -165,6 +165,7 @@
             ? t('settings.shortcut.type')
             : (settings.globalShortcut ?? t('settings.shortcut.record'))}</button
         >{#if settings.globalShortcut}<button
+            class="shortcut-clear"
             type="button"
             aria-label={t('settings.shortcut.clear')}
             onclick={() => patch({ globalShortcut: null })}
@@ -381,7 +382,6 @@
               >{settingsView.notificationPermission === 'denied'
                 ? t('settings.notify.blocked')
                 : t('settings.notify.permissionRequired')}</b
-            >
             ><small
               >{settingsView.notificationPermission === 'denied'
                 ? t('settings.notify.blockedHelp')
@@ -563,7 +563,7 @@
       color: var(--text);
     }
 
-    .shortcut-field button[aria-label='Clear global shortcut'] {
+    .shortcut-field button.shortcut-clear {
       display: grid;
       width: 24px;
       height: 24px;
@@ -573,8 +573,8 @@
       place-items: center;
     }
 
-    .shortcut-field button[aria-label='Clear global shortcut']:hover,
-    .shortcut-field button[aria-label='Clear global shortcut']:focus-visible {
+    .shortcut-field button.shortcut-clear:hover,
+    .shortcut-field button.shortcut-clear:focus-visible {
       outline: none;
       color: var(--text);
       background: var(--button-hover);

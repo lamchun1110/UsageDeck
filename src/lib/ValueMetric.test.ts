@@ -74,8 +74,8 @@ describe('ValueMetric', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await fireEvent.click(trigger);
     expect(screen.getByRole('dialog', { name: 'Rate Limit Resets details' })).toBeVisible();
-    expect(screen.getByText('1h 30m')).toBeInTheDocument();
-    expect(screen.getByText('3h')).toBeInTheDocument();
+    expect(screen.getByText('in 1h 30m')).toBeInTheDocument();
+    expect(screen.getByText('in 3h')).toBeInTheDocument();
 
     rerender({
       label: 'Rate Limit Resets',

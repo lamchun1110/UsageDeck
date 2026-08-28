@@ -95,6 +95,19 @@ export function formatResetDetail(
   return renderDeadlineParts(deadlineParts(reset, now, mode, timeFormat));
 }
 
+/** Unprefixed reset deadline text plus a locale-independent kind for logic like imminent checks. */
+export function formatResetParts(
+  value: string,
+  now: number,
+  mode: 'countdown' | 'exact',
+  timeFormat: TimeFormat = 'system',
+): { kind: DeadlineKind; text: string } | null {
+  const reset = new Date(value).getTime();
+  if (!Number.isFinite(reset)) return null;
+  const parts = deadlineParts(reset, now, mode, timeFormat);
+  return { kind: parts.kind, text: renderDeadlineParts(parts) };
+}
+
 export function formatLimit(
   value: number | null,
   now: number,
@@ -136,8 +149,10 @@ function formatDeadline(
   }
 }
 
+export type DeadlineKind = 'soon' | 'countdown' | 'today' | 'tomorrow' | 'date';
+
 interface DeadlineParts {
-  kind: 'soon' | 'countdown' | 'today' | 'tomorrow' | 'date';
+  kind: DeadlineKind;
   duration?: string;
   time?: string;
   date?: string;
