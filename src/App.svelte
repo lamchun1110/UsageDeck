@@ -317,10 +317,20 @@
     try {
       viewState = await refreshUsage();
       settingsError = null;
+    } catch {
+      // refresh_usage resolves even when every provider fails, so a rejection
+      // means the invoke bridge itself broke and no usage-state events will
+      // arrive to clear the optimistic spinners — clear them here.
+      viewState = {
+        ...viewState,
+        providers: Object.fromEntries(
+          Object.entries(viewState.providers).map(([id, state]) => [
+            id,
+            { ...state, refreshing: false },
+          ]),
+        ),
+      };
     } finally {
-      // refresh_usage resolves with the final state even when every provider
-      // fails, so there is no rejection path: progress liveness is owned by
-      // the usage-state events and activeRefreshCount.
       activeRefreshCount -= 1;
     }
   }
