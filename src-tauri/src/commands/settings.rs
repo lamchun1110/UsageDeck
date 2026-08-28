@@ -261,14 +261,15 @@ pub async fn record_update_check(
     app: AppHandle,
     settings: State<'_, Arc<SettingsService>>,
     checked_at: chrono::DateTime<chrono::Utc>,
-) -> Result<(), String> {
+) -> Result<SettingsViewState, String> {
     let service = settings.inner().clone();
     tauri::async_runtime::spawn_blocking(move || service.record_update_check(checked_at))
         .await
         .map_err(|_| "The update check could not be recorded.".to_owned())?
         .map_err(|_| "The update check could not be recorded.".to_owned())?;
-    let _ = app.emit("settings-state", settings_view_state(&app, &settings));
-    Ok(())
+    let state = settings_view_state(&app, &settings);
+    let _ = app.emit("settings-state", &state);
+    Ok(state)
 }
 
 #[tauri::command]

@@ -45,7 +45,7 @@ describe('UsageDeck update lifecycle', () => {
     mockInvoke((command: string, args?: InvokeArgs) => {
       if (command === 'get_usage_state') return Promise.resolve(liveState);
       if (command === 'get_app_settings') return Promise.resolve(settingsState);
-      if (command === 'record_update_check') return Promise.resolve();
+      if (command === 'record_update_check') return Promise.resolve(settingsState);
       if (command === 'save_app_settings')
         return Promise.resolve({
           ...settingsState,
@@ -108,7 +108,7 @@ describe('UsageDeck update lifecycle', () => {
     mockInvoke((command: string, args?: InvokeArgs) => {
       if (command === 'get_usage_state') return Promise.resolve(liveState);
       if (command === 'get_app_settings') return Promise.resolve(settingsState);
-      if (command === 'record_update_check') return Promise.resolve();
+      if (command === 'record_update_check') return Promise.resolve(settingsState);
       if (command === 'save_app_settings')
         return Promise.resolve({
           ...settingsState,
@@ -147,7 +147,7 @@ describe('UsageDeck update lifecycle', () => {
     mockInvoke((command: string) => {
       if (command === 'get_usage_state') return Promise.resolve(liveState);
       if (command === 'get_app_settings') return Promise.resolve(settingsState);
-      if (command === 'record_update_check') return Promise.resolve();
+      if (command === 'record_update_check') return Promise.resolve(settingsState);
       if (command === 'save_app_settings') return Promise.resolve(settingsState);
       if (command === 'check_for_updates')
         return Promise.resolve({
@@ -180,7 +180,7 @@ describe('UsageDeck update lifecycle', () => {
     mockInvoke((command: string) => {
       if (command === 'get_usage_state') return Promise.resolve(liveState);
       if (command === 'get_app_settings') return Promise.resolve(settingsState);
-      if (command === 'record_update_check') return Promise.resolve();
+      if (command === 'record_update_check') return Promise.resolve(settingsState);
       if (command === 'save_app_settings') return Promise.resolve(settingsState);
       if (command === 'check_for_updates')
         return Promise.resolve({
@@ -226,7 +226,7 @@ describe('UsageDeck update lifecycle', () => {
     mockInvoke((command: string) => {
       if (command === 'get_usage_state') return Promise.resolve(liveState);
       if (command === 'get_app_settings') return Promise.resolve(settingsState);
-      if (command === 'record_update_check') return Promise.resolve();
+      if (command === 'record_update_check') return Promise.resolve(settingsState);
       if (command === 'save_app_settings') return Promise.resolve(settingsState);
       if (command === 'check_for_updates')
         return Promise.resolve({

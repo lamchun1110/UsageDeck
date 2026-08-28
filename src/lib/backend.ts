@@ -83,7 +83,7 @@ export function saveAppSettings(
 }
 
 export function recordUpdateCheck(checkedAt: string) {
-  return invoke<void>('record_update_check', { checkedAt });
+  return invoke<SettingsViewState>('record_update_check', { checkedAt });
 }
 
 export function resetCustomization(

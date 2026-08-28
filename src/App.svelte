@@ -715,11 +715,17 @@
       manual,
       (checkedAt) => {
         if (!settingsState) return;
-        recordUpdateCheck(checkedAt).catch(() => {
-          // The stamp is cosmetic (it paces the next auto-check); a failure
-          // only means the check may re-run sooner than scheduled.
-          showConfirmation(t('app.updateCheckNotRecorded'));
-        });
+        // Ride the settings mutation queue so the stamp's revision bump is
+        // serialized with in-flight user saves — a direct invoke could land
+        // between a save's revision capture and its commit, failing the save
+        // with a spurious conflict.
+        settingsController
+          .runMutation(() => recordUpdateCheck(checkedAt))
+          .catch(() => {
+            // The stamp is cosmetic (it paces the next auto-check); a failure
+            // only means the check may re-run sooner than scheduled.
+            showConfirmation(t('app.updateCheckNotRecorded'));
+          });
       },
       showConfirmation,
     );
