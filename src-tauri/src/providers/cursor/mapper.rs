@@ -116,11 +116,13 @@ pub fn map_live_usage(
         .get("totalSpend")
         .and_then(number)
         .unwrap_or_else(|| {
-            facts.limit.unwrap_or_default()
-                - plan_usage
-                    .get("remaining")
-                    .and_then(number)
-                    .unwrap_or_default()
+            // plan_usage["remaining"] is an explicit per-plan field; when it
+            // is absent, remaining defaults to 0 and fabricates used == limit
+            // (100% consumed) out of nowhere.
+            let Some(remaining) = plan_usage.get("remaining").and_then(number) else {
+                return 0.0;
+            };
+            (facts.limit.unwrap_or_default() - remaining).max(0.0)
         })
         .max(0.0);
     let computed_percent = facts
