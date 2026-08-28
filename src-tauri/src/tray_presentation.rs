@@ -99,7 +99,11 @@ pub fn update(
     }
     // Hovering the tray names each provider in strip order, which is the only way to tell the
     // Bars-style icon's rows apart; hosts without tooltip support simply ignore it.
+    // A failed native call must not be recorded as applied, or the skip
+    // cache would suppress every retry until the presentation changed.
+    let mut native_apply_succeeded = true;
     if tray.set_tooltip(Some(tooltip)).is_err() {
+        native_apply_succeeded = false;
         crate::app_warn!("tray", "tray tooltip update failed");
     }
 
@@ -110,6 +114,7 @@ pub fn update(
             .map(|gauge| tray_icon::render_gauge(gauge.display_fraction, gauge.remaining_fraction))
             .unwrap_or_else(mark_icon);
         if tray.set_icon(Some(icon)).is_err() {
+            native_apply_succeeded = false;
             crate::app_warn!("tray", "tray icon update failed");
         }
     }
@@ -133,16 +138,23 @@ pub fn update(
             }
         };
         if tray.set_icon(Some(icon)).is_err() {
+            native_apply_succeeded = false;
             crate::app_warn!("tray", "tray icon update failed");
         }
     }
 
     #[cfg(target_os = "macos")]
-    apply_mac_menu_bar_presentation(&tray, applied.mac_presentation.clone());
+    {
+        if !apply_mac_menu_bar_presentation(&tray, applied.mac_presentation.clone()) {
+            native_apply_succeeded = false;
+        }
+    }
 
-    *LAST_APPLIED
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(applied);
+    if native_apply_succeeded {
+        *LAST_APPLIED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(applied);
+    }
 }
 
 /// Panels follow the desktop theme; without a reliable way to probe the panel
@@ -191,17 +203,20 @@ fn mac_menu_bar_presentation(
 fn apply_mac_menu_bar_presentation(
     tray: &tauri::tray::TrayIcon,
     presentation: MacMenuBarPresentation,
-) {
+) -> bool {
+    let mut applied = true;
     match presentation.icon {
         MacMenuBarIcon::Mark => {
             // An empty value explicitly clears stale native text before the fallback mark is shown.
             if tray.set_title(Some("")).is_err() {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar title clear failed");
             }
             if tray
                 .set_icon_with_as_template(Some(mark_icon()), true)
                 .is_err()
             {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar icon update failed");
             }
         }
@@ -209,17 +224,20 @@ fn apply_mac_menu_bar_presentation(
             // Text is one template strip image (provider marks + values), matching the single native
             // status-item ownership model while allowing each provider to keep its visual identity.
             if tray.set_title(Some("")).is_err() {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar title clear failed");
             }
             let icon = crate::menu_bar::text_icon(&groups, crate::menu_bar::GlyphTone::Dark)
                 .unwrap_or_else(mark_icon);
             if tray.set_icon_with_as_template(Some(icon), true).is_err() {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar icon update failed");
             }
         }
         MacMenuBarIcon::Bars(fractions) => {
             // Clear Text before installing Bars so no stale value can remain beside the compact glyph.
             if tray.set_title(Some("")).is_err() {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar title clear failed");
             }
             if tray
@@ -232,10 +250,12 @@ fn apply_mac_menu_bar_presentation(
                 )
                 .is_err()
             {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar icon update failed");
             }
         }
     }
+    applied
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
