@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f7f8fc">
+  <title>Privacy Policy · UsageDeck</title>
+  <meta name="description" content="UsageDeck privacy policy: local data storage, third-party provider communication, updates, and website hosting.">
+  <link rel="canonical" href="https://usagedeck.app/privacy/">
+  <link rel="icon" type="image/png" href="../assets/usagedeck-appicon.png">
+  <style>
+    :root{color-scheme:light dark;--accent:#445cff;--paper:#f7f8fc;--card:#fff;--ink:#111425;--muted:#626879;--line:#e3e5ed;--soft:#eef0f6}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:var(--paper);font:16px/1.68 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}a{color:var(--accent);text-underline-offset:3px}.wrap{width:min(calc(100% - 40px),780px);margin-inline:auto}nav{border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--paper) 88%,transparent)}.nav-inner{height:68px;display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{display:inline-flex;align-items:center;gap:10px;color:var(--ink);font-weight:800;text-decoration:none}.brand img{width:30px;height:30px;border-radius:8px}.back{font-size:14px;font-weight:700;text-decoration:none}main{padding:72px 0 90px}.policy{padding:clamp(28px,6vw,58px);border:1px solid var(--line);border-radius:24px;background:var(--card);box-shadow:0 24px 70px rgba(33,38,74,.08)}.eyebrow{margin:0;color:var(--accent);font-size:13px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}h1{margin:10px 0 8px;font-size:clamp(42px,7vw,62px);line-height:1;letter-spacing:-.055em}.updated{margin:0 0 38px;color:var(--muted);font-size:14px}h2{margin:38px 0 10px;font-size:22px;letter-spacing:-.025em}p,li{color:var(--muted)}ul{padding-left:22px}strong{color:var(--ink)}footer{padding:0 0 42px;color:var(--muted);font-size:13px;text-align:center}@media(prefers-color-scheme:dark){:root{--accent:#8b9aff;--paper:#0d0e13;--card:#14161d;--ink:#eceef5;--muted:#9aa0b0;--line:#23262f;--soft:#1a1d25}.policy{box-shadow:0 24px 70px rgba(0,0,0,.35)}}
+  </style>
+</head>
+<body>
+  <nav><div class="wrap nav-inner"><a class="brand" href="../"><img src="../assets/usagedeck-appicon.png" alt="">UsageDeck</a><a class="back" href="../">Back to UsageDeck</a></div></nav>
+  <main><div class="wrap"><article class="policy">
+    <p class="eyebrow">UsageDeck</p>
+    <h1>Privacy Policy</h1>
+    <p class="updated">Effective August 28, 2026</p>
+
+    <p>UsageDeck is an open-source desktop application distributed under the MIT License. This policy explains what information the application and this website handle.</p>
+
+    <h2>Summary</h2>
+    <p>UsageDeck has no UsageDeck account system or UsageDeck-operated backend. The project does not add analytics, advertising, behavioral tracking, or telemetry to the application or website. Application data is stored on your device. UsageDeck is not an offline-only application: when you refresh a provider, it communicates directly with the third-party service you configured or authenticated.</p>
+
+    <h2>Information stored on your device</h2>
+    <p>Depending on the features and providers you use, UsageDeck may store locally:</p>
+    <ul>
+      <li>application settings and provider display preferences;</li>
+      <li>usage, quota, reset-time, token-history, and estimated-cost data;</li>
+      <li>diagnostic logs designed to redact credentials and sensitive values;</li>
+      <li>API keys you add, stored through your operating system's credential store where supported; and</li>
+      <li>cached pricing and update information.</li>
+    </ul>
+    <p>The UsageDeck project does not receive this locally stored information.</p>
+
+    <h2>Third-party provider communication</h2>
+    <p>To retrieve usage and quota information, UsageDeck sends requests directly from your device to the providers you select. These requests may include provider authentication material, account identifiers, and technical request information required by that provider. The provider receives and processes those requests under its own privacy policy and terms. UsageDeck does not proxy these requests through a UsageDeck-operated service.</p>
+
+    <h2>Local sign-in data and API keys</h2>
+    <p>For supported providers, UsageDeck may read authentication data previously stored by the provider's CLI or desktop application. API keys entered in UsageDeck are stored locally and are used only to make the provider requests you initiate or enable. UsageDeck does not send provider credentials to the UsageDeck maintainers.</p>
+
+    <h2>Updates and downloads</h2>
+    <p>UsageDeck checks GitHub Releases for application updates and may download an update from GitHub when you approve or enable that behavior. GitHub may receive standard connection information such as your IP address and user agent. GitHub handles that information under the <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub General Privacy Statement</a>. Update packages are cryptographically verified by UsageDeck.</p>
+
+    <h2>Website</h2>
+    <p>The UsageDeck website does not set project-operated analytics or advertising cookies and does not include project-operated tracking scripts. It is hosted using GitHub Pages, so GitHub may process standard hosting logs and connection information under its own privacy statement. Links to third-party websites are governed by those sites' policies.</p>
+
+    <h2>Retention and your choices</h2>
+    <p>Local data remains on your device until you reset the relevant settings, remove a saved API key, clear application data, or uninstall the application. Data already received by a third-party provider is subject to that provider's retention rules. You can stop provider communication by disabling or removing the provider or its credentials.</p>
+
+    <h2>Children</h2>
+    <p>UsageDeck is a developer utility and is not directed to children. The project does not knowingly collect children's personal information through a UsageDeck-operated service.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>Material changes will be published on this page and committed to the public UsageDeck repository. The effective date above identifies the current version.</p>
+
+    <h2>Contact</h2>
+    <p>For general privacy questions, open a <a href="https://github.com/lamchun1110/UsageDeck/issues">GitHub issue</a> without including credentials or private account data. If your report contains sensitive security information, use <a href="https://github.com/lamchun1110/UsageDeck/security/advisories/new">GitHub private vulnerability reporting</a>.</p>
+
+    <h2>Open source</h2>
+    <p>You can inspect how UsageDeck handles data in the <a href="https://github.com/lamchun1110/UsageDeck">public source repository</a>. UsageDeck preserves its lineage and attribution to OpenQuota and OpenUsage.</p>
+  </article></div></main>
+  <footer><div class="wrap">UsageDeck · MIT License · <a href="../">Home</a> · <a href="https://github.com/lamchun1110/UsageDeck">Source</a></div></footer>
+</body>
+</html>

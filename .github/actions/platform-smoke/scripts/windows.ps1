@@ -3,7 +3,10 @@ param(
   [string]$InstallerDirectory,
 
   [ValidateSet('true', 'false')]
-  [string]$ReleaseValidation = 'false'
+  [string]$ReleaseValidation = 'false',
+
+  [ValidateSet('true', 'false')]
+  [string]$VerifyInstalledSignature = 'true'
 )
 
 Set-StrictMode -Version Latest
@@ -15,9 +18,6 @@ if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
 
 $signToolPath = $null
 if ($ReleaseValidation -eq 'true') {
-  if ([string]::IsNullOrWhiteSpace($env:USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT)) {
-    throw 'USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT is required for release validation.'
-  }
   $signToolCommand = Get-Command 'signtool.exe' -ErrorAction SilentlyContinue |
     Select-Object -First 1
   if ($null -ne $signToolCommand) {
@@ -45,9 +45,12 @@ function Assert-ReleaseSignature {
   if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
     throw "Invalid Authenticode signature on '$Path': $($signature.StatusMessage)"
   }
-  if ($null -eq $signature.SignerCertificate -or
+  if ($null -eq $signature.SignerCertificate) {
+    throw "Authenticode verification did not return a signer for '$Path'."
+  }
+  if (![string]::IsNullOrWhiteSpace($env:USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT) -and
       $signature.SignerCertificate.Subject -ne $env:USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT) {
-    throw "Unexpected Authenticode signer on '$Path'."
+    throw "Unexpected Authenticode signer on '$Path'. Expected '$env:USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT', received '$($signature.SignerCertificate.Subject)'."
   }
   if ($null -eq $signature.TimeStamperCertificate) {
     throw "Authenticode signature on '$Path' is not timestamped."
@@ -124,7 +127,7 @@ try {
   }
   $uninstaller = $uninstallers[0].FullName
 
-  if ($ReleaseValidation -eq 'true') {
+  if ($ReleaseValidation -eq 'true' -and $VerifyInstalledSignature -eq 'true') {
     $binarySignature = Assert-ReleaseSignature -Path $binary
     if ($null -eq $installerSignature.SignerCertificate -or
         $null -eq $binarySignature.SignerCertificate -or

@@ -23,7 +23,9 @@ UsageDeck is an open-source, privacy-first desktop dashboard for Windows, Linux,
 tracks usage limits, reset times, token history, and estimated spend across 13 AI coding assistants.
 
 It lives in your tray or menu bar and reuses credentials already stored on your machine. Everything
-runs locally—there is no UsageDeck account, backend, analytics, or telemetry.
+runs locally—there is no UsageDeck-operated account or backend, analytics, or telemetry. UsageDeck
+does make network requests to the third-party providers you configure or authenticate so it can
+retrieve their usage and quota information.
 
 ## What it tracks
 
@@ -64,6 +66,10 @@ key, which is a separate thing from operating-system package signing.
 
 ### Release signatures
 
+- **Windows:** the release notes state the signing status for that release. A Windows installer may
+  be unsigned, Authenticode-signed with the project's existing SSL.com eSigner integration, or
+  Authenticode-signed through SignPath once the pending SignPath Foundation configuration is
+  approved and enabled. Unsigned installers can trigger Microsoft SmartScreen warnings.
 - **macOS:** official releases are signed with an Apple Developer ID certificate and notarized by
   Apple when the `ENABLE_MACOS_NATIVE_SIGNING` repository variable is set to `true`. Signed releases
   use the bundle ID `com.lamchun1110.usagedeck` and are stapled. The release workflow verifies the
@@ -81,7 +87,8 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 ```
 
 > [!IMPORTANT]
-> Windows installers are not currently Authenticode-signed, so SmartScreen may ask you to confirm.
+> Check each release's notes for its Windows signing status. SmartScreen may warn for an unsigned
+> release; do not infer signing status from this static README.
 > On macOS, builds produced without `ENABLE_MACOS_NATIVE_SIGNING` are ad-hoc-signed and unnotarized;
 > Gatekeeper will block the first launch unless you right-click → Open. Only download UsageDeck from
 > this repository's releases page. Every release states its exact signing status in the notes.
@@ -112,7 +119,30 @@ stored in `~/.config/openquota/{kimi,minimax,zai}.json` are still read; new keys
   system is set to.
 - **Stays out of the way.** Launch at login, global shortcut, follows your system theme.
 
-Everything runs on your machine. No account, no backend, no analytics, no telemetry.
+Everything runs on your machine. There is no UsageDeck account or UsageDeck-operated backend,
+analytics, or telemetry. Provider usage refreshes communicate directly with the third-party
+services the user has configured or authenticated.
+
+## Code signing policy
+
+UsageDeck is open-source software released under the MIT License. Release binaries are built from
+this public GitHub repository by the tag-triggered GitHub Actions release workflow. Repository
+maintainers review source changes, and the maintainers and release approvers configured in GitHub
+and SignPath control whether a trusted release is approved; those roles are maintained through the
+project's access-control settings rather than a list of personal details in this document.
+
+Windows Authenticode signing through SignPath Foundation is prepared but remains pending approval
+and repository configuration. When that backend is enabled, the applicable acknowledgement is:
+“Free code signing provided by SignPath.io, certificate by SignPath Foundation.” Until then, and
+for fallback releases, the per-release notes identify whether Windows artifacts are unsigned or
+signed with SSL.com eSigner. Tauri updater signatures are a separate project-controlled trust layer
+and are required for every release regardless of the Windows Authenticode backend.
+
+UsageDeck has no UsageDeck-operated backend, analytics, or telemetry. It is not an offline-only
+application: it connects to third-party providers as needed to retrieve usage and quota information
+configured or authenticated by the user. This policy preserves UsageDeck's lineage and attribution
+to OpenQuota and OpenUsage described below. See the public
+[Privacy Policy](https://usagedeck.app/privacy/) for the complete data-handling disclosure.
 
 ## Building from source
 

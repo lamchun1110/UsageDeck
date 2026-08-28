@@ -14,6 +14,10 @@ inputs:
     description: Exact Authenticode signer subject required for Windows release artifacts.
     required: false
     default: ''
+  windows-verify-installed-signature:
+    description: Require the installed application to have the same signer as the NSIS installer.
+    required: false
+    default: 'true'
   apple-team-id:
     description: Apple Developer team required for macOS release artifacts.
     required: false
@@ -29,10 +33,12 @@ runs:
         USAGEDECK_SMOKE_ARTIFACT_ROOT: ${{ inputs.artifact-root }}
         USAGEDECK_SMOKE_RELEASE_VALIDATION: ${{ inputs.release-validation }}
         USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ inputs.windows-signer-subject }}
+        USAGEDECK_VERIFY_INSTALLED_WINDOWS_SIGNATURE: ${{ inputs.windows-verify-installed-signature }}
       run: >-
         & "$env:GITHUB_ACTION_PATH/scripts/windows.ps1"
         -InstallerDirectory "$env:USAGEDECK_SMOKE_ARTIFACT_ROOT/nsis"
         -ReleaseValidation "$env:USAGEDECK_SMOKE_RELEASE_VALIDATION"
+        -VerifyInstalledSignature "$env:USAGEDECK_VERIFY_INSTALLED_WINDOWS_SIGNATURE"
 
     - name: Smoke test macOS tray startup
       if: runner.os == 'macOS'

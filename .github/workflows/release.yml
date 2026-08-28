@@ -17,7 +17,7 @@ on:
 
 permissions:
   checks: read
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       release_commit: ${{ steps.trusted_tag.outputs.release_commit }}
-      windows_signing: ${{ steps.signing_policy.outputs.windows_signing }}
+      windows_signing_backend: ${{ steps.signing_policy.outputs.windows_signing_backend }}
       macos_signing: ${{ steps.signing_policy.outputs.macos_signing }}
       linux_gpg_signing: ${{ steps.signing_policy.outputs.linux_gpg_signing }}
     steps:
@@ -66,72 +66,38 @@ jobs:
       - name: Resolve release signing policy
         id: signing_policy
         env:
+          WINDOWS_SIGNING_BACKEND: ${{ vars.WINDOWS_SIGNING_BACKEND }}
           ENABLE_WINDOWS_NATIVE_SIGNING: ${{ vars.ENABLE_WINDOWS_NATIVE_SIGNING || 'false' }}
+          LEGACY_WINDOWS_SIGNING_CONFIGURED: ${{ vars.ENABLE_WINDOWS_NATIVE_SIGNING != '' && 'true' || 'false' }}
           ENABLE_MACOS_NATIVE_SIGNING: ${{ vars.ENABLE_MACOS_NATIVE_SIGNING || 'false' }}
           ENABLE_LINUX_GPG_SIGNING: ${{ vars.ENABLE_LINUX_GPG_SIGNING || 'false' }}
-        run: |
-          set -euo pipefail
-          normalize_policy() {
-            local name="$1"
-            local value="$2"
-            case "$value" in
-              true | false) printf '%s' "$value" ;;
-              *)
-                echo "::error::$name must be either true or false." >&2
-                return 1
-                ;;
-            esac
-          }
-
-          windows_signing="$(normalize_policy ENABLE_WINDOWS_NATIVE_SIGNING "$ENABLE_WINDOWS_NATIVE_SIGNING")"
-          macos_signing="$(normalize_policy ENABLE_MACOS_NATIVE_SIGNING "$ENABLE_MACOS_NATIVE_SIGNING")"
-          linux_gpg_signing="$(normalize_policy ENABLE_LINUX_GPG_SIGNING "$ENABLE_LINUX_GPG_SIGNING")"
-          echo "windows_signing=$windows_signing" >> "$GITHUB_OUTPUT"
-          echo "macos_signing=$macos_signing" >> "$GITHUB_OUTPUT"
-          echo "linux_gpg_signing=$linux_gpg_signing" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/resolve-release-signing-policy.sh
 
       - name: Validate release signing credentials
         if: ${{ !inputs.verify_only }}
         env:
-          WINDOWS_SIGNING_ENABLED: ${{ steps.signing_policy.outputs.windows_signing }}
+          WINDOWS_SIGNING_BACKEND: ${{ steps.signing_policy.outputs.windows_signing_backend }}
           MACOS_SIGNING_ENABLED: ${{ steps.signing_policy.outputs.macos_signing }}
           LINUX_GPG_SIGNING_ENABLED: ${{ steps.signing_policy.outputs.linux_gpg_signing }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-          ES_USERNAME: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_USERNAME || '' }}
-          ES_PASSWORD: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_PASSWORD || '' }}
-          ES_CREDENTIAL_ID: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_CREDENTIAL_ID || '' }}
-          ES_TOTP_SECRET: ${{ steps.signing_policy.outputs.windows_signing == 'true' && secrets.ES_TOTP_SECRET || '' }}
-          WINDOWS_SIGNER_SUBJECT: ${{ steps.signing_policy.outputs.windows_signing == 'true' && vars.WINDOWS_SIGNER_SUBJECT || '' }}
+          ES_USERNAME: ${{ steps.signing_policy.outputs.windows_signing_backend == 'esign' && secrets.ES_USERNAME || '' }}
+          ES_PASSWORD: ${{ steps.signing_policy.outputs.windows_signing_backend == 'esign' && secrets.ES_PASSWORD || '' }}
+          ES_CREDENTIAL_ID: ${{ steps.signing_policy.outputs.windows_signing_backend == 'esign' && secrets.ES_CREDENTIAL_ID || '' }}
+          ES_TOTP_SECRET: ${{ steps.signing_policy.outputs.windows_signing_backend == 'esign' && secrets.ES_TOTP_SECRET || '' }}
+          WINDOWS_SIGNER_SUBJECT: ${{ steps.signing_policy.outputs.windows_signing_backend != 'none' && vars.WINDOWS_SIGNER_SUBJECT || '' }}
+          SIGNPATH_API_TOKEN: ${{ steps.signing_policy.outputs.windows_signing_backend == 'signpath' && secrets.SIGNPATH_API_TOKEN || '' }}
+          SIGNPATH_ORGANIZATION_ID: ${{ steps.signing_policy.outputs.windows_signing_backend == 'signpath' && vars.SIGNPATH_ORGANIZATION_ID || '' }}
+          SIGNPATH_PROJECT_SLUG: ${{ steps.signing_policy.outputs.windows_signing_backend == 'signpath' && vars.SIGNPATH_PROJECT_SLUG || '' }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ steps.signing_policy.outputs.windows_signing_backend == 'signpath' && vars.SIGNPATH_SIGNING_POLICY_SLUG || '' }}
+          SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ steps.signing_policy.outputs.windows_signing_backend == 'signpath' && vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG || '' }}
           APPLE_CERTIFICATE: ${{ steps.signing_policy.outputs.macos_signing == 'true' && secrets.APPLE_CERTIFICATE || '' }}
           APPLE_CERTIFICATE_PASSWORD: ${{ steps.signing_policy.outputs.macos_signing == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
           APPLE_ID: ${{ steps.signing_policy.outputs.macos_signing == 'true' && secrets.APPLE_ID || '' }}
           APPLE_PASSWORD: ${{ steps.signing_policy.outputs.macos_signing == 'true' && secrets.APPLE_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ steps.signing_policy.outputs.macos_signing == 'true' && secrets.APPLE_TEAM_ID || '' }}
-        run: |
-          required=(TAURI_SIGNING_PRIVATE_KEY)
-          if [[ "$WINDOWS_SIGNING_ENABLED" = true ]]; then
-            required+=(ES_USERNAME ES_PASSWORD ES_CREDENTIAL_ID ES_TOTP_SECRET WINDOWS_SIGNER_SUBJECT)
-          else
-            echo '::warning::Windows artifacts will not be Authenticode-signed.'
-          fi
-          if [[ "$MACOS_SIGNING_ENABLED" = true ]]; then
-            required+=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
-          else
-            echo '::warning::macOS artifacts will use ad-hoc signing and will not be notarized.'
-          fi
-          if [[ "$LINUX_GPG_SIGNING_ENABLED" = true ]]; then
-            required+=(GPG_PRIVATE_KEY)
-          else
-            echo '::warning::Linux artifacts will not be GPG-signed.'
-          fi
-          for name in "${required[@]}"; do
-            test -n "${!name:-}" || {
-              echo "Missing required release signing value: $name" >&2
-              exit 1
-            }
-          done
+        run: bash .github/scripts/validate-release-signing-config.sh
 
       - name: Install Linux dependencies
         run: |
@@ -189,6 +155,8 @@ jobs:
     needs: validate
     if: ${{ !inputs.verify_only && needs.validate.result == 'success' }}
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     outputs:
       release_id: ${{ steps.release.outputs.release_id }}
     steps:
@@ -206,7 +174,13 @@ jobs:
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WINDOWS_SIGNING_BACKEND: ${{ needs.validate.outputs.windows_signing_backend }}
         run: |
+          case "$WINDOWS_SIGNING_BACKEND" in
+            none) windows_note='Windows installers in this release are not Authenticode-signed; Microsoft SmartScreen may warn.' ;;
+            esign) windows_note='Windows installers in this release are Authenticode-signed using the SSL.com eSigner release path.' ;;
+            signpath) windows_note='Windows installers in this release are Authenticode-signed through SignPath. Free code signing provided by SignPath.io, certificate by SignPath Foundation.' ;;
+          esac
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
             test "$is_draft" = true || {
@@ -223,44 +197,57 @@ jobs:
               --notes $'UsageDeck desktop release for Windows and Linux on x64/ARM64, plus a macOS Universal build.\n\nAutomatic updates are cryptographically signed. Linux in-app updates are supported by AppImage builds; Debian packages update through the package installer.'
           fi
 
+          body="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body')"
+          body="$(printf '%s\n' "$body" | sed '/^Windows signing status:/d')"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --notes "$body"$'\n\nWindows signing status: '"$windows_note"
+
           release_id="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId --jq '.databaseId')"
           test -n "$release_id"
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
   publish-artifacts:
-    name: Build and smoke ${{ matrix.name }}
+    name: ${{ matrix.windows && needs.validate.outputs.windows_signing_backend == 'signpath' && format('Build unsigned {0}', matrix.name) || format('Build and smoke {0}', matrix.name) }}
     needs: [validate, prepare-release]
     if: ${{ always() && !inputs.verify_only && needs.validate.result == 'success' && needs.prepare-release.result == 'success' }}
     runs-on: ${{ matrix.platform }}
+    permissions:
+      actions: read
+      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Windows x64
+            windows: true
             platform: windows-latest
             args: --bundles nsis --config src-tauri/tauri.release.conf.json
             windows-signing-args: --config src-tauri/tauri.windows-signing.conf.json
             rust-targets: ''
             smoke-artifact-root: src-tauri/target/release/bundle
           - name: Windows ARM64
+            windows: true
             platform: windows-11-arm
             args: --target aarch64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.release.conf.json
             windows-signing-args: --config src-tauri/tauri.windows-signing.conf.json
             rust-targets: aarch64-pc-windows-msvc
             smoke-artifact-root: src-tauri/target/aarch64-pc-windows-msvc/release/bundle
           - name: Linux x64
+            windows: false
             platform: ubuntu-22.04
             args: --bundles deb,appimage --config src-tauri/tauri.release.conf.json
             windows-signing-args: ''
             rust-targets: ''
             smoke-artifact-root: src-tauri/target/release/bundle
           - name: Linux ARM64
+            windows: false
             platform: ubuntu-22.04-arm
             args: --target aarch64-unknown-linux-gnu --bundles deb,appimage --config src-tauri/tauri.release.conf.json
             windows-signing-args: ''
             rust-targets: aarch64-unknown-linux-gnu
             smoke-artifact-root: src-tauri/target/aarch64-unknown-linux-gnu/release/bundle
           - name: macOS Universal
+            windows: false
             platform: macos-latest
             args: --target universal-apple-darwin --bundles app,dmg --config src-tauri/tauri.release.conf.json
             windows-signing-args: ''
@@ -314,7 +301,7 @@ jobs:
         run: bash .github/scripts/setup-linuxdeploy.sh
 
       - name: Prepare Windows code signing
-        if: runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true'
+        if: runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'esign'
         shell: pwsh
         env:
           ES_USERNAME: ${{ secrets.ES_USERNAME }}
@@ -357,16 +344,17 @@ jobs:
           write_env APPLE_TEAM_ID "$USAGEDECK_APPLE_TEAM_ID"
 
       - name: Build and upload platform artifacts
+        if: runner.os != 'Windows' || needs.validate.outputs.windows_signing_backend != 'signpath'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          ES_USERNAME: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && secrets.ES_USERNAME || '' }}
-          ES_PASSWORD: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && secrets.ES_PASSWORD || '' }}
-          ES_CREDENTIAL_ID: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && secrets.ES_CREDENTIAL_ID || '' }}
-          ES_TOTP_SECRET: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && secrets.ES_TOTP_SECRET || '' }}
-          USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && vars.WINDOWS_SIGNER_SUBJECT || '' }}
+          ES_USERNAME: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'esign' && secrets.ES_USERNAME || '' }}
+          ES_PASSWORD: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'esign' && secrets.ES_PASSWORD || '' }}
+          ES_CREDENTIAL_ID: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'esign' && secrets.ES_CREDENTIAL_ID || '' }}
+          ES_TOTP_SECRET: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'esign' && secrets.ES_TOTP_SECRET || '' }}
+          USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'esign' && vars.WINDOWS_SIGNER_SUBJECT || '' }}
         with:
           releaseId: ${{ needs.prepare-release.outputs.release_id }}
           releaseDraft: true
@@ -376,7 +364,27 @@ jobs:
           retryAttempts: 2
           args: >-
             ${{ matrix.args }}
-            ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && matrix.windows-signing-args || '' }}
+            ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'esign' && matrix.windows-signing-args || '' }}
+
+      - name: Build unsigned Windows installer for SignPath
+        if: runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'signpath'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: >-
+            ${{ matrix.args }}
+            --config src-tauri/tauri.signpath-unsigned.conf.json
+
+      - name: Upload unsigned installer for SignPath
+        if: runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'signpath'
+        id: upload-unsigned-windows
+        uses: actions/upload-artifact@v7
+        with:
+          name: signpath-unsigned-${{ matrix.name }}-${{ github.run_id }}
+          path: ${{ matrix.smoke-artifact-root }}/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Sign Linux packages with GPG
         if: runner.os == 'Linux' && needs.validate.outputs.linux_gpg_signing == 'true'
@@ -388,6 +396,7 @@ jobs:
         run: bash .github/scripts/sign-linux.sh "${{ matrix.smoke-artifact-root }}"
 
       - name: Check out release smoke tooling
+        if: runner.os != 'Windows' || needs.validate.outputs.windows_signing_backend != 'signpath'
         uses: actions/checkout@v7
         with:
           ref: ${{ github.workflow_sha }}
@@ -395,18 +404,173 @@ jobs:
           sparse-checkout: .github/actions/platform-smoke
 
       - name: Smoke test release artifact
+        if: runner.os != 'Windows' || needs.validate.outputs.windows_signing_backend != 'signpath'
         uses: ./.release-workflow/.github/actions/platform-smoke
         with:
           artifact-root: ${{ matrix.smoke-artifact-root }}
-          release-validation: ${{ (runner.os == 'Linux' || (runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true') || (runner.os == 'macOS' && needs.validate.outputs.macos_signing == 'true')) && 'true' || 'false' }}
-          windows-signer-subject: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing == 'true' && vars.WINDOWS_SIGNER_SUBJECT || '' }}
+          release-validation: ${{ (runner.os == 'Linux' || (runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend != 'none') || (runner.os == 'macOS' && needs.validate.outputs.macos_signing == 'true')) && 'true' || 'false' }}
+          windows-signer-subject: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend != 'none' && vars.WINDOWS_SIGNER_SUBJECT || '' }}
+          windows-verify-installed-signature: ${{ needs.validate.outputs.windows_signing_backend == 'esign' && 'true' || 'false' }}
           apple-team-id: ${{ runner.os == 'macOS' && needs.validate.outputs.macos_signing == 'true' && secrets.APPLE_TEAM_ID || '' }}
+
+  signpath-windows:
+    name: Build and smoke ${{ matrix.name }}
+    needs: [validate, prepare-release, publish-artifacts]
+    if: ${{ always() && !inputs.verify_only && needs.validate.result == 'success' && needs.prepare-release.result == 'success' && needs.publish-artifacts.result == 'success' && needs.validate.outputs.windows_signing_backend == 'signpath' }}
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      actions: read
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            platform: windows-latest
+          - name: Windows ARM64
+            platform: windows-11-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.release_commit }}
+
+      - name: Resolve immutable unsigned artifact
+        id: unsigned-artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          USAGEDECK_ARTIFACT_NAME: signpath-unsigned-${{ matrix.name }}-${{ github.run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifacts = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/artifacts?per_page=100" | ConvertFrom-Json
+          $matches = @($artifacts.artifacts | Where-Object { $_.name -eq $env:USAGEDECK_ARTIFACT_NAME -and !$_.expired })
+          if ($matches.Count -ne 1) {
+            throw "Expected exactly one Actions artifact named '$env:USAGEDECK_ARTIFACT_NAME', found $($matches.Count)."
+          }
+          "artifact_id=$($matches[0].id)" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Download unsigned reference without executing it
+        uses: actions/download-artifact@v8
+        with:
+          name: signpath-unsigned-${{ matrix.name }}-${{ github.run_id }}
+          path: unsigned-reference
+
+      - name: Submit trusted installer to SignPath and wait for approval
+        # v2, pinned so a mutable action tag cannot alter the release signing boundary.
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned-artifact.outputs.artifact_id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signpath-signed
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.11.0
+          run_install: false
+
+      - name: Install updater signer dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify SignPath output and create updater signature
+        id: verify-signpath-windows
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $unsigned = @(Get-ChildItem -LiteralPath 'unsigned-reference' -Filter '*-setup.exe' -File -Recurse)
+          $signed = @(Get-ChildItem -LiteralPath 'signpath-signed' -Filter '*-setup.exe' -File -Recurse)
+          if ($unsigned.Count -ne 1 -or $signed.Count -ne 1) {
+            throw "Expected one unsigned and one signed NSIS installer; found $($unsigned.Count) and $($signed.Count)."
+          }
+          if ($unsigned[0].Name -ne $signed[0].Name) {
+            throw "SignPath changed the installer name from '$($unsigned[0].Name)' to '$($signed[0].Name)'."
+          }
+          if ((Get-FileHash $unsigned[0].FullName -Algorithm SHA256).Hash -eq
+              (Get-FileHash $signed[0].FullName -Algorithm SHA256).Hash) {
+            throw 'SignPath output is byte-identical to the unsigned installer.'
+          }
+          $bundle = Join-Path $PWD 'release-bundle\nsis'
+          New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+          $final = Join-Path $bundle $signed[0].Name
+          Copy-Item -LiteralPath $signed[0].FullName -Destination $final
+          $signature = Get-AuthenticodeSignature -LiteralPath $final
+          if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+            throw "SignPath Authenticode verification failed: $($signature.StatusMessage)"
+          }
+          if ($null -eq $signature.SignerCertificate) {
+            throw 'SignPath output has no signer certificate.'
+          }
+          if (![string]::IsNullOrWhiteSpace($env:USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT) -and
+              $signature.SignerCertificate.Subject -ne $env:USAGEDECK_EXPECTED_WINDOWS_SIGNER_SUBJECT) {
+            throw "Unexpected SignPath signer subject '$($signature.SignerCertificate.Subject)'."
+          }
+          if ($null -eq $signature.TimeStamperCertificate) {
+            throw 'SignPath output does not contain an Authenticode timestamp.'
+          }
+          corepack pnpm tauri signer sign $final
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath "$final.sig" -PathType Leaf)) {
+            throw 'Tauri updater signing failed for the final Authenticode-signed installer.'
+          }
+          "installer=$final" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "installer_name=$($signed[0].Name)" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "sha256=$((Get-FileHash -LiteralPath $final -Algorithm SHA256).Hash)" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload exact verified installer to draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          USAGEDECK_INSTALLER: ${{ steps.verify-signpath-windows.outputs.installer }}
+          USAGEDECK_INSTALLER_NAME: ${{ steps.verify-signpath-windows.outputs.installer_name }}
+          USAGEDECK_INSTALLER_SHA256: ${{ steps.verify-signpath-windows.outputs.sha256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release upload $env:RELEASE_TAG $env:USAGEDECK_INSTALLER "$env:USAGEDECK_INSTALLER.sig" --clobber
+          $download = Join-Path $env:RUNNER_TEMP "signpath-release-$([Guid]::NewGuid().ToString('N'))"
+          New-Item -ItemType Directory -Path $download | Out-Null
+          gh release download $env:RELEASE_TAG --pattern $env:USAGEDECK_INSTALLER_NAME --dir $download
+          $releasedHash = (Get-FileHash -LiteralPath (Join-Path $download $env:USAGEDECK_INSTALLER_NAME) -Algorithm SHA256).Hash
+          if ($releasedHash -ne $env:USAGEDECK_INSTALLER_SHA256) {
+            throw 'The draft release installer is not the exact SignPath artifact that passed verification.'
+          }
+
+      - name: Check out release smoke tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-workflow
+          sparse-checkout: .github/actions/platform-smoke
+
+      - name: Smoke test signed SignPath installer
+        uses: ./.release-workflow/.github/actions/platform-smoke
+        with:
+          artifact-root: release-bundle
+          release-validation: 'true'
+          windows-signer-subject: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
+          windows-verify-installed-signature: 'false'
 
   publish-release:
     name: Verify and publish release
-    needs: [validate, prepare-release, publish-artifacts]
-    if: ${{ always() && needs.validate.result == 'success' && (inputs.verify_only || (needs.prepare-release.result == 'success' && needs.publish-artifacts.result == 'success')) }}
+    needs: [validate, prepare-release, publish-artifacts, signpath-windows]
+    if: ${{ always() && needs.validate.result == 'success' && (inputs.verify_only || (needs.prepare-release.result == 'success' && needs.publish-artifacts.result == 'success' && ((needs.validate.outputs.windows_signing_backend == 'signpath' && needs.signpath-windows.result == 'success') || (needs.validate.outputs.windows_signing_backend != 'signpath' && needs.signpath-windows.result == 'skipped')))) }}
     runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      checks: read
+      contents: write
     steps:
       - uses: actions/checkout@v7
         with:

@@ -1,8 +1,9 @@
 # Releasing UsageDeck
 
 UsageDeck treats updater signatures and native operating-system signatures as separate trust
-layers. Updater artifacts must always be signed with `TAURI_SIGNING_PRIVATE_KEY`. Native Windows
-and macOS signing are independent opt-ins because they require externally provisioned certificates.
+layers. Updater artifacts must always be signed with `TAURI_SIGNING_PRIVATE_KEY`. Windows uses an
+explicit signing backend; macOS signing remains an independent opt-in because it requires an
+externally provisioned certificate.
 If the updater key is encrypted, also configure `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The updater
 key is project-generated and does not require a paid certificate authority or signing account.
 
@@ -34,24 +35,30 @@ repository:
 Keep the private key out of the repository and out of screenshots. Losing it means users cannot
 receive verified automatic updates from your builds.
 
-## Default release policy
+## Windows signing backend
 
-Leave both native-signing repository variables unset or set them to `false`:
+Set the Actions repository variable `WINDOWS_SIGNING_BACKEND` to exactly one of:
 
-- `ENABLE_WINDOWS_NATIVE_SIGNING`
-- `ENABLE_MACOS_NATIVE_SIGNING`
+| Value      | Behavior                                                                                                   |
+| ---------- | ---------------------------------------------------------------------------------------------------------- |
+| `none`     | Build and publish unsigned NSIS installers; updater signatures remain mandatory.                           |
+| `esign`    | Use the existing SSL.com eSigner Tauri `signCommand` during bundling.                                      |
+| `signpath` | Build NSIS first, submit an Actions artifact to SignPath, then publish only the returned signed installer. |
 
-The release workflow then builds an unsigned Windows installer and an ad-hoc-signed, unnotarized
-macOS application. Package installation and startup smoke tests still run, but Authenticode,
-Gatekeeper, and notarization checks are skipped. The workflow emits warnings, and the download
-documentation describes the unavailable native trust layers.
+Invalid values fail in the validation job before any platform build. If `WINDOWS_SIGNING_BACKEND`
+is unset, the legacy `ENABLE_WINDOWS_NATIVE_SIGNING=true` maps to `esign`; `false` or unset maps to
+`none`. When both variables exist, the explicit backend wins and validation emits a migration
+warning. Remove `ENABLE_WINDOWS_NATIVE_SIGNING` after setting the new variable.
+
+`ENABLE_MACOS_NATIVE_SIGNING` remains independent. With it unset or `false`, macOS uses ad-hoc
+signing and is not notarized. `ENABLE_LINUX_GPG_SIGNING` is also unchanged.
 
 This default does not weaken updater verification. Tauri updater signatures are still generated,
 uploaded, and verified with the bundled public key before publication.
 
-## Enabling Windows native signing
+## SSL.com eSigner fallback
 
-Set `ENABLE_WINDOWS_NATIVE_SIGNING` to `true` only after configuring all of the following:
+Set `WINDOWS_SIGNING_BACKEND=esign` only after configuring all of the following:
 
 | Kind             | Name                     |
 | ---------------- | ------------------------ |
@@ -65,6 +72,63 @@ This enables the reviewed SSL.com CodeSignTool configuration. The workflow then 
 timestamped Authenticode signature on both the installer and installed executable. Missing or
 incorrect values stop the release rather than silently producing an unsigned Windows artifact.
 
+## SignPath Foundation setup (pending approval)
+
+UsageDeck is MIT-licensed and built from the public repository by GitHub Actions. It has no
+UsageDeck-operated backend, analytics, or telemetry, but it does communicate with third-party
+providers selected or authenticated by the user to retrieve usage and quota information. Project
+maintainers review changes, while release approval is controlled by the maintainers and approvers
+configured in GitHub and SignPath. The project retains its OpenQuota/OpenUsage lineage and
+attribution.
+
+SignPath signing is prepared but is not active merely because this workflow exists. After SignPath
+Foundation approves the application, use the SignPath project integration page to configure a
+trusted GitHub Actions build and add these values:
+
+Use `https://usagedeck.app/privacy/` as the public Privacy Policy URL in the SignPath Foundation
+application. The page is deployed from `website/privacy/index.html` by the repository's GitHub
+Pages workflow.
+
+| Kind             | Name                                   | Value                                                                                              |
+| ---------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Actions variable | `SIGNPATH_ORGANIZATION_ID`             | Organization UUID supplied by SignPath.                                                            |
+| Actions variable | `SIGNPATH_PROJECT_SLUG`                | Approved UsageDeck project slug.                                                                   |
+| Actions variable | `SIGNPATH_SIGNING_POLICY_SLUG`         | Approved release policy slug.                                                                      |
+| Actions variable | `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | Artifact configuration that accepts an Actions ZIP containing exactly one UsageDeck `*-setup.exe`. |
+| Actions variable | `WINDOWS_SIGNER_SUBJECT`               | Exact certificate subject after issuance; optional but strongly recommended.                       |
+| Actions secret   | `SIGNPATH_API_TOKEN`                   | Token for the dedicated SignPath CI identity.                                                      |
+
+The artifact configuration must use a ZIP root, constrain the expected NSIS filename inside it, and
+Authenticode-sign that PE installer. NSIS is not one of SignPath's supported deep-signable container formats, so this
+post-build path signs the final installer but does not separately sign the application executable
+embedded inside it. The installer signature protects that payload. The `esign` backend retains its
+stronger check that both the installer and installed executable have the same signer.
+
+Set `WINDOWS_SIGNING_BACKEND=signpath` only after all required values exist and the SignPath trusted
+build-system/origin-verification configuration points at this repository and release workflow.
+Restrict the SignPath release policy to the configured maintainers/approvers and trusted tag builds.
+The action waits up to one hour for policy processing or manual approval; rejection, timeout, or a
+missing value fails the release and leaves the GitHub Release as a draft.
+
+The release order is deliberately:
+
+1. build the unsigned NSIS installer without updater artifacts;
+2. upload it as a short-retention GitHub Actions artifact;
+3. submit that artifact ID to SignPath and retrieve the approved result;
+4. verify its valid, timestamped Authenticode signature and optional expected subject;
+5. generate the Tauri updater `.sig` over the final Authenticode-signed bytes;
+6. upload the verified `.exe` and matching `.sig` to the draft release and compare the released
+   `.exe` SHA-256 with the verified local artifact;
+7. install/start/uninstall smoke-test it, then let the existing release verification create
+   `latest.json`, verify every updater signature, and publish the draft.
+
+Authenticode changes the installer bytes. Reusing the updater `.sig` from the unsigned build would
+make automatic updates fail verification, which is why the SignPath build disables Tauri updater
+artifact creation until after SignPath returns the final file.
+
+When SignPath signing is active, use the required acknowledgement: “Free code signing provided by
+SignPath.io, certificate by SignPath Foundation.”
+
 ## Enabling Linux GPG signing
 
 Linux does not rely on a public CA. UsageDeck signs the Linux installer artifacts
@@ -74,10 +138,10 @@ authority is involved.
 
 Add repository secrets:
 
-| Kind           | Name                | Value                                        |
-| -------------- | ------------------- | -------------------------------------------- |
-| Actions secret | `GPG_PRIVATE_KEY`   | Contents of an armored GPG private key       |
-| Actions secret | `GPG_PASSPHRASE`    | Key passphrase (omit/empty if unencrypted)   |
+| Kind           | Name              | Value                                      |
+| -------------- | ----------------- | ------------------------------------------ |
+| Actions secret | `GPG_PRIVATE_KEY` | Contents of an armored GPG private key     |
+| Actions secret | `GPG_PASSPHRASE`  | Key passphrase (omit/empty if unencrypted) |
 
 Generate the keypair once:
 
@@ -141,10 +205,50 @@ certificate. When enabled, the workflow requires the expected team identity, har
 secure timestamp, Gatekeeper approval, and a valid notarization staple. Missing or incorrect values
 stop the release rather than falling back to ad-hoc signing.
 
-Both opt-ins accept only the exact strings `true` and `false`. An invalid value stops validation so a
-typo cannot silently change release trust policy. A `verify_only` run publishes an already-built
-draft and therefore does not require private signing credentials. The two policy variables must
-still match the draft's native-signing state; a mismatch stops publication.
+The macOS and Linux boolean policy variables accept only the exact strings `true` and `false`. An
+invalid value stops validation so a typo cannot silently change release trust policy. A
+`verify_only` run publishes an already-built draft and therefore does not require private signing
+credentials.
+
+## Testing and fallback
+
+Pull requests and ordinary branch pushes cannot trigger the Release workflow or SignPath. Test
+application changes through CI and local packaging. To exercise release validation without signing
+or publishing a production release, use a temporary semantic version/tag on a commit already merged
+to `main`, keep the resulting GitHub Release as a draft, inspect all artifacts and checks, then delete
+the temporary draft and tag. Use `WINDOWS_SIGNING_BACKEND=none` for a no-certificate rehearsal.
+Do not point the production SignPath release policy at PR events; if SignPath provides a separate
+test certificate/policy, test it with a separate temporary tag and policy slug first.
+
+The normal fallbacks require only a repository-variable change before starting a new release run:
+
+- `none`: no Windows native-signing secrets are read; SmartScreen may warn.
+- `esign`: the four `ES_*` secrets and exact `WINDOWS_SIGNER_SUBJECT` are required.
+- `signpath`: the SignPath token and four non-sensitive IDs/slugs are required; eSigner secrets are
+  not read.
+
+Do not change the backend while a release run is in progress. A failed SignPath approval leaves a
+draft release; either resolve/re-run SignPath with the same backend, or remove the incomplete draft
+assets and start a fresh release run using `esign` or `none`.
+
+### Manual Windows verification
+
+Run these commands in PowerShell on the downloaded installer:
+
+```powershell
+$signature = Get-AuthenticodeSignature -LiteralPath .\UsageDeck_0.7.0_x64-setup.exe
+$signature | Format-List Status, StatusMessage, Path
+$signature.SignerCertificate | Format-List Subject, Thumbprint, NotBefore, NotAfter
+$signature.TimeStamperCertificate | Format-List Subject, NotBefore, NotAfter
+if ($signature.Status -ne 'Valid') { throw 'Invalid Authenticode signature' }
+
+# Optional second verification when the Windows SDK is installed:
+signtool.exe verify /pa /all /tw .\UsageDeck_0.7.0_x64-setup.exe
+```
+
+Compare `SignerCertificate.Subject` with the release's documented identity or the configured
+`WINDOWS_SIGNER_SUBJECT`. For `none`, `Get-AuthenticodeSignature` reports `NotSigned`; that is
+expected only when the release notes explicitly identify the Windows artifacts as unsigned.
 
 ## Cutting a release
 
