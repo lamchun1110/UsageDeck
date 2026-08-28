@@ -509,7 +509,12 @@ pub(crate) fn autostart_is_enabled(app: &AppHandle) -> Result<bool, ()> {
         return Ok(enabled);
     }
     #[cfg(target_os = "linux")]
-    let enabled = xdg_autostart::is_enabled();
+    let enabled = {
+        // The XDG probe reads the autostart file directly; consume the app
+        // handle so Linux builds stay clean under -D warnings.
+        let _ = app;
+        xdg_autostart::is_enabled()
+    };
     #[cfg(not(target_os = "linux"))]
     let enabled = app.autolaunch().is_enabled();
     // Errors stay uncached: a transient probe failure deserves a retry on the
