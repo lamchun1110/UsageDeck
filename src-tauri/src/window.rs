@@ -124,9 +124,12 @@ impl PanelResizeSession {
         let Ok(_guard) = self.persistence.lock() else {
             return;
         };
-        if !self.automatic.load(Ordering::SeqCst) && self.storage.save_panel_height(height).is_ok()
-        {
-            self.generation.fetch_add(1, Ordering::SeqCst);
+        let saved = !self.automatic.load(Ordering::SeqCst)
+            && self.storage.save_panel_height(height).is_ok();
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        if saved {
+            // Bump counted above so a stale in-flight drag (captured before
+            // this bump) cannot later persist its intermediate height.
         }
     }
 

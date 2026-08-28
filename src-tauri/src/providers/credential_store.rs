@@ -60,6 +60,7 @@ pub fn read_generic_password(service: &str, account: &str) -> Result<Option<Vec<
     use windows_sys::Win32::Security::Credentials::{
         CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC,
     };
+    use zeroize::Zeroizing;
 
     let target = format!("{service}:{account}");
     let wide = target.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
@@ -96,6 +97,7 @@ pub fn generic_password_service_exists(
 ) -> Option<bool> {
     use std::{ptr, slice};
     use windows_sys::Win32::Security::Credentials::{CredEnumerateW, CredFree, CREDENTIALW};
+    use zeroize::Zeroizing;
 
     let filter = format!("{service}:*")
         .encode_utf16()
@@ -136,6 +138,7 @@ pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Resul
     use windows_sys::Win32::Security::Credentials::{
         CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
     };
+    use zeroize::Zeroizing;
 
     let target = format!("{service}:{account}")
         .encode_utf16()
@@ -216,6 +219,7 @@ where
     T: Send + 'static,
 {
     use std::sync::mpsc;
+    use zeroize::Zeroizing;
 
     let (sender, receiver) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
@@ -236,6 +240,7 @@ pub fn read_generic_password(service: &str, account: &str) -> Result<Option<Vec<
 #[cfg(target_os = "linux")]
 fn read_generic_password_blocking(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
     use std::collections::HashMap;
+    use zeroize::Zeroizing;
 
     use secret_service::{blocking::SecretService, EncryptionType};
 
@@ -267,6 +272,8 @@ pub fn generic_password_service_exists(
 ) -> Option<bool> {
     use std::collections::HashMap;
     use std::sync::mpsc;
+    use zeroize::Zeroizing;
+    use zeroize::Zeroizing;
 
     use secret_service::{blocking::SecretService, EncryptionType};
 
@@ -297,7 +304,7 @@ pub fn read_owned_password(service: &str, account: &str) -> Result<Option<Vec<u8
 pub fn write_generic_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
     let service = service.to_owned();
     let account = account.to_owned();
-    let value = value.to_vec();
+    let value = zeroize::Zeroizing::new(value.to_vec());
     with_secret_service_timeout(move || write_generic_password_blocking(&service, &account, &value))
 }
 
@@ -308,6 +315,7 @@ fn write_generic_password_blocking(
     value: &[u8],
 ) -> Result<(), String> {
     use std::collections::HashMap;
+    use zeroize::Zeroizing;
 
     use secret_service::{blocking::SecretService, EncryptionType};
 
@@ -338,6 +346,7 @@ pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Resul
 #[cfg(target_os = "linux")]
 fn write_owned_password_blocking(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
     use std::collections::HashMap;
+    use zeroize::Zeroizing;
 
     use secret_service::{blocking::SecretService, EncryptionType};
 
@@ -374,6 +383,7 @@ pub fn delete_generic_password(service: &str, account: &str) -> Result<(), Strin
 #[cfg(target_os = "linux")]
 fn delete_generic_password_blocking(service: &str, account: &str) -> Result<(), String> {
     use std::collections::HashMap;
+    use zeroize::Zeroizing;
 
     use secret_service::{blocking::SecretService, EncryptionType};
 
