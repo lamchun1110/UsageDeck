@@ -146,17 +146,36 @@ fn status_notifier_host_available() -> bool {
         Ok("unavailable") => return false,
         _ => {}
     }
-    let Ok(connection) = zbus::blocking::Connection::session() else {
-        return false;
-    };
-    let Ok(proxy) = zbus::blocking::fdo::DBusProxy::new(&connection) else {
-        return false;
-    };
-    proxy.list_names().is_ok_and(|names| {
-        names
-            .iter()
-            .any(|name| name.as_str() == "org.kde.StatusNotifierWatcher")
-    })
+    probe_status_notifier_watcher_available()
+}
+
+#[cfg(target_os = "linux")]
+fn probe_status_notifier_watcher_available() -> bool {
+    probe_status_notifier_watcher_with_timeout(std::time::Duration::from_secs(3))
+}
+
+#[cfg(target_os = "linux")]
+fn probe_status_notifier_watcher_with_timeout(timeout: std::time::Duration) -> bool {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let available = {
+            let Ok(connection) = zbus::blocking::Connection::session() else {
+                return false;
+            };
+            let Ok(proxy) = zbus::blocking::fdo::DBusProxy::new(&connection) else {
+                return false;
+            };
+            proxy.list_names().is_ok_and(|names| {
+                names
+                    .iter()
+                    .any(|name| name.as_str() == "org.kde.StatusNotifierWatcher")
+            })
+        };
+        let _ = sender.send(available);
+    });
+    // A wedged or unreachable session bus must not park the setup thread
+    // (and therefore the whole app launch) indefinitely.
+    receiver.recv_timeout(timeout).ok().unwrap_or(false)
 }
 
 #[cfg(target_os = "linux")]
