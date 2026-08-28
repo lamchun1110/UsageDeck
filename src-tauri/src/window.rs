@@ -453,6 +453,14 @@ fn panel_resize_edge_for_frames(
     }
 }
 
+fn resolve_monitor(window: &WebviewWindow) -> Result<tauri::Monitor, String> {
+    window
+        .current_monitor()
+        .map_err(|_| "UsageDeck display is unavailable.")?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or("UsageDeck display is unavailable.".to_owned())
+}
+
 fn panel_resize_edge_for_context(
     current: VerticalFrame,
     work_area: VerticalFrame,
@@ -488,10 +496,7 @@ pub fn panel_resize_edge(window: &WebviewWindow) -> Result<PanelResizeEdge, Stri
     let size = window
         .outer_size()
         .map_err(|_| "UsageDeck window size is unavailable.")?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|_| "UsageDeck display is unavailable.")?
-        .ok_or("UsageDeck display is unavailable.")?;
+    let monitor = resolve_monitor(window)?;
     let work_area = monitor.work_area();
     Ok(panel_resize_edge_for_context(
         VerticalFrame {
@@ -522,10 +527,7 @@ fn panel_maximum_height(window: &WebviewWindow) -> Result<u32, String> {
     let scale = window
         .scale_factor()
         .map_err(|_| "UsageDeck display scale is unavailable.")?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|_| "UsageDeck display is unavailable.")?
-        .ok_or("UsageDeck display is unavailable.")?;
+    let monitor = resolve_monitor(window)?;
     let work_area = monitor.work_area();
     let current = VerticalFrame {
         top: position.y,
@@ -778,10 +780,7 @@ pub fn resize_popup_anchored(window: &WebviewWindow, height: u32) -> Result<(), 
     let scale = window
         .scale_factor()
         .map_err(|_| "UsageDeck display scale is unavailable.")?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|_| "UsageDeck display is unavailable.")?
-        .ok_or("UsageDeck display is unavailable.")?;
+    let monitor = resolve_monitor(window)?;
     let work_area = monitor.work_area();
     let frame_overhead = outer_size.height.saturating_sub(inner_size.height);
     let target_inner_height = (f64::from(height) * scale)
@@ -827,10 +826,7 @@ pub fn resize_popup_anchored(window: &WebviewWindow, height: u32) -> Result<(), 
     let outer_size = window
         .outer_size()
         .map_err(|_| "UsageDeck window size is unavailable.")?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|_| "UsageDeck display is unavailable.")?
-        .ok_or("UsageDeck display is unavailable.")?;
+    let monitor = resolve_monitor(window)?;
     let work_area = monitor.work_area();
     let scale = window
         .scale_factor()
