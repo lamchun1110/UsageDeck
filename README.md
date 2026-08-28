@@ -66,7 +66,8 @@ key, which is a separate thing from operating-system package signing.
 
 ### Release signatures
 
-- **Windows:** the release notes state the signing status for that release. Unsigned installers
+- **Windows:** each release's notes state that release's signing status — unsigned, or
+  Authenticode-signed when a signing backend was configured for that build. Unsigned installers
   can trigger Microsoft SmartScreen warnings; do not infer signing status from this README.
 - **macOS:** official releases are signed with an Apple Developer ID certificate and notarized by
   Apple when the `ENABLE_MACOS_NATIVE_SIGNING` repository variable is set to `true`. Signed releases
