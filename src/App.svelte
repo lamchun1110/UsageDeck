@@ -38,6 +38,7 @@
   import { restoreCustomization } from './lib/customizationHistory';
   import Dashboard from './lib/Dashboard.svelte';
   import Icon from './lib/Icon.svelte';
+  import Sheet from './lib/Sheet.svelte';
   import { createListenerRegistry } from './lib/listenerRegistry';
   import { setLanguage, t } from './lib/i18n.svelte';
   import { emptyProviderCatalog, ProviderCatalogIndex } from './lib/metrics';
@@ -88,8 +89,6 @@
   let resettingAllSettings = $state(false);
   let resettingProviderId = $state<string | null>(null);
   let showAbout = $state(false);
-  let aboutTrigger: HTMLElement | null = null;
-  let aboutCloseButton = $state<HTMLButtonElement>();
   let shareMenuOpen = $state(false);
   let optionsMenuElement = $state<HTMLDetailsElement>();
   let shareMenuElement = $state<HTMLDetailsElement>();
@@ -492,30 +491,11 @@
     if (screen.startsWith('provider:')) return providerDisplayName(screen.slice(9));
     return screen === 'settings' ? t('app.title.settings') : t('app.title.customize');
   }
-  async function openAbout() {
-    aboutTrigger = optionsMenuElement?.querySelector<HTMLElement>(':scope > summary') ?? null;
+  function openAbout() {
     showAbout = true;
-    await tick();
-    aboutCloseButton?.focus();
   }
-  async function closeAbout() {
+  function closeAbout() {
     showAbout = false;
-    await tick();
-    aboutTrigger?.focus();
-    aboutTrigger = null;
-  }
-  function closeAboutFromBackdrop(event: MouseEvent) {
-    if (event.target === event.currentTarget) void closeAbout();
-  }
-  function handleAboutKeydown(event: KeyboardEvent) {
-    event.stopPropagation();
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      void closeAbout();
-    } else if (event.key === 'Tab') {
-      event.preventDefault();
-      aboutCloseButton?.focus();
-    }
   }
   function ownsEnterKey(target: EventTarget | null) {
     if (!(target instanceof Element)) return false;
@@ -1215,33 +1195,29 @@
     {/if}
 
     {#if showAbout}
-      <div
-        class="about-backdrop"
-        role="presentation"
-        onclick={closeAboutFromBackdrop}
-        onkeydown={handleAboutKeydown}
+      <Sheet
+        label={t('app.menu.about')}
+        centered
+        plain
+        chromeless
+        dismissOnBackdrop
+        restoreFocusTo={() =>
+          optionsMenuElement?.querySelector<HTMLElement>(':scope > summary') ?? null}
+        onDismiss={closeAbout}
       >
-        <div
-          class="about-card"
-          role="dialog"
-          tabindex="-1"
-          aria-modal="true"
-          aria-label={t('app.menu.about')}
-        >
+        <div class="about-card">
           <button
-            bind:this={aboutCloseButton}
             class="about-card__close"
             type="button"
             aria-label={t('app.closeAbout')}
-            onclick={() => void closeAbout()}
-            ><Icon name="close" size={11} strokeWidth={2.3} /></button
+            onclick={closeAbout}><Icon name="close" size={11} strokeWidth={2.3} /></button
           >
           <UsageDeckMark size={44} />
           <h1>UsageDeck</h1>
           <p>{t('app.version', { version: appVersion })}</p>
           <small>{t('app.aboutTagline')}</small>
         </div>
-      </div>
+      </Sheet>
     {/if}
   {:else}
     <div class="content">
@@ -1934,17 +1910,6 @@
 
     .transient-pill .symbol-icon {
       color: var(--success);
-    }
-
-    .about-backdrop {
-      position: absolute;
-      z-index: 100;
-      display: grid;
-      border: 0;
-      background: rgba(0, 0, 0, 0.28);
-      inset: 0;
-      place-items: center;
-      backdrop-filter: blur(6px);
     }
 
     .about-card {
