@@ -82,6 +82,8 @@ export const en = {
   'trend.aria': '30-day token chart. Peak {peak} tokens on {date}.',
   'value.estimatedLocally': 'Estimated locally, so it may differ from billed usage.',
   'reset.applied': 'Reset applied.',
+  'reset.description': "Immediately reset your usage limits. This can't be undone.",
+  'reset.useExpiringAria': 'Use reset expiring {time}',
   'reset.nothingToReset': 'No active limit needs resetting.',
   'reset.noLongerAvailable': 'This reset is no longer available.',
   'reset.failed': 'Could not use this reset. Try again.',

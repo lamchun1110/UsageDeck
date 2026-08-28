@@ -82,6 +82,8 @@ export const ja = {
   'trend.aria': '過去30日間のトークンチャート。最大 {peak} tokens（{date}）。',
   'value.estimatedLocally': 'ローカルで推定しているため、請求額と異なる場合があります。',
   'reset.applied': 'リセットを適用しました。',
+  'reset.description': '使用量の上限をすぐにリセットします。この操作は元に戻せません。',
+  'reset.useExpiringAria': '{time} に期限切れになるリセットを使用',
   'reset.nothingToReset': 'リセットが必要な有効な上限はありません。',
   'reset.noLongerAvailable': 'このリセットは利用できなくなりました。',
   'reset.failed': 'このリセットを使用できませんでした。もう一度お試しください。',

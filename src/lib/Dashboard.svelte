@@ -378,7 +378,7 @@
     <button
       class="hint-card__dismiss"
       type="button"
-      aria-label="Dismiss"
+      aria-label={t('dashboard.dismiss')}
       onclick={() =>
         onSettingsChange({
           ...settings,
@@ -394,8 +394,11 @@
       <strong>{t('dashboard.welcome.title')}</strong><span>{t('dashboard.welcome.body')}</span>
     </div>
     <button type="button" onclick={onCustomize}>{t('dashboard.welcome.openCustomize')}</button>
-    <button class="dismiss" type="button" aria-label="Dismiss" onclick={dismissDetection}
-      ><Icon name="close" size={10} strokeWidth={2.2} /></button
+    <button
+      class="dismiss"
+      type="button"
+      aria-label={t('dashboard.dismiss')}
+      onclick={dismissDetection}><Icon name="close" size={10} strokeWidth={2.2} /></button
     >
   </section>
 {/if}

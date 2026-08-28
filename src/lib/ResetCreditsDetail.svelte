@@ -170,9 +170,7 @@
                   aria-describedby={`reset-confirm-message-${index}`}
                 >
                   <strong id={`reset-confirm-title-${index}`}>{t('reset.useTitle')}</strong>
-                  <span id={`reset-confirm-message-${index}`}
-                    >Immediately reset your usage limits. This can't be undone.</span
-                  >
+                  <span id={`reset-confirm-message-${index}`}>{t('reset.description')}</span>
                   <div>
                     <button
                       class="reset-confirm-primary"
@@ -198,7 +196,7 @@
                       class="reset-use"
                       type="button"
                       data-reset-trigger={index}
-                      aria-label={`Use reset expiring ${entry.exact}`}
+                      aria-label={t('reset.useExpiringAria', { time: entry.exact })}
                       disabled={pendingExpiry !== null}
                       onclick={() => void beginClaim(entry.expiry, index)}>{t('reset.use')}</button
                     >

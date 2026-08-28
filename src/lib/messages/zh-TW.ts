@@ -82,6 +82,8 @@ export const zhTW = {
   'trend.aria': '近 30 天 token 圖表。峰值 {peak} tokens，日期 {date}。',
   'value.estimatedLocally': '由本機估算，可能與實際帳單有所不同。',
   'reset.applied': '重置已套用。',
+  'reset.description': '立即重置你的用量上限，此操作無法復原。',
+  'reset.useExpiringAria': '使用將於 {time} 到期的重置',
   'reset.nothingToReset': '沒有需要重置的生效額度。',
   'reset.noLongerAvailable': '此重置已無法使用。',
   'reset.failed': '無法使用此重置，請再試一次。',

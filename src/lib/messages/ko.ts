@@ -82,6 +82,8 @@ export const ko = {
   'trend.aria': '최근 30일 토큰 차트. 최대 {peak} tokens ({date}).',
   'value.estimatedLocally': '로컬에서 추정한 값으로 실제 청구액과 다를 수 있습니다.',
   'reset.applied': '재설정이 적용되었습니다.',
+  'reset.description': '사용량 한도를 즉시 재설정합니다. 이 작업은 되돌릴 수 없습니다.',
+  'reset.useExpiringAria': '{time}에 만료되는 재설정 사용',
   'reset.nothingToReset': '재설정이 필요한 활성 한도가 없습니다.',
   'reset.noLongerAvailable': '이 재설정은 더 이상 사용할 수 없습니다.',
   'reset.failed': '이 재설정을 사용할 수 없습니다. 다시 시도해 주세요.',
