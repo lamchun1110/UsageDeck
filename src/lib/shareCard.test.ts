@@ -3,6 +3,7 @@ import { codexState, providerCatalogIndex, settingsState } from '../test/appFixt
 import { ProviderCatalogIndex } from './metrics';
 import {
   buildProviderShareRows as buildProviderShareRowsWithCatalog,
+  copyShareCard,
   providerIconPlacement,
   providerShareCardHeight,
   SHARE_CARD_SCALE,
@@ -20,9 +21,27 @@ function buildProviderShareRows(
   return buildProviderShareRowsWithCatalog(providerCatalogIndex, snapshot, layout, settings, now);
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('share card layout', () => {
+  it('falls back to copying provider text when image clipboard items are unavailable', async () => {
+    vi.stubGlobal('ClipboardItem', undefined);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const canvas = document.createElement('canvas');
+    canvas.toBlob = (callback) => callback(new Blob(['png'], { type: 'image/png' }));
+
+    await copyShareCard(canvas, 'Codex\n75% left');
+
+    expect(writeText).toHaveBeenCalledWith('Codex\n75% left');
+  });
+
   it('uses the authored width and 4x export scale', () => {
     expect(SHARE_CARD_WIDTH).toBe(360);
     expect(SHARE_CARD_SCALE).toBe(4);

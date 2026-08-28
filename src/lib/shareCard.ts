@@ -224,6 +224,20 @@ export function renderProviderShareCard(
   return canvas;
 }
 
+export async function copyShareCard(canvas: HTMLCanvasElement, fallback: string) {
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (value) => (value ? resolve(value) : reject(new Error('PNG unavailable'))),
+      'image/png',
+    ),
+  );
+  if (typeof ClipboardItem !== 'undefined' && navigator.clipboard.write) {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+  } else {
+    await navigator.clipboard.writeText(fallback);
+  }
+}
+
 function quotaShareRow(quota: QuotaWindow, settings: AppSettings, now: number): ShareRow {
   const used = clamp(quota.usedPercent, 0, 100);
   const remaining = Math.max(0, 100 - used);

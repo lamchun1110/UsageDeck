@@ -1,14 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
   import {
-    beginPanelResize,
     dismissMainWindow,
     getBootstrapState,
     getLogPath,
-    getPanelHeightMode,
-    getPanelResizeEdge,
-    lockPanelResizeAxis,
     onOpenScreen,
     onMainWindowHidden,
     onSettingsState,
@@ -25,13 +20,9 @@
     resetAllSettings as resetAllSettingsCommand,
     resetCustomization as resetCustomizationCommand,
     resetProviderCustomization as resetProviderCustomizationCommand,
-    setPanelHeightAutomatic,
-    setPanelHeightManual,
-    setPanelWidth,
-    currentPanelWidth,
-    type PanelHeightMode,
-    type PanelResizeEdge,
   } from './lib/backend';
+  import AboutDialog from './lib/AboutDialog.svelte';
+  import { AppKeyboardController } from './lib/appKeyboardController';
   import CustomizeProviderDetail from './lib/CustomizeProviderDetail.svelte';
   import CustomizeProviderList from './lib/CustomizeProviderList.svelte';
   import ConfirmationSheet from './lib/ConfirmationSheet.svelte';
@@ -39,17 +30,22 @@
   import Dashboard from './lib/Dashboard.svelte';
   import Icon from './lib/Icon.svelte';
   import DashboardSkeleton from './lib/DashboardSkeleton.svelte';
-  import Sheet from './lib/Sheet.svelte';
   import { createListenerRegistry } from './lib/listenerRegistry';
   import { setLanguage, t } from './lib/i18n.svelte';
   import { emptyProviderCatalog, ProviderCatalogIndex } from './lib/metrics';
   import { springMotion } from './lib/motion';
+  import { OptionsMenuController } from './lib/optionsMenuController.svelte';
+  import {
+    PANEL_MAX_WIDTH,
+    PANEL_MIN_WIDTH,
+    PanelResizeController,
+  } from './lib/panelResizeController.svelte';
   import UsageDeckMark from './lib/UsageDeckMark.svelte';
   import { horizontalPageTransition, shouldSlideBetweenScreens } from './lib/pageTransition';
   import { desktopPlatform, shortcutLabels } from './lib/platform';
   import { withProviderName } from './lib/providerNames';
   import RenameProviderSheet from './lib/RenameProviderSheet.svelte';
-  import { buildProviderShareRows, renderProviderShareCard } from './lib/shareCard';
+  import { buildProviderShareRows, copyShareCard, renderProviderShareCard } from './lib/shareCard';
   import SettingsScreen from './lib/SettingsScreen.svelte';
   import { SettingsController } from './lib/settingsController.svelte';
   import type { AppSettings, BootstrapState, UsageViewState } from './lib/types';
@@ -60,9 +56,6 @@
   type Screen = AppScreen;
   const appVersion = import.meta.env.APP_VERSION;
   const emptyView: UsageViewState = { providers: {} };
-  const PANEL_MIN_WIDTH = 320;
-  const PANEL_MAX_WIDTH = 560;
-  const PANEL_WIDTH_STEP = 16;
 
   let viewState = $state<UsageViewState>(emptyView);
   let catalog = $state<ProviderCatalogIndex>(emptyProviderCatalog);
@@ -90,9 +83,6 @@
   let resettingAllSettings = $state(false);
   let resettingProviderId = $state<string | null>(null);
   let showAbout = $state(false);
-  let shareMenuOpen = $state(false);
-  let optionsMenuElement = $state<HTMLDetailsElement>();
-  let shareMenuElement = $state<HTMLDetailsElement>();
   let shareTimer: ReturnType<typeof setTimeout> | undefined;
   const providerStates = $derived(Object.values(viewState.providers));
   const anyRefreshing = $derived(
@@ -113,23 +103,22 @@
   const providerDisplayName = (id: string) =>
     catalog.displayName(id, settingsState?.settings.providerNames);
   const updates = new UpdateController();
-  let resizeEdge = $state<PanelResizeEdge>(platform === 'windows' ? 'top' : 'bottom');
-  const renderedResizeEdge = $derived(floatingWindow ? 'bottom' : resizeEdge);
-  let panelHeightMode = $state<PanelHeightMode>('automatic');
-  let panelWidth = $state(380);
-  let panelHeightModeRequest = 0;
-  let panelHeightModeMutation: Promise<void> = Promise.resolve();
+  const optionsMenu = new OptionsMenuController();
   let renameCard = $state<{ id: string; initialValue: string } | null>(null);
-  let lastResizeGripPointerAt = Number.NEGATIVE_INFINITY;
-  let panelResizeOperation: Promise<void> | null = null;
   const windowController = createWindowController({
     screen: () => screen,
     refreshing: () => anyRefreshing,
     reordering: () => reordering,
-    automatic: () => panelHeightMode === 'automatic',
+    automatic: () => panelResize.heightMode === 'automatic',
     reducedMotion: () => reducedMotion,
     onError: (message) => (settingsError = message),
   });
+  const panelResize = new PanelResizeController({
+    platform,
+    scheduleFit: () => windowController.scheduleFit(),
+    onError: (message) => (settingsError = message),
+  });
+  const renderedResizeEdge = $derived(floatingWindow ? 'bottom' : panelResize.edge);
 
   $effect(() => {
     const root = document.documentElement;
@@ -171,7 +160,7 @@
     void dismissMainWindow();
   }
   function resetTransientUi() {
-    closeOptionsMenu();
+    optionsMenu.close();
     showAbout = false;
     resetConfirmationOpen = false;
     settingsResetConfirmationOpen = false;
@@ -213,7 +202,7 @@
     const windowModeChanged = settingsState?.settings.windowMode !== next.windowMode;
     if (windowModeChanged) beginContentMorph();
     const save = settingsController.save(next);
-    if (windowModeChanged) void save.finally(updatePanelResizeEdge);
+    if (windowModeChanged) void save.finally(() => panelResize.refreshEdge());
   }
 
   function toggleFloatingWindow() {
@@ -427,36 +416,21 @@
     if (windowModeChanged) beginContentMorph();
     resettingAllSettings = true;
     try {
-      await panelHeightModeMutation;
+      await panelResize.waitForHeightModeMutation();
       await settingsController.runMutation((expectedSettingsRevision, expectedAccountRevision) =>
         resetAllSettingsCommand(expectedSettingsRevision, expectedAccountRevision),
       );
       customizationHistory = [];
-      updatePanelHeightMode();
-      updatePanelResizeEdge();
+      panelResize.refresh();
       settingsError = null;
       showConfirmation(t('app.confirm.allSettingsRestored'));
     } catch {
       settingsError = t('app.error.settingsReset');
-      updatePanelHeightMode();
+      panelResize.refreshHeightMode();
     } finally {
       resettingAllSettings = false;
       settingsResetConfirmationOpen = false;
     }
-  }
-  async function copyCanvas(canvas: HTMLCanvasElement, fallback: string) {
-    const blob = await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob(
-        (value) => (value ? resolve(value) : reject(new Error('PNG unavailable'))),
-        'image/png',
-      ),
-    );
-    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard.write) {
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-    } else {
-      await navigator.clipboard.writeText(fallback);
-    }
-    showConfirmation(t('app.confirm.copiedToClipboard'));
   }
   async function shareProvider(providerId: string) {
     const current = settingsState;
@@ -475,7 +449,8 @@
         plan: provider.plan,
         rows,
       });
-      await copyCanvas(canvas, snapshot);
+      await copyShareCard(canvas, snapshot);
+      showConfirmation(t('app.confirm.copiedToClipboard'));
     } catch {
       settingsError = t('app.error.screenshotCopy');
     }
@@ -497,196 +472,6 @@
   }
   function closeAbout() {
     showAbout = false;
-  }
-  function ownsEnterKey(target: EventTarget | null) {
-    if (!(target instanceof Element)) return false;
-    return (
-      target.closest(
-        'button, a, input, select, textarea, summary, [contenteditable], [role="button"], [role="menuitem"], [role="option"], [role="combobox"]',
-      ) !== null
-    );
-  }
-  function handleOptionsKey(event: KeyboardEvent) {
-    const menu = (event.currentTarget as HTMLElement).closest<HTMLDetailsElement>(
-      'details.options-menu',
-    );
-    if (!menu) return;
-    if (event.key !== 'Escape' || !menu.open) return;
-    event.preventDefault();
-    event.stopPropagation();
-    closeOptionsMenu(true);
-  }
-  function closeOptionsMenu(restoreFocus = false) {
-    if (shareMenuElement?.open) shareMenuElement.open = false;
-    shareMenuOpen = false;
-    if (!optionsMenuElement?.open) return;
-    optionsMenuElement.open = false;
-    if (restoreFocus) optionsMenuElement.querySelector<HTMLElement>('summary')?.focus();
-  }
-  function handleWindowPointerDown(event: PointerEvent) {
-    if (
-      optionsMenuElement?.open &&
-      event.target instanceof Node &&
-      !optionsMenuElement.contains(event.target)
-    ) {
-      closeOptionsMenu();
-    }
-  }
-  function updatePanelResizeEdge() {
-    if (!('__TAURI_INTERNALS__' in window)) return;
-    void getPanelResizeEdge()
-      .then((edge) => (resizeEdge = edge))
-      .catch(() => undefined);
-  }
-  function updatePanelHeightMode() {
-    if (!('__TAURI_INTERNALS__' in window)) return;
-    const request = ++panelHeightModeRequest;
-    void getPanelHeightMode()
-      .then((mode) => {
-        if (request !== panelHeightModeRequest) return;
-        panelHeightMode = mode;
-        if (mode === 'automatic') scheduleWindowFit();
-      })
-      .catch(() => undefined);
-  }
-  function acceptPanelHeightMode(mode: PanelHeightMode) {
-    panelHeightModeRequest += 1;
-    panelHeightMode = mode;
-  }
-  function handlePanelResizePointerDown(event: PointerEvent) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const pointerAt = event.timeStamp;
-    const repeatedPress = event.detail > 1 || pointerAt - lastResizeGripPointerAt <= 400;
-    lastResizeGripPointerAt = repeatedPress ? Number.NEGATIVE_INFINITY : pointerAt;
-    if (repeatedPress) {
-      const activeResize = panelResizeOperation;
-      void (async () => {
-        if (activeResize) await activeResize;
-        await changePanelHeightMode('automatic');
-      })();
-      return;
-    }
-    const operation = (async () => {
-      try {
-        await panelHeightModeMutation;
-        const edge = await beginPanelResize();
-        resizeEdge = edge;
-        // The native begin command has already persisted the current height as manual. Mirroring it
-        // here stops any in-flight frontend auto-fit without waiting for the first resize event.
-        acceptPanelHeightMode('manual');
-        // TODO(macOS): Tao 0.35 reports native resize dragging as unsupported and Tauri currently
-        // swallows that runtime error. Re-test after Tauri/Tao upgrades; add an AppKit fallback if
-        // upstream support is still unavailable.
-        await getCurrentWindow().startResizeDragging(edge === 'top' ? 'North' : 'South');
-      } catch {
-        settingsError = t('app.error.resizeStart');
-      } finally {
-        await lockPanelResizeAxis().catch(() => undefined);
-        updatePanelHeightMode();
-      }
-    })();
-    panelResizeOperation = operation;
-    void operation.finally(() => {
-      if (panelResizeOperation === operation) panelResizeOperation = null;
-    });
-  }
-  function handlePanelWidthResizePointerDown(event: PointerEvent) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const dragger = event.currentTarget as HTMLElement;
-    dragger.setPointerCapture(event.pointerId);
-    void (async () => {
-      try {
-        // Manual pointer-tracked resize: programmatic setSize on each move. Unlike the native
-        // startResizeDragging gesture (unreliable for borderless windows), this works everywhere.
-        const startWidth = await currentPanelWidth();
-        panelWidth = clampPanelWidth(startWidth);
-        const startX = event.clientX;
-        let latestWidth = startWidth;
-        let animationFrame: number | null = null;
-        let resizeOperation = Promise.resolve();
-        const queueLatestWidth = () => {
-          if (animationFrame !== null) return;
-          animationFrame = requestAnimationFrame(() => {
-            animationFrame = null;
-            const width = latestWidth;
-            resizeOperation = resizeOperation
-              .then(() => setPanelWidth(width))
-              .catch(() => undefined);
-          });
-        };
-        const onMove = (moveEvent: PointerEvent) => {
-          latestWidth = startWidth + (moveEvent.clientX - startX);
-          panelWidth = clampPanelWidth(latestWidth);
-          queueLatestWidth();
-        };
-        const finish = () => {
-          window.removeEventListener('pointermove', onMove);
-          window.removeEventListener('pointerup', finish);
-          window.removeEventListener('pointercancel', finish);
-          if (dragger.hasPointerCapture(event.pointerId)) {
-            dragger.releasePointerCapture(event.pointerId);
-          }
-          if (animationFrame !== null) {
-            cancelAnimationFrame(animationFrame);
-            animationFrame = null;
-            const width = latestWidth;
-            resizeOperation = resizeOperation
-              .then(() => setPanelWidth(width))
-              .catch(() => undefined);
-          }
-          void resizeOperation.finally(() => lockPanelResizeAxis().catch(() => undefined));
-        };
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', finish);
-        window.addEventListener('pointercancel', finish);
-      } catch {
-        settingsError = t('app.error.widthResize');
-      }
-    })();
-  }
-  function clampPanelWidth(width: number) {
-    return Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, Math.round(width)));
-  }
-  async function handlePanelWidthKeydown(event: KeyboardEvent) {
-    if (!['Home', 'End', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    try {
-      let target: number;
-      if (event.key === 'Home') target = PANEL_MIN_WIDTH;
-      else if (event.key === 'End') target = PANEL_MAX_WIDTH;
-      else {
-        const currentWidth = clampPanelWidth(await currentPanelWidth());
-        const direction = event.key === 'ArrowLeft' ? -1 : 1;
-        target = currentWidth + direction * PANEL_WIDTH_STEP * (event.shiftKey ? 2 : 1);
-      }
-      panelWidth = clampPanelWidth(target);
-      await setPanelWidth(panelWidth);
-      await lockPanelResizeAxis();
-    } catch {
-      settingsError = t('app.error.widthResize');
-    }
-  }
-  async function changePanelHeightMode(mode: PanelHeightMode) {
-    if (!('__TAURI_INTERNALS__' in window)) return;
-    const request = ++panelHeightModeRequest;
-    const operation = panelHeightModeMutation.then(() =>
-      mode === 'automatic' ? setPanelHeightAutomatic() : setPanelHeightManual(),
-    );
-    panelHeightModeMutation = operation.catch(() => undefined);
-    try {
-      await operation;
-      if (request === panelHeightModeRequest) updatePanelHeightMode();
-    } catch {
-      if (request !== panelHeightModeRequest) return;
-      settingsError = t('app.error.heightMode');
-      updatePanelHeightMode();
-    }
   }
   async function requestNotifications() {
     if (!settingsState) return;
@@ -772,12 +557,10 @@
     const refreshWindowState = () => {
       if (bootstrapFailed) loadBootstrapState();
       void settingsController.refreshIfIdle();
-      updatePanelResizeEdge();
-      updatePanelHeightMode();
+      panelResize.refresh();
       scheduleWindowFit();
     };
-    updatePanelResizeEdge();
-    updatePanelHeightMode();
+    panelResize.refresh();
     window.addEventListener('focus', refreshWindowState);
 
     const popover = document.querySelector<HTMLElement>('.popover');
@@ -797,43 +580,18 @@
       mutationObserver.observe(popover, { childList: true, subtree: true, characterData: true });
     }
     observePanelParts();
-    const handleKeydown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing) return;
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        if (showAbout) {
-          void closeAbout();
-          return;
-        }
-        back();
-      } else if (event.key === 'Enter' && screen === 'dashboard' && !ownsEnterKey(event.target)) {
-        event.preventDefault();
-        navigate('customize');
-      } else if ((event.ctrlKey || event.metaKey) && event.key === ',') {
-        event.preventDefault();
-        navigate(screen === 'settings' ? 'dashboard' : 'settings');
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
-        event.preventDefault();
-        void refresh();
-      } else if (
-        (event.ctrlKey || event.metaKey) &&
-        event.key.toLowerCase() === 'z' &&
-        !(event.target instanceof HTMLInputElement) &&
-        !(event.target instanceof HTMLTextAreaElement)
-      ) {
-        event.preventDefault();
-        undoCustomization();
-      } else if (
-        (event.ctrlKey || event.metaKey) &&
-        event.key.toLowerCase() === 'q' &&
-        !(event.target instanceof HTMLInputElement) &&
-        !(event.target instanceof HTMLTextAreaElement)
-      ) {
-        event.preventDefault();
-        quitApp();
-      }
-    };
-    document.addEventListener('keydown', handleKeydown);
+    const keyboard = new AppKeyboardController({
+      screen: () => screen,
+      aboutOpen: () => showAbout,
+      closeAbout,
+      back,
+      openCustomize: () => navigate('customize'),
+      toggleSettings: () => navigate(screen === 'settings' ? 'dashboard' : 'settings'),
+      refresh: () => void refresh(),
+      undoCustomization,
+      quit: quitApp,
+    });
+    const stopKeyboard = keyboard.listen();
     const clock = window.setInterval(() => (now = Date.now()), 30_000);
     const listeners = createListenerRegistry(() => {
       settingsError ??= t('app.error.eventBridge');
@@ -864,7 +622,7 @@
     );
     loadBootstrapState();
     return () => {
-      document.removeEventListener('keydown', handleKeydown);
+      stopKeyboard();
       window.clearInterval(clock);
       windowController.dispose();
       motionQuery.removeEventListener('change', updateMotionPreference);
@@ -878,7 +636,7 @@
 </script>
 
 <svelte:head><meta name="color-scheme" content="light dark" /></svelte:head>
-<svelte:window onpointerdown={handleWindowPointerDown} />
+<svelte:window onpointerdown={(event) => optionsMenu.handleWindowPointerDown(event)} />
 
 <main
   class="popover"
@@ -897,7 +655,7 @@
       role="separator"
       aria-label={t('app.resizeHeight')}
       aria-orientation="horizontal"
-      onpointerdown={handlePanelResizePointerDown}
+      onpointerdown={(event) => panelResize.handleHeightPointerDown(event)}
     ></div>
   {/if}
   {#if floatingWindow}
@@ -1007,9 +765,9 @@
               <SettingsScreen
                 settingsView={settingsState}
                 {platform}
-                {panelHeightMode}
+                panelHeightMode={panelResize.heightMode}
                 onChange={saveSettings}
-                onPanelHeightModeChange={(mode) => void changePanelHeightMode(mode)}
+                onPanelHeightModeChange={(mode) => void panelResize.changeHeightMode(mode)}
                 onRequestNotifications={requestNotifications}
                 onOpenNotificationSettings={openNotificationSettings}
                 updateError={updates.error}
@@ -1080,8 +838,10 @@
                 <Icon name={floatingWindow ? 'pin-filled' : 'pin'} size={14} strokeWidth={1.9} />
               </button>
             {/if}
-            <details class="options-menu" bind:this={optionsMenuElement}>
-              <summary aria-label={t('app.options.open')} onkeydown={handleOptionsKey}
+            <details class="options-menu" bind:this={optionsMenu.optionsElement}>
+              <summary
+                aria-label={t('app.options.open')}
+                onkeydown={(event) => optionsMenu.handleKey(event)}
                 ><span>{t('app.options.label')}</span><Icon
                   name="chevron-down"
                   size={11}
@@ -1093,10 +853,10 @@
                 role="menu"
                 aria-label={t('app.options.menuLabel')}
                 tabindex="-1"
-                onkeydown={handleOptionsKey}
+                onkeydown={(event) => optionsMenu.handleKey(event)}
                 onclick={(event) => {
                   if (event.target instanceof Element && event.target.closest('button')) {
-                    closeOptionsMenu();
+                    optionsMenu.close();
                   }
                 }}
               >
@@ -1118,9 +878,9 @@
                 >
                 <hr />
                 <details
-                  bind:this={shareMenuElement}
+                  bind:this={optionsMenu.shareElement}
                   class="share-menu"
-                  ontoggle={(event) => (shareMenuOpen = event.currentTarget.open)}
+                  ontoggle={(event) => optionsMenu.acceptShareToggle(event.currentTarget.open)}
                 >
                   <summary
                     ><span class="share-menu__direction"
@@ -1128,7 +888,7 @@
                     ><span>{t('dashboard.menu.shareScreenshot')}</span></summary
                   >
                   <div>
-                    {#if shareMenuOpen}
+                    {#if optionsMenu.shareOpen}
                       {#each settingsState.settings.providers.filter((provider) => provider.enabled && catalog.provider(provider.id)) as provider (provider.id)}
                         <button type="button" onclick={() => shareProvider(provider.id)}
                           >{providerDisplayName(provider.id)}</button
@@ -1196,29 +956,11 @@
     {/if}
 
     {#if showAbout}
-      <Sheet
-        label={t('app.menu.about')}
-        centered
-        plain
-        chromeless
-        dismissOnBackdrop
-        restoreFocusTo={() =>
-          optionsMenuElement?.querySelector<HTMLElement>(':scope > summary') ?? null}
+      <AboutDialog
+        version={appVersion}
+        restoreFocusTo={() => optionsMenu.restoreTarget()}
         onDismiss={closeAbout}
-      >
-        <div class="about-card">
-          <button
-            class="about-card__close"
-            type="button"
-            aria-label={t('app.closeAbout')}
-            onclick={closeAbout}><Icon name="close" size={11} strokeWidth={2.3} /></button
-          >
-          <UsageDeckMark size={44} />
-          <h1>UsageDeck</h1>
-          <p>{t('app.version', { version: appVersion })}</p>
-          <small>{t('app.aboutTagline')}</small>
-        </div>
-      </Sheet>
+      />
     {/if}
   {:else}
     <div class="content">
@@ -1250,7 +992,7 @@
       role="separator"
       aria-label={t('app.resizeHeight')}
       aria-orientation="horizontal"
-      onpointerdown={handlePanelResizePointerDown}
+      onpointerdown={(event) => panelResize.handleHeightPointerDown(event)}
     ></div>
   {/if}
   {#if floatingWindow && (renderedResizeEdge === 'top' || renderedResizeEdge === 'bottom')}
@@ -1262,9 +1004,9 @@
       aria-orientation="vertical"
       aria-valuemin={PANEL_MIN_WIDTH}
       aria-valuemax={PANEL_MAX_WIDTH}
-      aria-valuenow={panelWidth}
-      onpointerdown={handlePanelWidthResizePointerDown}
-      onkeydown={handlePanelWidthKeydown}
+      aria-valuenow={panelResize.width}
+      onpointerdown={(event) => panelResize.handleWidthPointerDown(event)}
+      onkeydown={(event) => void panelResize.handleWidthKeydown(event)}
     ></div>
   {/if}
 </main>
@@ -1911,68 +1653,6 @@
 
     .transient-pill .symbol-icon {
       color: var(--success);
-    }
-
-    .about-card {
-      position: relative;
-      display: flex;
-      width: 230px;
-      align-items: center;
-      padding: 24px 20px 20px;
-      border: 1px solid var(--separator);
-      border-radius: 16px;
-      color: var(--text);
-      background: var(--tray);
-      box-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
-      flex-direction: column;
-      animation: detail-in var(--motion-spring) both;
-    }
-
-    .about-card h1 {
-      margin: 10px 0 2px;
-      font-size: 17px;
-    }
-
-    .about-card p,
-    .about-card small {
-      margin: 0;
-      color: var(--secondary);
-      font-size: 10px;
-      text-align: center;
-    }
-
-    .about-card__close {
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      display: grid;
-      width: 24px;
-      height: 24px;
-      padding: 0;
-      border: 0;
-      border-radius: 50%;
-      color: var(--secondary);
-      background: var(--button-hover);
-      cursor: pointer;
-      place-items: center;
-      transition:
-        color var(--motion-switch),
-        background var(--motion-switch),
-        transform var(--motion-switch);
-    }
-
-    .about-card__close:hover {
-      color: var(--text);
-      background: color-mix(in srgb, var(--text) 14%, transparent);
-    }
-
-    .about-card__close:active {
-      transform: scale(0.92);
-    }
-
-    .about-card__close:focus-visible {
-      outline: 2px solid color-mix(in srgb, var(--meter-fill) 55%, transparent);
-      outline-offset: 1px;
     }
 
     :root[data-density='compact'] .content {
