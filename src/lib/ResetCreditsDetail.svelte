@@ -130,7 +130,7 @@
   style={`top:${top}px`}
   role="dialog"
   tabindex="-1"
-  aria-label={`${title} details`}
+  aria-label={t('reset.detailsAria', { title })}
   onmouseenter={onEnter}
   onfocusin={onEnter}
   onmouseleave={() => {
@@ -174,7 +174,9 @@
                       type="button"
                       disabled={pendingExpiry !== null}
                       onclick={() => confirmClaim(entry.expiry)}
-                      >{pendingExpiry === entry.expiry ? 'Resetting…' : 'Use reset'}</button
+                      >{pendingExpiry === entry.expiry
+                        ? t('reset.using')
+                        : t('reset.useReset')}</button
                     >
                     <button
                       bind:this={cancelButton}
@@ -206,11 +208,11 @@
       </div>
     {:else if count > 0}
       <div class="reset-empty">
-        <strong>{count} available</strong>
-        <span>Expiry times unavailable</span>
+        <strong>{t('reset.available', { count })}</strong>
+        <span>{t('value.expiryUnavailable')}</span>
       </div>
     {:else}
-      <div class="reset-empty"><span>No rate limit resets available</span></div>
+      <div class="reset-empty"><span>{t('reset.noneAvailable')}</span></div>
     {/if}
   </div>
 </div>
@@ -364,7 +366,7 @@
     }
 
     .reset-confirm .reset-confirm-primary {
-      color: white;
+      color: var(--on-fill);
       background: var(--meter-fill);
       font-weight: 600;
     }
@@ -393,7 +395,7 @@
       height: 18px;
       place-items: center;
       border-radius: 50%;
-      color: white;
+      color: var(--on-fill);
       background: var(--meter-fill);
       font-size: 11px;
       font-weight: 600;

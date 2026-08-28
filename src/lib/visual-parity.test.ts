@@ -75,7 +75,7 @@ describe('native visual contract', () => {
       daily: [{ date, tokens: 42_000, estimatedCostUsd: 0.21, estimateComplete: true }],
       sourceNote: 'From your Codex logs (estimated)',
     });
-    const chart = screen.getByRole('group', { name: 'Usage trend chart details' });
+    const chart = screen.getByRole('slider', { name: 'Usage trend chart details' });
 
     await fireEvent.mouseEnter(chart);
     await vi.advanceTimersByTimeAsync(399);
@@ -99,7 +99,7 @@ describe('native visual contract', () => {
       daily: [{ date, tokens: 42_000, estimatedCostUsd: 0.21, estimateComplete: true }],
       sourceNote: 'From your Codex logs (estimated)',
     });
-    await fireEvent.mouseEnter(screen.getByRole('group', { name: 'Usage trend chart details' }));
+    await fireEvent.mouseEnter(screen.getByRole('slider', { name: 'Usage trend chart details' }));
     await vi.advanceTimersByTimeAsync(400);
     const bars = container.querySelectorAll<HTMLElement>('.trend-detail__bars i');
     await fireEvent.mouseEnter(bars[bars.length - 1]);

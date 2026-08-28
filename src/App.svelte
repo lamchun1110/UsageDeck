@@ -200,7 +200,7 @@
     navigate(`provider:${providerId}`);
     if (!focusBack) return;
     await tick();
-    document.querySelector<HTMLButtonElement>('.screen-header button[aria-label="Back"]')?.focus();
+    document.querySelector<HTMLButtonElement>('.screen-header .screen-back-button')?.focus();
   }
   function back() {
     if (screen.startsWith('provider:')) navigate('customize');
@@ -330,6 +330,7 @@
           ]),
         ),
       };
+      settingsError = t('app.refreshAllFailed');
     } finally {
       activeRefreshCount -= 1;
     }
@@ -412,7 +413,9 @@
       );
       customizationHistory = [...customizationHistory.slice(-19), previous];
     } catch {
-      settingsError = `${providerDisplayName(providerId)} customization could not be reset.`;
+      settingsError = t('app.error.providerCustomizationReset', {
+        provider: providerDisplayName(providerId),
+      });
     } finally {
       resettingProviderId = null;
     }
@@ -831,7 +834,7 @@
     document.addEventListener('keydown', handleKeydown);
     const clock = window.setInterval(() => (now = Date.now()), 30_000);
     const listeners = createListenerRegistry(() => {
-      settingsError ??= 'UsageDeck event bridge is unavailable.';
+      settingsError ??= t('app.error.eventBridge');
     });
     listeners.add(onUsageState((state) => (viewState = state)));
     listeners.add(
@@ -875,35 +878,32 @@
   class="popover"
   class:popover--floating={floatingWindow}
   class:popover--macos={floatingWindow && platform === 'macos'}
-  aria-label="UsageDeck usage dashboard"
-  oncontextmenu={(event) => event.preventDefault()}
+  aria-label={t('app.dashboardAria')}
+  oncontextmenu={(event) => {
+    if (event.target instanceof Element && event.target.closest('input, textarea')) return;
+    event.preventDefault();
+  }}
 >
-  <p id="reorder-instructions" class="sr-only">
-    Drag to reorder. With a keyboard, use Alt plus Up Arrow or Alt plus Down Arrow.
-  </p>
+  <p id="reorder-instructions" class="sr-only">{t('app.reorderInstructions')}</p>
   {#if renderedResizeEdge === 'top'}
     <div
       class="panel-resize-dragger panel-resize-dragger--top"
       role="separator"
-      aria-label="Resize panel height"
+      aria-label={t('app.resizeHeight')}
       aria-orientation="horizontal"
       onpointerdown={handlePanelResizePointerDown}
     ></div>
   {/if}
   {#if floatingWindow}
-    <header class="floating-chrome" aria-label="UsageDeck window controls">
-      <div
-        class="floating-chrome__drag"
-        data-tauri-drag-region
-        title="Drag to reposition UsageDeck"
-      >
+    <header class="floating-chrome" aria-label={t('app.windowControls')}>
+      <div class="floating-chrome__drag" data-tauri-drag-region title={t('app.dragReposition')}>
         <UsageDeckMark size={14} />
         <span>UsageDeck</span>
       </div>
       <button
         class="floating-chrome__close"
         type="button"
-        aria-label={settingsState?.trayAvailable ? 'Hide UsageDeck' : 'Close UsageDeck'}
+        aria-label={settingsState?.trayAvailable ? t('app.hideWindow') : t('app.closeWindow')}
         onclick={closeMainWindow}
       >
         <Icon name="close" size={12} strokeWidth={2.1} />
@@ -913,7 +913,13 @@
   {#if settingsState}
     {#if screen !== 'dashboard'}
       <header class="screen-header app-top-bar">
-        <button type="button" onclick={back} aria-label="Back" data-tooltip="Back">
+        <button
+          type="button"
+          class="screen-back-button"
+          onclick={back}
+          aria-label={t('app.back')}
+          data-tooltip={t('app.back')}
+        >
           <Icon name="back" size={16} strokeWidth={2.2} />
         </button>
         <h1>{topBarTitle()}</h1>
@@ -922,8 +928,8 @@
             class="text-button"
             type="button"
             onclick={requestCustomizationReset}
-            aria-label="Reset all customization"
-            data-tooltip="Reset All Customization"
+            aria-label={t('app.resetCustomization')}
+            data-tooltip={t('app.resetCustomizationTooltip')}
             ><Icon name="reset" size={15} strokeWidth={2} /></button
           >
         {:else if screen.startsWith('provider:')}
@@ -932,8 +938,8 @@
             type="button"
             disabled={resettingProviderId !== null}
             onclick={() => resetProviderCustomization(screen.slice(9))}
-            aria-label={`Reset ${topBarTitle()}`}
-            data-tooltip={`Reset ${topBarTitle()}`}
+            aria-label={t('app.resetProviderAria', { provider: topBarTitle() })}
+            data-tooltip={t('app.resetProviderAria', { provider: topBarTitle() })}
             ><Icon name="reset" size={15} strokeWidth={2} /></button
           >
         {:else}
@@ -1060,9 +1066,9 @@
                 class="window-mode-toggle"
                 class:window-mode-toggle--active={floatingWindow}
                 type="button"
-                aria-label={floatingWindow ? 'Return to Tray Popup' : 'Keep Window Open'}
+                aria-label={floatingWindow ? t('app.returnToTray') : t('app.keepWindowOpen')}
                 aria-pressed={floatingWindow}
-                data-tooltip={floatingWindow ? 'Return to Tray Popup' : 'Keep Window Open'}
+                data-tooltip={floatingWindow ? t('app.returnToTray') : t('app.keepWindowOpen')}
                 onclick={toggleFloatingWindow}
               >
                 <Icon name={floatingWindow ? 'pin-filled' : 'pin'} size={14} strokeWidth={1.9} />
@@ -1195,20 +1201,20 @@
           role="dialog"
           tabindex="-1"
           aria-modal="true"
-          aria-label="About UsageDeck"
+          aria-label={t('app.menu.about')}
         >
           <button
             bind:this={aboutCloseButton}
             class="about-card__close"
             type="button"
-            aria-label="Close About"
+            aria-label={t('app.closeAbout')}
             onclick={() => void closeAbout()}
             ><Icon name="close" size={11} strokeWidth={2.3} /></button
           >
           <UsageDeckMark size={44} />
           <h1>UsageDeck</h1>
-          <p>Version {appVersion}</p>
-          <small>Private, local usage monitoring for your AI coding tools.</small>
+          <p>{t('app.version', { version: appVersion })}</p>
+          <small>{t('app.aboutTagline')}</small>
         </div>
       </div>
     {/if}
@@ -1240,7 +1246,7 @@
     <div
       class="panel-resize-dragger panel-resize-dragger--bottom"
       role="separator"
-      aria-label="Resize panel height"
+      aria-label={t('app.resizeHeight')}
       aria-orientation="horizontal"
       onpointerdown={handlePanelResizePointerDown}
     ></div>
@@ -1250,7 +1256,7 @@
       class="panel-resize-dragger panel-resize-dragger--right"
       role="slider"
       tabindex="0"
-      aria-label="Resize panel width"
+      aria-label={t('app.resizeWidth')}
       aria-orientation="vertical"
       aria-valuemin={PANEL_MIN_WIDTH}
       aria-valuemax={PANEL_MAX_WIDTH}
@@ -1546,9 +1552,13 @@
     }
 
     .screen-header h1 {
+      min-width: 0;
+      overflow: hidden;
       margin: 0;
       font-size: 14px;
       text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .screen-header button {

@@ -417,7 +417,9 @@
       data-reorder-id={provider.id}
       role="group"
       tabindex="-1"
-      aria-label={`${providerDisplayName(provider.id)} provider`}
+      aria-label={t('dashboard.provider.cardAria', {
+        provider: providerDisplayName(provider.id),
+      })}
       use:pointerReorder={{
         id: provider.id,
         group: 'dashboard-providers',
@@ -434,7 +436,9 @@
         class="provider-header"
         data-reorder-handle
         role="group"
-        aria-label={`Drag ${providerDisplayName(provider.id)} to reorder`}
+        aria-label={t('dashboard.provider.dragReorder', {
+          provider: providerDisplayName(provider.id),
+        })}
       >
         <span
           class="drag-grip"
@@ -462,7 +466,10 @@
           class:active={Boolean(state?.refreshing || state?.error || snapshot.warnings.length > 0)}
         >
           {#if state?.refreshing}
-            <span class="provider-refreshing" aria-label={t('dashboard.provider.refreshing')}
+            <span
+              class="provider-refreshing"
+              role="status"
+              aria-label={t('dashboard.provider.refreshing')}
               ><Icon name="refresh" size={12} strokeWidth={2} /></span
             >
           {:else if state?.error}
@@ -552,7 +559,9 @@
               data-reorder-handle
               data-reorder-touch-handle
               type="button"
-              aria-label={`Move ${metricDefinition(metric.id)?.label ?? metric.id}`}
+              aria-label={t('customize.moveAria', {
+                label: metricDefinition(metric.id)?.label ?? metric.id,
+              })}
               aria-describedby="reorder-instructions"
               aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
               ><Icon name="grip-lines" size={13} strokeWidth={2} /></button
@@ -575,7 +584,7 @@
             data-reorder-id="section:onDemand"
             type="button"
             aria-expanded={provider.expanded}
-            aria-label={provider.expanded ? 'Show less' : 'Show more'}
+            aria-label={provider.expanded ? t('dashboard.showLess') : t('dashboard.showMore')}
             onclick={() => toggleDemandMetrics(provider)}
           >
             <Icon
@@ -612,7 +621,9 @@
                     data-reorder-handle
                     data-reorder-touch-handle
                     type="button"
-                    aria-label={`Move ${metricDefinition(metric.id)?.label ?? metric.id}`}
+                    aria-label={t('customize.moveAria', {
+                      label: metricDefinition(metric.id)?.label ?? metric.id,
+                    })}
                     aria-describedby="reorder-instructions"
                     aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
                     ><Icon name="grip-lines" size={13} strokeWidth={2} /></button
@@ -757,10 +768,14 @@
     }
 
     .provider-header h1 {
+      min-width: 0;
+      overflow: hidden;
       margin: 0;
       font-size: 14px;
       font-weight: 650;
       letter-spacing: -0.01em;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .provider-mark {
@@ -958,7 +973,7 @@
     }
 
     .update-actions .update-primary-action {
-      color: white;
+      color: var(--on-fill);
       background: var(--meter-fill);
       font-weight: 600;
     }
@@ -1079,7 +1094,7 @@
       padding: 4px 8px;
       border: 0;
       border-radius: 6px;
-      color: white;
+      color: var(--on-fill);
       background: var(--provider);
       font-size: 10px;
       cursor: pointer;

@@ -7,6 +7,7 @@
     paceTooltip,
     projectPace,
   } from './pacing';
+  import { formatMetricNumber } from './metricFormat';
   import { sparklinePoints } from './sparkline';
   import { t } from './i18n.svelte';
   import type { QuotaWindow } from './types';
@@ -55,9 +56,9 @@
     }
     if (quota.format === 'dollars' && quota.usedValue !== null) {
       if (usageDisplay === 'left' && quota.limitValue !== null) {
-        return `$${Math.max(0, quota.limitValue - quota.usedValue).toFixed(2)} ${leftWord}`;
+        return `${formatMetricNumber(Math.max(0, quota.limitValue - quota.usedValue), 'dollars', 'full')} ${leftWord}`;
       }
-      return `$${quota.usedValue.toFixed(2)} ${t('quota.spent')}`;
+      return `${formatMetricNumber(quota.usedValue, 'dollars', 'full')} ${t('quota.spent')}`;
     }
     return `${(usageDisplay === 'used' ? used : remaining).toFixed(0)}% ${
       usageDisplay === 'used' ? usedWord : leftWord
@@ -70,9 +71,10 @@
       return `${opposite.toFixed(0)} ${countUnit} ${usageDisplay === 'left' ? usedWord : leftWord}`;
     }
     if (quota.format === 'dollars' && quota.usedValue !== null) {
-      if (usageDisplay === 'left') return `$${quota.usedValue.toFixed(2)} ${t('quota.spent')}`;
+      if (usageDisplay === 'left')
+        return `${formatMetricNumber(quota.usedValue, 'dollars', 'full')} ${t('quota.spent')}`;
       if (quota.limitValue !== null)
-        return `$${Math.max(0, quota.limitValue - quota.usedValue).toFixed(2)} ${leftWord}`;
+        return `${formatMetricNumber(Math.max(0, quota.limitValue - quota.usedValue), 'dollars', 'full')} ${leftWord}`;
       return null;
     }
     return usageDisplay === 'left'

@@ -1,3 +1,5 @@
+import { t } from './i18n.svelte';
+
 export interface ReorderPoint {
   x: number;
   y: number;
@@ -62,24 +64,29 @@ function announce(message: string) {
 }
 
 function announceMove(options: PointerReorderOptions, targetId?: string | null) {
-  const label = options.label ?? 'Item';
+  const label = options.label ?? t('reorder.defaultLabel');
   queueMicrotask(() => {
     const entries = reorderElements(options.group).filter(
       (entry) => !entry.id.startsWith('section:'),
     );
     const position = entries.findIndex((entry) => entry.id === options.id);
-    const section = targetId?.startsWith('section:')
-      ? targetId
-          .slice('section:'.length)
-          .replace(/([A-Z])/g, ' $1')
-          .toLowerCase()
-      : null;
+    const sectionKey = targetId?.startsWith('section:') ? targetId.slice('section:'.length) : null;
+    const section =
+      sectionKey === 'alwaysVisible'
+        ? t('customize.section.alwaysVisible')
+        : sectionKey === 'onDemand'
+          ? t('customize.section.onDemand')
+          : null;
     const message =
       position >= 0
-        ? `${label} moved to position ${position + 1} of ${entries.length}.`
+        ? t('reorder.movedToPosition', {
+            label,
+            position: position + 1,
+            total: entries.length,
+          })
         : section
-          ? `${label} moved to ${section}.`
-          : `${label} moved.`;
+          ? t('reorder.movedToSection', { label, section })
+          : t('reorder.moved', { label });
     announce(message);
   });
 }
@@ -299,7 +306,10 @@ export function pointerReorder(node: HTMLElement, initialOptions: PointerReorder
       if (dragging) {
         suppressDragClick();
         options.onEnd?.(moved, cancelled);
-        if (cancelled) announce(`${options.label ?? 'Item'} move cancelled.`);
+        if (cancelled)
+          announce(
+            t('reorder.moveCancelled', { label: options.label ?? t('reorder.defaultLabel') }),
+          );
         else if (moved) announceMove(options, lastTarget);
         if (restoreFocus) {
           queueMicrotask(() => {

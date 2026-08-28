@@ -295,9 +295,9 @@
     background: var(--button-hover);
   }
 
-  .share-menu > summary:focus,
   .share-menu > summary:focus-visible {
-    outline: none;
+    outline: 2px solid color-mix(in srgb, var(--meter-fill) 65%, transparent);
+    outline-offset: 2px;
   }
 
   :root[data-density='compact'] .provider-section + .provider-section,

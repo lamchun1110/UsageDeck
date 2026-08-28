@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { t } from './i18n.svelte';
+  import { formattingLocale, t } from './i18n.svelte';
   import { SvelteDate } from 'svelte/reactivity';
   import { formatMetricNumber } from './metricFormat';
   import type { DailyUsage } from './types';
@@ -21,6 +21,12 @@
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   const highlightedPoint = $derived(
     hoveredDate === null ? peak : (points.find((point) => point.date === hoveredDate) ?? peak),
+  );
+  const highlightedIndex = $derived(
+    Math.max(
+      0,
+      points.findIndex((point) => point.date === highlightedPoint.date),
+    ),
   );
 
   function fillDays(entries: DailyUsage[]) {
@@ -47,7 +53,9 @@
     const date = new Date(`${value}T12:00:00`);
     return Number.isNaN(date.getTime())
       ? value
-      : new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(date);
+      : new Intl.DateTimeFormat(formattingLocale(), { month: 'short', day: 'numeric' }).format(
+          date,
+        );
   }
 
   function revealDetail() {
@@ -55,9 +63,35 @@
     hoverTimer = setTimeout(() => (detailVisible = true), 400);
   }
 
+  function revealDetailNow() {
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverTimer = undefined;
+    detailVisible = true;
+  }
+
   function concealDetail() {
     if (hoverTimer) clearTimeout(hoverTimer);
     hoverTimer = setTimeout(() => (detailVisible = false), 180);
+  }
+
+  function concealDetailNow() {
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverTimer = undefined;
+    detailVisible = false;
+    hoveredDate = null;
+  }
+
+  function trendKeydown(event: KeyboardEvent) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    revealDetailNow();
+    const currentIndex =
+      hoveredDate === null
+        ? points.length - 1
+        : points.findIndex((point) => point.date === hoveredDate);
+    const delta = event.key === 'ArrowLeft' ? -1 : 1;
+    const next = Math.min(points.length - 1, Math.max(0, currentIndex + delta));
+    hoveredDate = points[next]?.date ?? null;
   }
 
   onDestroy(() => {
@@ -70,10 +104,21 @@
   {#if total > 0}
     <div
       class="trend-chart-wrap"
-      role="group"
-      aria-label="Usage trend chart details"
+      role="slider"
+      tabindex="0"
+      aria-label={t('trend.detailsAria')}
+      aria-valuemin={0}
+      aria-valuemax={points.length - 1}
+      aria-valuenow={highlightedIndex}
+      aria-valuetext={t('trend.dayTokens', {
+        date: dayLabel(highlightedPoint.date),
+        tokens: compact(highlightedPoint.tokens),
+      })}
       onmouseenter={revealDetail}
       onmouseleave={concealDetail}
+      onfocus={revealDetailNow}
+      onblur={concealDetailNow}
+      onkeydown={trendKeydown}
     >
       <div
         class="trend-bars"
@@ -84,7 +129,7 @@
         {#each points as point (point.date)}
           <span
             style={`height: ${Math.max(point.tokens > 0 ? 18 : 2, (point.tokens / max) * 100)}%`}
-            title={`${point.date}: ${compact(point.tokens)} tokens`}
+            title={`${point.date}: ${compact(point.tokens)} ${t('usage.tokens')}`}
           ></span>
         {/each}
       </div>
@@ -93,8 +138,11 @@
           <header>
             <strong>{t('trend.title')}</strong><span
               >{hoveredDate
-                ? `${dayLabel(highlightedPoint.date)} · ${compact(highlightedPoint.tokens)} tokens`
-                : `peak ${compact(peak.tokens)} tokens`}</span
+                ? t('trend.dayTokens', {
+                    date: dayLabel(highlightedPoint.date),
+                    tokens: compact(highlightedPoint.tokens),
+                  })
+                : t('trend.peakTokens', { tokens: compact(peak.tokens) })}</span
             >
           </header>
           <div
@@ -157,6 +205,12 @@
       position: relative;
       width: clamp(90px, 48%, 150px);
       flex: 1;
+      border-radius: 6px;
+    }
+
+    .trend-chart-wrap:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--meter-fill) 65%, transparent);
+      outline-offset: 2px;
     }
 
     .trend-bars {

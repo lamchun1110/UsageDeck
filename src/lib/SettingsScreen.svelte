@@ -601,7 +601,7 @@
       height: 13px;
       margin-left: 3px;
       border-radius: 50%;
-      color: white;
+      color: var(--on-fill);
       background: var(--warning);
       font-size: 8px;
       place-items: center;

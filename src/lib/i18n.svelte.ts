@@ -39,6 +39,8 @@ export function resolveLanguage(preference: LanguagePreference): Language {
 
 export function setLanguage(preference: LanguagePreference) {
   currentLanguage = resolveLanguage(preference);
+  // Keep the document language in sync so screen readers switch pronunciation rules.
+  if (typeof document !== 'undefined') document.documentElement.lang = currentLanguage;
 }
 
 export function language(): Language {

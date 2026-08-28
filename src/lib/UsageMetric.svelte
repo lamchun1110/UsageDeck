@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import Icon from './Icon.svelte';
+  import { t } from './i18n.svelte';
   import { formatMetricNumber, formatMetricValue } from './metricFormat';
   import ModelUsageDetail from './ModelUsageDetail.svelte';
   import type { UsagePeriod } from './types';
@@ -16,8 +17,8 @@
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
   function reading(value: UsagePeriod | null) {
-    if (!value) return 'No data';
-    const tokens = formatMetricValue(value.tokens, 'count', 'row', 'tokens');
+    if (!value) return t('quota.noData');
+    const tokens = formatMetricValue(value.tokens, 'count', 'row', t('usage.tokens'));
     if (value.estimatedCostUsd === null) return tokens;
     return `${formatMetricNumber(value.estimatedCostUsd, 'dollars', 'row')} · ${tokens}`;
   }
@@ -26,7 +27,7 @@
     if (value.modelBreakdown?.models.length) return undefined;
     const note =
       value.estimatedCostUsd !== null && value.costEstimated
-        ? 'Estimated locally, so it may be off'
+        ? t('usage.estimatedShort')
         : undefined;
     const abbreviated =
       Math.abs(value.tokens) >= 1000 || Math.abs(value.estimatedCostUsd ?? 0) >= 1000;
@@ -40,7 +41,7 @@
     return [...figures, note].filter(Boolean).join('\n');
   }
   function unknownModelTooltip(models: string[]) {
-    const heading = models.length === 1 ? 'Unknown model found' : 'Unknown models found';
+    const heading = models.length === 1 ? t('usage.unknownModel') : t('usage.unknownModels');
     return [heading, ...models.map((model) => `- ${model}`)].join('\n');
   }
   function scheduleShow(event: Event) {
@@ -72,14 +73,23 @@
     if (showTimer) clearTimeout(showTimer);
     if (hideTimer) clearTimeout(hideTimer);
   });
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || !open) return;
+    event.preventDefault();
+    event.stopPropagation();
+    open = false;
+  }
 </script>
+
+<svelte:window onkeydowncapture={handleKeydown} />
 
 <div class="usage-row">
   <span
     >{label}{#if period?.unknownModels?.length}<i
         class="usage-label-warning"
         data-tooltip={unknownModelTooltip(period.unknownModels)}
-        aria-label="This period used a model with unknown pricing"
+        aria-label={t('usage.unknownModelAria')}
         ><Icon name="warning" size={10} strokeWidth={2.2} /></i
       >{/if}</span
   >

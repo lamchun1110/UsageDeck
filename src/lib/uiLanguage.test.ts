@@ -42,12 +42,12 @@ describe('native UI language contract', () => {
   });
 
   it('keeps Customize concise and free of duplicate status and count copy', () => {
-    expect(customizeList).toContain('Notifications, appearance and more');
-    expect(customizeList).toContain('{provider.metrics.length} metrics');
+    expect(customizeList).toContain("t('customize.openSettingsHint')");
+    expect(customizeList).toContain("t('customize.metricsCount'");
     expect(customizeList).not.toContain('Detected locally');
     expect(customizeList).not.toContain('screen-intro');
     expect(customizeList).not.toContain('pinned\n');
-    expect(customizeDetail).toContain('Drag metrics here');
+    expect(customizeDetail).toContain("t('customize.dropHere')");
     expect(customizeDetail).toContain("t('customize.starred')");
     expect(enMessages).toContain("'customize.starred': 'Starred for menu bar'");
     expect(customizeDetail).toContain("t('customize.unstarred')");

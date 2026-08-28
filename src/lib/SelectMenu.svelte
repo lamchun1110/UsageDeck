@@ -317,7 +317,7 @@
     .select-menu__list button:hover,
     .select-menu__list button:focus-visible {
       outline: none;
-      color: #ffffff;
+      color: var(--on-fill);
       background: var(--meter-fill);
     }
 

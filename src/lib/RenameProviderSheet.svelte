@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { t } from './i18n.svelte';
 
   interface Props {
     initialValue: string;
@@ -65,19 +66,19 @@
         onRename(draft);
       }}
     >
-      <h1 id="rename-title">Rename Card</h1>
+      <h1 id="rename-title">{t('rename.title')}</h1>
       <input
         bind:this={input}
         bind:value={draft}
         type="text"
         maxlength="48"
-        placeholder="Name"
-        aria-label="Name"
+        placeholder={t('rename.namePlaceholder')}
+        aria-label={t('rename.nameAria')}
       />
-      <p id="rename-message">Leave the name empty to go back to the default.</p>
+      <p id="rename-message">{t('rename.hint')}</p>
       <div class="rename-sheet__actions">
-        <button type="button" onclick={onCancel}>Cancel</button>
-        <button class="rename-sheet__confirm" type="submit">Rename</button>
+        <button type="button" onclick={onCancel}>{t('rename.cancel')}</button>
+        <button class="rename-sheet__confirm" type="submit">{t('rename.confirm')}</button>
       </div>
     </form>
   </div>
@@ -185,7 +186,7 @@
 
   .rename-sheet__actions .rename-sheet__confirm {
     border-color: color-mix(in srgb, var(--meter-fill) 80%, #000);
-    color: #fff;
+    color: var(--on-fill);
     background: var(--meter-fill);
     box-shadow: 0 1px 3px color-mix(in srgb, var(--meter-fill) 34%, transparent);
   }

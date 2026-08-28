@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from './i18n.svelte';
   import { formatMetricNumber, formatMetricValue } from './metricFormat';
   import type { ModelUsageBreakdown } from './types';
 
@@ -45,7 +46,7 @@
   class="model-usage-detail"
   style={`top:${top}px`}
   role="tooltip"
-  aria-label={`${title} model usage`}
+  aria-label={t('usage.modelBreakdownAria', { title })}
   onmouseenter={onEnter}
   onmouseleave={onLeave}
 >
@@ -63,7 +64,7 @@
         </div>
         <div class="model-usage-secondary">
           <span>{percents[index]}%</span><span
-            >{formatMetricValue(model.totalTokens, 'count', 'row', 'tokens')}</span
+            >{formatMetricValue(model.totalTokens, 'count', 'row', t('usage.tokens'))}</span
           >
         </div>
         <div class="model-usage-meter" aria-hidden="true">

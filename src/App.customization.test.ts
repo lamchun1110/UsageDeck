@@ -102,7 +102,7 @@ describe('UsageDeck customization persistence and reorder', () => {
     await screen.findByText('Plus');
     await fireEvent.click(screen.getByLabelText('Open options'));
     await fireEvent.click(screen.getByRole('button', { name: 'Customize' }));
-    const toggle = screen.getByRole('checkbox', { name: 'Enable codex' });
+    const toggle = screen.getByRole('checkbox', { name: 'Enable Codex' });
     await fireEvent.click(toggle);
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith(

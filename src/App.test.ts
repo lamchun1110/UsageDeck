@@ -643,7 +643,7 @@ describe('UsageDeck dashboard', () => {
     await fireEvent.click(screen.getByLabelText('Open options'));
     await fireEvent.click(screen.getByRole('button', { name: 'Customize' }));
     expect(screen.getByRole('heading', { name: 'Customize' })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole('button', { name: 'Customize codex' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Customize Codex' }));
     expect(screen.getByRole('group', { name: 'Always Visible metrics' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'On Demand metrics' })).toBeInTheDocument();
   });
@@ -653,7 +653,7 @@ describe('UsageDeck dashboard', () => {
     await screen.findByText('Plus');
     await fireEvent.click(screen.getByLabelText('Open options'));
     await fireEvent.click(screen.getByRole('button', { name: 'Customize' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Customize codex' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Customize Codex' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Reset Codex' }));
 
     expect(mocks.invoke).toHaveBeenCalledWith('reset_provider_customization', {
@@ -668,7 +668,7 @@ describe('UsageDeck dashboard', () => {
     await screen.findByText('Plus');
     await fireEvent.click(screen.getByLabelText('Open options'));
     await fireEvent.click(screen.getByRole('button', { name: 'Customize' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Customize codex' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Customize Codex' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Pin Today' }));
     expect(screen.getByText('Up to 2 stars per provider')).toBeInTheDocument();
   });

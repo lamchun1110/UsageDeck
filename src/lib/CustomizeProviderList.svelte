@@ -39,6 +39,7 @@
   let newAccountName = $state('');
   let newAccountError = $state<string | null>(null);
   let activeAccountFamily = $state<string | null>(null);
+  let addingAccount = $state(false);
 
   function updateProvider(provider: ProviderLayout) {
     onChange({
@@ -52,12 +53,13 @@
   }
 
   async function confirmAddAccount() {
-    if (!activeAccountFamily) return;
+    if (!activeAccountFamily || addingAccount) return;
     const name = newAccountName.trim();
     if (!name) {
       newAccountError = t('settings.account.nameRequired');
       return;
     }
+    addingAccount = true;
     try {
       await addApiKeyAccount(activeAccountFamily, name);
       newAccountName = '';
@@ -65,16 +67,19 @@
       activeAccountFamily = null;
     } catch (error) {
       newAccountError = (error as Error).message ?? String(error);
+    } finally {
+      addingAccount = false;
     }
   }
 </script>
 
-<section class="screen customize-screen" aria-label="Customize">
+<section class="screen customize-screen" aria-label={t('app.title.customize')}>
   <p class="account-add-hint">{t('settings.account.addHint')}</p>
   <div class="account-add-row">
     <select
       value={activeAccountFamily ?? ''}
       aria-label={t('settings.account.familyAria')}
+      disabled={addingAccount}
       onchange={(e) => (activeAccountFamily = (e.currentTarget as HTMLSelectElement).value || null)}
     >
       <option value="">{t('settings.account.chooseFamily')}</option>
@@ -86,10 +91,20 @@
       <input
         placeholder={t('settings.account.namePlaceholder')}
         value={newAccountName}
+        disabled={addingAccount}
         oninput={(e) => (newAccountName = (e.currentTarget as HTMLInputElement).value)}
+        onkeydown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            void confirmAddAccount();
+          }
+        }}
       />
-      <button type="button" class="secondary-button" onclick={confirmAddAccount}
-        >{t('settings.account.add')}</button
+      <button
+        type="button"
+        class="secondary-button"
+        disabled={addingAccount}
+        onclick={confirmAddAccount}>{t('settings.account.add')}</button
       >
     {/if}
   </div>
@@ -121,7 +136,9 @@
           data-reorder-touch-handle
           role="button"
           tabindex={provider.enabled ? 0 : undefined}
-          aria-label={`Move ${providerDisplayName(provider.id)}`}
+          aria-label={t('dashboard.provider.moveHandle', {
+            provider: providerDisplayName(provider.id),
+          })}
           aria-describedby="reorder-instructions"
           aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
           ><Icon name="grip-lines" size={16} strokeWidth={2} /></span
@@ -129,13 +146,15 @@
         <button class="provider-list-main" type="button" onclick={() => onOpen(provider.id)}
           ><ProviderIcon providerId={provider.id} /><span
             ><b>{providerDisplayName(provider.id)}</b><small
-              >{provider.metrics.length} metrics</small
+              >{t('customize.metricsCount', { count: provider.metrics.length })}</small
             ></span
           ></button
         >
         <label class="switch"
           ><input
-            aria-label={`Enable ${provider.id}`}
+            aria-label={t('customize.enableAria', {
+              provider: providerDisplayName(provider.id),
+            })}
             type="checkbox"
             checked={provider.enabled}
             onchange={(event) =>
@@ -145,16 +164,24 @@
         <button
           class="chevron"
           type="button"
-          aria-label={`Customize ${provider.id}`}
+          aria-label={t('customize.providerAria', {
+            provider: providerDisplayName(provider.id),
+          })}
           onclick={() => onOpen(provider.id)}
           ><Icon name="chevron-right" size={13} strokeWidth={2.2} /></button
         >
       </div>
     {/each}
   </div>
-  <button class="screen-cross-link" type="button" aria-label="Settings" onclick={onSettings}>
+  <button
+    class="screen-cross-link"
+    type="button"
+    aria-label={t('settings.aria.settings')}
+    onclick={onSettings}
+  >
     <Icon name="gear" size={17} />
-    <span><b>Settings</b><small>Notifications, appearance and more</small></span>
+    <span><b>{t('customize.openSettings')}</b><small>{t('customize.openSettingsHint')}</small></span
+    >
     <Icon name="chevron-right" size={13} strokeWidth={2.2} />
   </button>
 </section>
@@ -212,7 +239,10 @@
     }
 
     .provider-list-main b {
+      overflow: hidden;
       font-size: 13px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .provider-list-main small {
@@ -232,8 +262,11 @@
     }
 
     .provider-list-main b {
+      overflow: hidden;
       font-size: 14px;
       font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .provider-list-main small {

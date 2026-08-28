@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from './i18n.svelte';
   import SelectMenu from './SelectMenu.svelte';
   import { providerOptions, selectedChoice, withProviderOption } from './providerOptions';
   import type { ProviderCatalogIndex } from './metrics';
@@ -25,7 +26,7 @@
 
 {#if options.length > 0}
   <section class="provider-options-section" aria-labelledby={`provider-options-${provider.id}`}>
-    <h2 id={`provider-options-${provider.id}`}>Connection</h2>
+    <h2 id={`provider-options-${provider.id}`}>{t('connection.title')}</h2>
     <div class="provider-options-card">
       {#each options as option (option.id)}
         {@const selected = selectedChoice(settings, provider.id, option)}

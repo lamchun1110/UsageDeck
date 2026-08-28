@@ -20,7 +20,8 @@
     --surface-border: rgba(23, 23, 31, 0.08);
     --text: #1a1a1f;
     --secondary: #6e6e78;
-    --tertiary: #a4a4ae;
+    --tertiary: #71717b;
+    --on-fill: #ffffff;
     --meter-track: rgba(23, 23, 31, 0.09);
     /* Iris accent ramp — UsageDeck's own signature, replacing upstream blue. */
     --accent: #6d5ae6;
@@ -28,7 +29,7 @@
     --accent-soft: rgba(109, 90, 230, 0.12);
     --meter-fill: var(--accent);
     --meter-warning: #e5a400;
-    --meter-critical: #e3483f;
+    --meter-critical: #d63c33;
     --success: #1f9d61;
     --provider: var(--accent);
     --provider-codex: #10a37f;
@@ -66,6 +67,7 @@
     --text: #f2f2f5;
     --secondary: #a7a7b0;
     --tertiary: #6c6c75;
+    --on-fill: #171719;
     --meter-track: rgba(255, 255, 255, 0.1);
     --accent: #8f7ff0;
     --accent-strong: #a99bf5;
@@ -98,14 +100,15 @@
   --surface-border: rgba(23, 23, 31, 0.08);
   --text: #1a1a1f;
   --secondary: #6e6e78;
-  --tertiary: #a4a4ae;
+  --tertiary: #71717b;
+  --on-fill: #ffffff;
   --meter-track: rgba(23, 23, 31, 0.09);
   --accent: #6d5ae6;
   --accent-strong: #5b48d0;
   --accent-soft: rgba(109, 90, 230, 0.12);
   --meter-fill: var(--accent);
   --meter-warning: #e5a400;
-  --meter-critical: #e3483f;
+  --meter-critical: #d63c33;
   --success: #1f9d61;
   --provider: var(--accent);
   --provider-cursor: #13120a;
@@ -131,6 +134,7 @@
   --text: #f2f2f5;
   --secondary: #a7a7b0;
   --tertiary: #6c6c75;
+  --on-fill: #171719;
   --meter-track: rgba(255, 255, 255, 0.1);
   --accent: #8f7ff0;
   --accent-strong: #a99bf5;
@@ -161,8 +165,8 @@
    in both directions. */
 
 :root[data-accent='ocean'] {
-  --accent: #0284c7;
-  --accent-strong: #036aa1;
+  --accent: #036aa1;
+  --accent-strong: #025583;
   --accent-soft: rgba(2, 132, 199, 0.12);
 }
 
@@ -175,8 +179,8 @@
 }
 
 :root[data-theme='light'][data-accent='ocean'] {
-  --accent: #0284c7;
-  --accent-strong: #036aa1;
+  --accent: #036aa1;
+  --accent-strong: #025583;
   --accent-soft: rgba(2, 132, 199, 0.12);
 }
 
@@ -187,8 +191,8 @@
 }
 
 :root[data-accent='forest'] {
-  --accent: #059669;
-  --accent-strong: #047857;
+  --accent: #047857;
+  --accent-strong: #036046;
   --accent-soft: rgba(5, 150, 105, 0.12);
 }
 
@@ -201,8 +205,8 @@
 }
 
 :root[data-theme='light'][data-accent='forest'] {
-  --accent: #059669;
-  --accent-strong: #047857;
+  --accent: #047857;
+  --accent-strong: #036046;
   --accent-soft: rgba(5, 150, 105, 0.12);
 }
 
@@ -213,8 +217,8 @@
 }
 
 :root[data-accent='rose'] {
-  --accent: #e11d48;
-  --accent-strong: #be123c;
+  --accent: #be123c;
+  --accent-strong: #9f1239;
   --accent-soft: rgba(225, 29, 72, 0.1);
 }
 
@@ -227,8 +231,8 @@
 }
 
 :root[data-theme='light'][data-accent='rose'] {
-  --accent: #e11d48;
-  --accent-strong: #be123c;
+  --accent: #be123c;
+  --accent-strong: #9f1239;
   --accent-soft: rgba(225, 29, 72, 0.1);
 }
 
@@ -239,8 +243,8 @@
 }
 
 :root[data-accent='amber'] {
-  --accent: #d97706;
-  --accent-strong: #b45309;
+  --accent: #b45309;
+  --accent-strong: #92400e;
   --accent-soft: rgba(217, 119, 6, 0.12);
 }
 
@@ -253,8 +257,8 @@
 }
 
 :root[data-theme='light'][data-accent='amber'] {
-  --accent: #d97706;
-  --accent-strong: #b45309;
+  --accent: #b45309;
+  --accent-strong: #92400e;
   --accent-soft: rgba(217, 119, 6, 0.12);
 }
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from './i18n.svelte';
   import type { StatusMetric as StatusMetricValue } from './types';
 
   interface Props {
@@ -19,7 +20,7 @@
       {metric.text}
     </span>
   {:else}
-    <span class="status-reading">No data</span>
+    <span class="status-reading">{t('quota.noData')}</span>
   {/if}
 </div>
 
