@@ -66,10 +66,8 @@ key, which is a separate thing from operating-system package signing.
 
 ### Release signatures
 
-- **Windows:** the release notes state the signing status for that release. A Windows installer may
-  be unsigned, Authenticode-signed with the project's existing SSL.com eSigner integration, or
-  Authenticode-signed through SignPath once the pending SignPath Foundation configuration is
-  approved and enabled. Unsigned installers can trigger Microsoft SmartScreen warnings.
+- **Windows:** the release notes state the signing status for that release. Unsigned installers
+  can trigger Microsoft SmartScreen warnings; do not infer signing status from this README.
 - **macOS:** official releases are signed with an Apple Developer ID certificate and notarized by
   Apple when the `ENABLE_MACOS_NATIVE_SIGNING` repository variable is set to `true`. Signed releases
   use the bundle ID `com.lamchun1110.usagedeck` and are stapled. The release workflow verifies the
@@ -127,16 +125,12 @@ services the user has configured or authenticated.
 
 UsageDeck is open-source software released under the MIT License. Release binaries are built from
 this public GitHub repository by the tag-triggered GitHub Actions release workflow. Repository
-maintainers review source changes, and the maintainers and release approvers configured in GitHub
-and SignPath control whether a trusted release is approved; those roles are maintained through the
-project's access-control settings rather than a list of personal details in this document.
+maintainers review source changes, and the maintainers and release approvers configured in the
+project's GitHub access-control settings control whether a trusted release is approved.
 
-Windows Authenticode signing through SignPath Foundation is prepared but remains pending approval
-and repository configuration. When that backend is enabled, the applicable acknowledgement is:
-“Free code signing provided by SignPath.io, certificate by SignPath Foundation.” Until then, and
-for fallback releases, the per-release notes identify whether Windows artifacts are unsigned or
-signed with SSL.com eSigner. Tauri updater signatures are a separate project-controlled trust layer
-and are required for every release regardless of the Windows Authenticode backend.
+Each release's notes state whether its Windows artifacts are signed. Tauri updater signatures are a
+separate project-controlled trust layer and are required for every release regardless of the
+Windows Authenticode backend.
 
 UsageDeck has no UsageDeck-operated backend, analytics, or telemetry. It is not an offline-only
 application: it connects to third-party providers as needed to retrieve usage and quota information
