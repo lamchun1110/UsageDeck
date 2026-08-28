@@ -18,10 +18,41 @@ const GOOGLE_CLIENT_SECRET_PARTS: [&str; 2] = ["GOCSPX-", "K58FWR486LdLJ1mLB8sXC
 const DEFAULT_TOKEN_LIFETIME_SECONDS: f64 = 3_600.0;
 
 pub struct AntigravityClient {
-    local: Client,
+    local: LoopbackClient,
     remote: Client,
     cloud_bases: Vec<String>,
     google_token_url: String,
+}
+
+/// HTTP client with certificate verification disabled for the language
+/// server's self-signed loopback certificate. It accepts only a port and
+/// builds the `127.0.0.1` URL itself, so it can structurally never target a
+/// remote host with verification off.
+struct LoopbackClient {
+    client: Client,
+}
+
+impl LoopbackClient {
+    fn new() -> Result<Self, AntigravityError> {
+        Ok(Self {
+            client: Client::builder()
+                .danger_accept_invalid_certs(true)
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .map_err(|_| AntigravityError::Unavailable)?,
+        })
+    }
+
+    fn post(
+        &self,
+        scheme: &str,
+        port: u16,
+        service: &str,
+        method: &str,
+    ) -> reqwest::blocking::RequestBuilder {
+        self.client
+            .post(format!("{scheme}://127.0.0.1:{port}/{service}/{method}"))
+    }
 }
 
 pub enum CloudOutcome {
@@ -78,11 +109,7 @@ impl AntigravityClient {
         remote_timeout: std::time::Duration,
     ) -> Result<Self, AntigravityError> {
         Ok(Self {
-            local: Client::builder()
-                .danger_accept_invalid_certs(true)
-                .timeout(std::time::Duration::from_secs(5))
-                .build()
-                .map_err(|_| AntigravityError::Unavailable)?,
+            local: LoopbackClient::new()?,
             remote: Client::builder()
                 .timeout(remote_timeout)
                 .build()
@@ -102,10 +129,9 @@ impl AntigravityClient {
             endpoints.push(("http", port));
         }
         for (scheme, port) in endpoints {
-            let url = format!("{scheme}://127.0.0.1:{port}/{SERVICE}/{method}");
             let response = self
                 .local
-                .post(url)
+                .post(scheme, port, SERVICE, method)
                 .header("Content-Type", "application/json")
                 .header("Connect-Protocol-Version", "1")
                 .header("x-codeium-csrf-token", &server.csrf)

@@ -17,13 +17,19 @@ pub struct GrokResponse {
     pub body: Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct TokenRefresh {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub id_token: Option<String>,
     pub expires_in: Option<f64>,
 }
+
+crate::redacted_debug!(TokenRefresh {
+    access_token,
+    refresh_token,
+    id_token
+});
 
 pub struct GrokClient {
     client: Client,
@@ -195,66 +201,14 @@ impl GrokClient {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io::{Read, Write},
-        net::TcpListener,
-        sync::mpsc,
-        thread,
-        time::Duration,
-    };
+    use std::time::Duration;
 
     use super::GrokClient;
     use crate::providers::{grok::GrokError, test_http};
 
-    fn capture_once(
-        response_body: &str,
-    ) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let response_body = response_body.to_owned();
-        let (sender, receiver) = mpsc::channel();
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = Vec::new();
-            loop {
-                let mut chunk = [0_u8; 1024];
-                let count = stream.read(&mut chunk).unwrap();
-                if count == 0 {
-                    break;
-                }
-                request.extend_from_slice(&chunk[..count]);
-                let text = String::from_utf8_lossy(&request);
-                let Some(header_end) = text.find("\r\n\r\n") else {
-                    continue;
-                };
-                let content_length = text[..header_end]
-                    .lines()
-                    .find_map(|line| {
-                        line.to_ascii_lowercase()
-                            .strip_prefix("content-length: ")
-                            .and_then(|value| value.parse::<usize>().ok())
-                    })
-                    .unwrap_or(0);
-                if request.len() >= header_end + 4 + content_length {
-                    break;
-                }
-            }
-            sender
-                .send(String::from_utf8_lossy(&request).into_owned())
-                .unwrap();
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
-                response_body.len(),
-                response_body
-            );
-            stream.write_all(response.as_bytes()).unwrap();
-        });
-        (format!("http://{address}"), receiver, handle)
-    }
-
     #[test]
     fn authenticated_fetch_uses_cli_headers_without_leaking_the_token() {
-        let (url, request, handle) = capture_once(r#"{"config":{}}"#);
+        let (url, request, handle) = test_http::capture_once(200, r#"{"config":{}}"#);
         let client = GrokClient::for_test(&url, &url, &url, Duration::from_secs(1));
 
         let response = client.fetch_credits(" secret-token ").unwrap();
@@ -270,7 +224,8 @@ mod tests {
 
     #[test]
     fn refresh_form_encodes_reserved_characters() {
-        let (url, request, handle) = capture_once(r#"{"access_token":"new","expires_in":3600}"#);
+        let (url, request, handle) =
+            test_http::capture_once(200, r#"{"access_token":"new","expires_in":3600}"#);
         let client = GrokClient::for_test(&url, &url, &url, Duration::from_secs(1));
 
         let refreshed = client

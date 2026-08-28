@@ -280,6 +280,7 @@ mod tests {
     }
 
     fn auth(key: Option<&str>) -> ZaiAuthStore {
+        crate::providers::http::clear_rate_limits();
         ZaiAuthStore::with_store(ApiKeyStore::with_backends(
             "zai",
             "ZAI_API_KEY",
@@ -364,7 +365,7 @@ mod tests {
             assert!(!invalid.to_string().contains("bad-key"));
         }
 
-        let rate_limited = provider(Some("secret"), 429, "{}", 200, "{}")
+        let rate_limited = provider(Some("limited-secret"), 429, "{}", 200, "{}")
             .refresh()
             .unwrap_err();
         assert_eq!(rate_limited.kind(), ProviderErrorKind::RateLimited);

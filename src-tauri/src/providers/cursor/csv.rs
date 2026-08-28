@@ -13,7 +13,9 @@ pub struct CursorCsvRow {
 }
 
 pub fn parse_usage_csv(csv: &str, pricing: &ModelPricing) -> Vec<CursorCsvRow> {
-    records(csv)
+    let records = records(csv);
+    let count = records.len();
+    let rows = records
         .into_iter()
         .filter_map(|record| {
             let date = parse_date(record.get("Date")?.trim())?;
@@ -37,10 +39,26 @@ pub fn parse_usage_csv(csv: &str, pricing: &ModelPricing) -> Vec<CursorCsvRow> {
                 estimated_cost_usd,
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if rows.is_empty() && count > 0 {
+        crate::app_warn!(
+            "cursor",
+            "cursor csv: all {count} rows dropped (unparseable dates, BOM header, or format change?)"
+        );
+    } else if rows.len() < count {
+        crate::app_debug!(
+            "cursor",
+            "cursor csv: {dropped} row(s) dropped due to unparseable dates",
+            dropped = count - rows.len()
+        );
+    }
+    rows
 }
 
 fn records(csv: &str) -> Vec<HashMap<String, String>> {
+    // Exports sometimes start with a UTF-8 BOM, which prefixes the first
+    // header with \u{feff} and breaks record.get("Date") header matching.
+    let csv = csv.trim_start_matches('\u{feff}');
     let rows = parse_rows(csv);
     let Some(headers) = rows.first() else {
         return Vec::new();

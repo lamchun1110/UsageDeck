@@ -8,6 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::auth::{self, ClaudeCredentialScope};
+use crate::providers::paths::{expand_home, home_directory};
 use crate::{
     hashing::sha256_hex,
     providers::credential_store::generic_password_service_exists,
@@ -343,6 +344,21 @@ fn observe_default(home: &Path, config: Option<&str>) -> DefaultAccount {
         }
         Err(_) => return DefaultAccount::Unresolved,
     };
+    let state = match state {
+        Some(value) => Some(value),
+        None => {
+            // Claude CLI rewrites .claude.json via atomic replace — a
+            // concurrent read can catch a torn file. Retry once after the
+            // writer settles; an unreadable file still falls through to the
+            // unresolved state, but an account-identity parse failure is no
+            // longer enough to suppress every card for one cycle.
+            std::thread::sleep(std::time::Duration::from_millis(35));
+            match fs::read(&identity_path) {
+                Ok(bytes) => parse_identity(&bytes),
+                Err(_) => return DefaultAccount::Unresolved,
+            }
+        }
+    };
     state
         .map(|(identity, label)| DefaultAccount::Resolved { identity, label })
         .unwrap_or(DefaultAccount::Unresolved)
@@ -519,17 +535,6 @@ fn canonical(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn expand_home(value: &str, home: &Path) -> PathBuf {
-    if value == "~" {
-        return home.to_path_buf();
-    }
-    value
-        .strip_prefix("~/")
-        .or_else(|| value.strip_prefix("~\\"))
-        .map(|rest| home.join(rest))
-        .unwrap_or_else(|| PathBuf::from(value))
-}
-
 fn nonempty(value: String) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_owned())
@@ -537,13 +542,6 @@ fn nonempty(value: String) -> Option<String> {
 
 fn env_text(name: &str) -> Option<String> {
     crate::provider_environment::value(name)
-}
-
-fn home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

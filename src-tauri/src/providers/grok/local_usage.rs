@@ -19,6 +19,7 @@ use crate::{
 };
 
 use super::GrokError;
+use crate::providers::paths::home_directory;
 
 const LOG_CACHE_SCHEMA_VERSION: u8 = 1;
 const SOURCE_NOTE: &str = "From your Grok logs (estimated)";
@@ -107,22 +108,15 @@ fn log_path(home: &Path, configured_home: Option<&str>) -> PathBuf {
         .join("unified.jsonl")
 }
 
-fn home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
-}
-
-fn parse_jsonl(content: &str) -> Vec<TokenEvent> {
+fn parse_jsonl(lines: &mut dyn Iterator<Item = std::io::Result<String>>) -> Vec<TokenEvent> {
     let mut model_by_pid = HashMap::<i64, String>::new();
     let mut events = Vec::new();
 
-    for line in content.lines() {
+    for line in lines.map_while(|line| line.ok()) {
         if !line.contains("inference_done") && !line.contains("model") {
             continue;
         }
-        let Ok(object) = serde_json::from_str::<Value>(line) else {
+        let Ok(object) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
         let Some(message) = object.get("msg").and_then(Value::as_str) else {
@@ -246,6 +240,10 @@ fn finite_number(value: &Value) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    fn parse(content: &str) -> Vec<super::TokenEvent> {
+        parse_jsonl(&mut content.lines().map(|line| Ok(line.to_owned())))
+    }
+
     use std::{fs, path::Path};
 
     use chrono::{TimeZone, Utc};
@@ -261,7 +259,7 @@ mod tests {
     #[test]
     fn fixture_tracks_models_per_process_and_prices_usage() {
         let history = aggregate(
-            parse_jsonl(include_str!("fixtures/usage.jsonl")),
+            parse(include_str!("fixtures/usage.jsonl")),
             now(),
             &test_bundled_pricing(),
         );
@@ -281,7 +279,7 @@ mod tests {
 {"ts":"2026-06-18T09:00:00Z","pid":7,"msg":"shell.turn.inference_done","ctx":{"prompt_tokens":1000000,"cached_prompt_tokens":800000,"completion_tokens":0}}
 {"ts":"2026-06-18T10:00:00Z","pid":7,"msg":"backend_search: model switch","ctx":{"model_id":"grok-composer-2.5-fast"}}
 {"ts":"2026-06-18T11:00:00Z","pid":7,"msg":"shell.turn.inference_done","ctx":{"prompt_tokens":1000000,"completion_tokens":0}}"#;
-        let history = aggregate(parse_jsonl(content), now(), &test_bundled_pricing());
+        let history = aggregate(parse(content), now(), &test_bundled_pricing());
 
         assert!((history.today.unwrap().estimated_cost_usd.unwrap() - 3.36).abs() < 0.000_001);
     }
@@ -293,7 +291,7 @@ mod tests {
 {"ts":"2026-06-18T10:00:00Z","pid":2,"msg":"shell.turn.inference_done","ctx":{"prompt_tokens":1000000}}
 {"ts":"2026-06-18T11:00:00Z","pid":3,"msg":"model changed","ctx":{"model":"grok-build"}}
 {"ts":"2026-06-18T12:00:00Z","pid":3,"msg":"shell.turn.inference_done","ctx":{"prompt_tokens":500000}}"#;
-        let history = aggregate(parse_jsonl(content), now(), &test_bundled_pricing());
+        let history = aggregate(parse(content), now(), &test_bundled_pricing());
 
         assert_eq!(history.today.as_ref().unwrap().tokens, 500_000);
         assert_eq!(history.unknown_models, ["grok-unknown-model"]);
@@ -305,7 +303,7 @@ mod tests {
         let content = r#"{"ts":"2026-05-01T08:00:00Z","pid":1,"msg":"model changed","ctx":{"model":"grok-build"}}
 {"ts":"2026-05-01T09:00:00Z","pid":1,"msg":"shell.turn.inference_done","ctx":{"prompt_tokens":1000000}}
 {"ts":"2026-06-18T09:00:00Z","pid":1,"msg":"shell.turn.inference_done","ctx":{"loop_index":3}}"#;
-        let history = aggregate(parse_jsonl(content), now(), &test_bundled_pricing());
+        let history = aggregate(parse(content), now(), &test_bundled_pricing());
         assert!(history.today.is_none());
         assert!(history.daily.is_empty());
     }

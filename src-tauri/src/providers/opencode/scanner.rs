@@ -169,9 +169,9 @@ fn better_record(candidate: &UsageRecord, current: &UsageRecord) -> bool {
             record.cost_provenance == CostProvenance::Exact,
         )
     };
+    // Quality ties keep the incumbent — the extra cost tie-break biased
+    // duplicate messages upward even for the same message id.
     quality(candidate) > quality(current)
-        || (quality(candidate) == quality(current)
-            && candidate.cost.unwrap_or_default() > current.cost.unwrap_or_default())
 }
 
 fn aggregate_history(records: &[UsageRecord], now: DateTime<Utc>) -> UsageHistory {

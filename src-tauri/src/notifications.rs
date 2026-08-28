@@ -1,5 +1,3 @@
-use std::thread;
-
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 
@@ -13,12 +11,15 @@ use crate::{
     window::{show_main_window, MAIN_WINDOW},
 };
 
-pub fn permission(app: &AppHandle) -> &'static str {
+pub fn permission(app: &AppHandle) -> crate::models::NotificationPermission {
+    use crate::models::NotificationPermission;
     match app.notification().permission_state() {
-        Ok(PermissionState::Granted) => "granted",
-        Ok(PermissionState::Denied) => "denied",
-        Ok(PermissionState::Prompt | PermissionState::PromptWithRationale) => "prompt",
-        Err(_) => "unavailable",
+        Ok(PermissionState::Granted) => NotificationPermission::Granted,
+        Ok(PermissionState::Denied) => NotificationPermission::Denied,
+        Ok(PermissionState::Prompt | PermissionState::PromptWithRationale) => {
+            NotificationPermission::Prompt
+        }
+        Err(_) => NotificationPermission::Unavailable,
     }
 }
 
@@ -52,7 +53,7 @@ fn notification_snapshot(state: &ProviderViewState) -> Option<&ProviderSnapshot>
 }
 
 fn deliver(app: &AppHandle, alerts: &[PaceAlert]) -> Vec<PaceAlert> {
-    if permission(app) != "granted" {
+    if permission(app) != crate::models::NotificationPermission::Granted {
         if !alerts.is_empty() {
             crate::app_debug!(
                 "notifications",
@@ -102,9 +103,15 @@ fn show(app: &AppHandle, title: &str, body: &str) -> Result<(), String> {
 
     let handle = notification
         .show()
+        .inspect_err(|error| {
+            crate::app_error!("notifications", "notification delivery failed: {error}");
+        })
         .map_err(|_| "The notification could not be delivered.".to_owned())?;
     let app = app.clone();
-    thread::spawn(move || {
+    // The response wait blocks until the user acts or the notification closes;
+    // the blocking pool reuses its threads instead of dedicating an OS thread
+    // per alert.
+    tauri::async_runtime::spawn_blocking(move || {
         let _ = handle.wait_for_response(move |response: &notify_rust::NotificationResponse| {
             if !response_opens_window(response) {
                 return;

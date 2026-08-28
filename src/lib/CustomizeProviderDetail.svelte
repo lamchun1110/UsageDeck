@@ -3,6 +3,7 @@
   import { flip } from 'svelte/animate';
   import { removeApiKeyAccount } from './backend';
   import { t } from './i18n.svelte';
+  import { moveMetricIntoSection, reorderMetric } from './reorder';
   import type { ProviderCatalogIndex } from './metrics';
   import type { AppSettings, MetricLayout, MetricSection, ProviderLayout } from './types';
   import Icon from './Icon.svelte';
@@ -78,7 +79,7 @@
   function togglePin(metric: MetricLayout, button: HTMLButtonElement) {
     if (!provider || !metricDefinition(metric.id)?.pinnable) return;
     if (!metric.pinned && provider.metrics.filter((item) => item.pinned).length >= 2) {
-      showMessage('Up to 2 stars per provider', 'denied');
+      showMessage(t('customize.starsLimit'), 'denied');
       if (!reducedMotion) {
         button.animate?.(
           [
@@ -95,7 +96,7 @@
       }
       return;
     }
-    showMessage(metric.pinned ? 'Removed from menu bar' : 'Starred for menu bar', 'success');
+    showMessage(metric.pinned ? t('customize.unstarred') : t('customize.starred'), 'success');
     updateMetric({ ...metric, pinned: !metric.pinned });
   }
   function showMessage(text: string, kind: 'success' | 'denied') {
@@ -109,31 +110,14 @@
     target: MetricLayout,
     section: MetricSection = target.section,
   ) {
-    if (!provider || draggedId === target.id) return;
-    const metrics = [...provider.metrics];
-    const from = metrics.findIndex((metric) => metric.id === draggedId);
-    const to = metrics.findIndex((metric) => metric.id === target.id);
-    if (from < 0 || to < 0) return;
-    const [source] = metrics.splice(from, 1);
-    const moved = { ...source, section };
-    metrics.splice(to, 0, moved);
-    updateProvider({ ...provider, metrics });
+    if (!provider) return;
+    const metrics = reorderMetric(provider.metrics, draggedId, target.id, section);
+    if (metrics) updateProvider({ ...provider, metrics });
   }
   function moveIntoSection(draggedId: string, section: MetricSection) {
     if (!provider) return;
-    const metrics = [...provider.metrics];
-    const from = metrics.findIndex((metric) => metric.id === draggedId);
-    if (from < 0) return;
-    const [source] = metrics.splice(from, 1);
-    const moved = { ...source, section };
-    const lastInSection = metrics.reduce(
-      (last, metric, index) => (metric.section === section ? index : last),
-      -1,
-    );
-    const insertAt =
-      lastInSection >= 0 ? lastInSection + 1 : section === 'alwaysVisible' ? 0 : metrics.length;
-    metrics.splice(insertAt, 0, moved);
-    updateProvider({ ...provider, metrics });
+    const metrics = moveMetricIntoSection(provider.metrics, draggedId, section);
+    if (metrics) updateProvider({ ...provider, metrics });
   }
 </script>
 

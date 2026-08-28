@@ -18,6 +18,7 @@ use super::{
     daily_usage::DailyUsageAccumulator,
     log_usage::{load_or_parse_log, parse_log_timestamp, LogCacheError},
 };
+use crate::providers::paths::{expand_home, home_directory};
 
 const LOG_CACHE_SCHEMA_VERSION: u8 = 1;
 
@@ -146,11 +147,11 @@ fn discover_files(directory: &Path) -> Vec<PathBuf> {
     paths
 }
 
-fn parse_jsonl(content: &str) -> Vec<PiUsageEvent> {
-    content
-        .lines()
+fn parse_jsonl(lines: &mut dyn Iterator<Item = std::io::Result<String>>) -> Vec<PiUsageEvent> {
+    lines
+        .map_while(|line| line.ok())
         .filter(|line| line.contains("\"usage\""))
-        .filter_map(parse_line)
+        .filter_map(|line| parse_line(&line))
         .collect()
 }
 
@@ -243,7 +244,7 @@ fn aggregate_into(
             contributed = true;
         } else if !model.is_empty() {
             if let Some(cost) =
-                pricing.estimated_cost_dollars(model, event.tokens.pricing_tokens(), true)
+                pricing.estimated_cost_dollars_anthropic(model, event.tokens.pricing_tokens(), true)
             {
                 accumulator.add(date, event.reported_total_tokens, cost, model);
                 contributed = true;
@@ -278,26 +279,6 @@ fn env_text(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-}
-
-fn home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
-}
-
-fn expand_home(value: &str, home: &Path) -> PathBuf {
-    if value == "~" {
-        return home.to_path_buf();
-    }
-    if let Some(rest) = value
-        .strip_prefix("~/")
-        .or_else(|| value.strip_prefix("~\\"))
-    {
-        return home.join(rest);
-    }
-    PathBuf::from(value)
 }
 
 #[cfg(test)]

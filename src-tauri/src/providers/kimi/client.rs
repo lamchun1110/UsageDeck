@@ -1,20 +1,25 @@
 use std::time::Duration;
 
-use reqwest::{blocking::Client, StatusCode};
-use serde_json::Value;
+use crate::providers::http::{self, TransportError};
 
 use super::KimiError;
 
-#[derive(Debug)]
-pub struct EndpointResponse {
-    pub status: StatusCode,
-    pub body: Value,
+pub(super) type EndpointResponse = crate::providers::http::EndpointResponse;
+
+impl From<TransportError> for KimiError {
+    fn from(error: TransportError) -> Self {
+        match error {
+            TransportError::ConnectionFailed => KimiError::ConnectionFailed,
+            TransportError::InvalidResponse => KimiError::InvalidResponse,
+            TransportError::RateLimited => KimiError::RequestFailed(429),
+        }
+    }
 }
 
 /// The transport for Kimi Code requests. The URL is supplied per call because the user chooses
 /// which Kimi domain to query, and that choice can change while the app is running.
 pub struct KimiClient {
-    client: Client,
+    client: reqwest::blocking::Client,
     #[cfg(test)]
     endpoint_override: Option<String>,
 }
@@ -25,14 +30,8 @@ impl KimiClient {
     }
 
     fn with_timeout(timeout: Duration) -> Result<Self, KimiError> {
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(8))
-            .timeout(timeout)
-            .user_agent(concat!("UsageDeck/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|_| KimiError::ConnectionFailed)?;
         Ok(Self {
-            client,
+            client: http::client(timeout)?,
             #[cfg(test)]
             endpoint_override: None,
         })
@@ -42,27 +41,7 @@ impl KimiClient {
         #[cfg(test)]
         let url = self.endpoint_override.as_deref().unwrap_or(url);
 
-        let started = std::time::Instant::now();
-        let response = self
-            .client
-            .get(url)
-            .bearer_auth(api_key)
-            .header("Accept", "application/json")
-            .send()
-            .map_err(|_| {
-                crate::app_warn!("http", "kimi usages request failed (transport)");
-                KimiError::ConnectionFailed
-            })?;
-        let status = response.status();
-        crate::app_debug!(
-            "http",
-            "kimi usages HTTP {} ({}ms)",
-            status.as_u16(),
-            started.elapsed().as_millis()
-        );
-        let text = response.text().map_err(|_| KimiError::InvalidResponse)?;
-        let body = serde_json::from_str(&text).unwrap_or(Value::Null);
-        Ok(EndpointResponse { status, body })
+        http::get_json(&self.client, url, api_key, "kimi", "usages").map_err(From::from)
     }
 }
 

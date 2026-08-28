@@ -14,7 +14,7 @@ use super::CodexError;
 
 const REFRESH_WINDOW: Duration = Duration::from_secs(5 * 60);
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CodexAuthState {
     source: AuthSource,
     pub document: Value,
@@ -23,6 +23,12 @@ pub struct CodexAuthState {
     pub account_id: Option<String>,
     pub last_refresh: Option<String>,
 }
+
+crate::redacted_debug!(CodexAuthState {
+    document,
+    access_token,
+    refresh_token
+});
 
 #[derive(Debug, Clone)]
 enum AuthSource {

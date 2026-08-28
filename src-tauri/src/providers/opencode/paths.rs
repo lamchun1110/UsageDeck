@@ -9,6 +9,7 @@ use serde_json::Value;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::OpenCodeError;
+use crate::providers::paths::{expand_home, home_directory};
 
 const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -113,26 +114,6 @@ fn database_files(data_directory: &Path) -> Result<Vec<PathBuf>, OpenCodeError> 
         identities.insert(identity)
     });
     Ok(paths)
-}
-
-fn home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
-}
-
-fn expand_home(value: &str, home_directory: &Path) -> PathBuf {
-    if value == "~" {
-        return home_directory.to_path_buf();
-    }
-    if let Some(relative) = value
-        .strip_prefix("~/")
-        .or_else(|| value.strip_prefix("~\\"))
-    {
-        return home_directory.join(relative);
-    }
-    PathBuf::from(value)
 }
 
 fn non_empty(value: String) -> Option<String> {

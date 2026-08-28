@@ -51,6 +51,24 @@ struct MacMenuBarPresentation {
     icon: MacMenuBarIcon,
 }
 
+/// Everything that determines the pixels and tooltip the tray shows. Native
+/// `set_icon`/`set_tooltip` calls are not free (and each triggers host-side
+/// work), so identical refreshes are skipped outright. The tray itself is
+/// built once per session, so the cache never goes stale against a rebuilt
+/// tray icon.
+#[derive(Debug, Clone, PartialEq)]
+struct AppliedTray {
+    tooltip: String,
+    #[cfg(any(target_os = "macos", target_os = "linux", test))]
+    mac_presentation: MacMenuBarPresentation,
+    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+    windows_gauge: Option<TrayGauge>,
+    #[cfg(target_os = "linux")]
+    linux_tone: crate::menu_bar::GlyphTone,
+}
+
+static LAST_APPLIED: std::sync::Mutex<Option<AppliedTray>> = std::sync::Mutex::new(None);
+
 pub fn update(
     app: &AppHandle,
     state: &UsageViewState,
@@ -62,18 +80,41 @@ pub fn update(
     };
     let groups = resolved_groups(state, settings, registry);
     let tooltip = tooltip_text(&tooltip_entries(state, settings, registry));
+    let applied = AppliedTray {
+        tooltip: tooltip.clone(),
+        #[cfg(any(target_os = "macos", target_os = "linux", test))]
+        mac_presentation: mac_menu_bar_presentation(&groups, settings.menu_bar_style),
+        #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+        windows_gauge: primary_gauge(&groups),
+        #[cfg(target_os = "linux")]
+        linux_tone: linux_glyph_tone(settings.theme),
+    };
+    {
+        let last = LAST_APPLIED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if last.as_ref() == Some(&applied) {
+            return;
+        }
+    }
     // Hovering the tray names each provider in strip order, which is the only way to tell the
     // Bars-style icon's rows apart; hosts without tooltip support simply ignore it.
+    // A failed native call must not be recorded as applied, or the skip
+    // cache would suppress every retry until the presentation changed.
+    let mut native_apply_succeeded = true;
     if tray.set_tooltip(Some(tooltip)).is_err() {
+        native_apply_succeeded = false;
         crate::app_warn!("tray", "tray tooltip update failed");
     }
 
     #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
     {
-        let icon = primary_gauge(&groups)
+        let icon = applied
+            .windows_gauge
             .map(|gauge| tray_icon::render_gauge(gauge.display_fraction, gauge.remaining_fraction))
             .unwrap_or_else(mark_icon);
         if tray.set_icon(Some(icon)).is_err() {
+            native_apply_succeeded = false;
             crate::app_warn!("tray", "tray icon update failed");
         }
     }
@@ -84,8 +125,8 @@ pub fn update(
     // and the Retina-density strip would tower over neighbouring icons.
     #[cfg(target_os = "linux")]
     {
-        let presentation = mac_menu_bar_presentation(&groups, settings.menu_bar_style);
-        let tone = linux_glyph_tone(settings.theme);
+        let presentation = applied.mac_presentation.clone();
+        let tone = applied.linux_tone;
         let mark = || crate::menu_bar::status_notifier_mark_icon(tone);
         let icon = match presentation.icon {
             MacMenuBarIcon::Mark => mark(),
@@ -97,15 +138,23 @@ pub fn update(
             }
         };
         if tray.set_icon(Some(icon)).is_err() {
+            native_apply_succeeded = false;
             crate::app_warn!("tray", "tray icon update failed");
         }
     }
 
     #[cfg(target_os = "macos")]
-    apply_mac_menu_bar_presentation(
-        &tray,
-        mac_menu_bar_presentation(&groups, settings.menu_bar_style),
-    );
+    {
+        if !apply_mac_menu_bar_presentation(&tray, applied.mac_presentation.clone()) {
+            native_apply_succeeded = false;
+        }
+    }
+
+    if native_apply_succeeded {
+        *LAST_APPLIED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(applied);
+    }
 }
 
 /// Panels follow the desktop theme; without a reliable way to probe the panel
@@ -154,17 +203,20 @@ fn mac_menu_bar_presentation(
 fn apply_mac_menu_bar_presentation(
     tray: &tauri::tray::TrayIcon,
     presentation: MacMenuBarPresentation,
-) {
+) -> bool {
+    let mut applied = true;
     match presentation.icon {
         MacMenuBarIcon::Mark => {
             // An empty value explicitly clears stale native text before the fallback mark is shown.
             if tray.set_title(Some("")).is_err() {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar title clear failed");
             }
             if tray
                 .set_icon_with_as_template(Some(mark_icon()), true)
                 .is_err()
             {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar icon update failed");
             }
         }
@@ -172,17 +224,20 @@ fn apply_mac_menu_bar_presentation(
             // Text is one template strip image (provider marks + values), matching the single native
             // status-item ownership model while allowing each provider to keep its visual identity.
             if tray.set_title(Some("")).is_err() {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar title clear failed");
             }
             let icon = crate::menu_bar::text_icon(&groups, crate::menu_bar::GlyphTone::Dark)
                 .unwrap_or_else(mark_icon);
             if tray.set_icon_with_as_template(Some(icon), true).is_err() {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar icon update failed");
             }
         }
         MacMenuBarIcon::Bars(fractions) => {
             // Clear Text before installing Bars so no stale value can remain beside the compact glyph.
             if tray.set_title(Some("")).is_err() {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar title clear failed");
             }
             if tray
@@ -195,10 +250,12 @@ fn apply_mac_menu_bar_presentation(
                 )
                 .is_err()
             {
+                applied = false;
                 crate::app_warn!("tray", "macOS menu bar icon update failed");
             }
         }
     }
+    applied
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
@@ -372,9 +429,12 @@ fn tray_metric(
                             UsageDisplay::Left => "left",
                         };
                         let unit = quota.unit.as_deref().unwrap_or("requests");
+                        // Counts compact like token values ("12.0K"), matching
+                        // the value metrics beside them in the strip.
+                        let value = format_tokens(value as u64);
                         return TrayMetric {
-                            value: format!("{value:.0}"),
-                            detail: format!("{} {value:.0} {unit} {word}", quota.label),
+                            value: value.clone(),
+                            detail: format!("{} {value} {unit} {word}", quota.label),
                             gauge: used_fraction.map(|used_fraction| TrayGauge {
                                 display_fraction: match display {
                                     UsageDisplay::Used => used_fraction,
@@ -389,7 +449,13 @@ fn tray_metric(
                         };
                     }
                 }
-                let used_fraction = (quota.used_percent / 100.0).clamp(0.0, 1.0);
+                // A non-finite percent cannot be clamped into range; show a
+                // flat gauge rather than a "NaN%" strip.
+                let used_fraction = if quota.used_percent.is_finite() {
+                    (quota.used_percent / 100.0).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
                 let display_fraction = match display {
                     UsageDisplay::Used => used_fraction,
                     UsageDisplay::Left => 1.0 - used_fraction,
@@ -516,7 +582,11 @@ fn usage_metric(label: &str, period: Option<&UsagePeriod>) -> Option<TrayMetric>
 }
 
 fn format_tokens(tokens: u64) -> String {
-    if tokens >= 1_000_000 {
+    if tokens >= 1_000_000_000 {
+        // A hard bound keeps malformed counts from producing a 14-character
+        // strip value; real counts never approach it.
+        "1B+".to_owned()
+    } else if tokens >= 1_000_000 {
         format!("{:.1}M", tokens as f64 / 1_000_000.0)
     } else if tokens >= 1_000 {
         format!("{:.1}K", tokens as f64 / 1_000.0)
@@ -527,8 +597,12 @@ fn format_tokens(tokens: u64) -> String {
 
 #[cfg(not(target_os = "linux"))]
 fn mark_icon() -> Image<'static> {
-    Image::from_bytes(include_bytes!("../icons/32x32.png"))
-        .expect("bundled UsageDeck tray mark must be a valid PNG")
+    static MARK: std::sync::OnceLock<Image<'static>> = std::sync::OnceLock::new();
+    MARK.get_or_init(|| {
+        Image::from_bytes(include_bytes!("../icons/32x32.png"))
+            .expect("bundled UsageDeck tray mark must be a valid PNG")
+    })
+    .clone()
 }
 
 #[cfg(test)]

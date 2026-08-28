@@ -132,6 +132,8 @@ struct CompactModel {
     fast: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cre: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cw1: Option<f64>,
 }
 
 pub fn catalog_from_compact(data: &[u8]) -> Result<PricingCatalog, PricingCodecError> {
@@ -147,6 +149,7 @@ pub fn catalog_from_compact(data: &[u8]) -> Result<PricingCatalog, PricingCodecE
                     output_per_million: model.o,
                     cache_write_per_million: model.cw,
                     cache_read_per_million: model.cr,
+                    cache_write_1h_per_million: model.cw1,
                     input_above_200k_per_million: model.ia,
                     output_above_200k_per_million: model.oa,
                     cache_write_above_200k_per_million: model.cwa,
@@ -182,6 +185,7 @@ pub fn compact_data(catalog: &PricingCatalog) -> Result<Vec<u8>, PricingCodecErr
                     cra: rates.cache_read_above_200k_per_million,
                     fast: (rates.fast_multiplier != 1.0).then_some(rates.fast_multiplier),
                     cre: (!rates.cache_read_is_explicit).then_some(false),
+                    cw1: rates.cache_write_1h_per_million,
                 },
             )
         })
@@ -199,7 +203,12 @@ mod tests {
     #[test]
     fn parses_litellm_defaults_and_round_trips_compact_data() {
         let feed = br#"{"model":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015,"provider_specific_entry":{"fast":6}}}"#;
-        let catalog = catalog_from_litellm(feed).unwrap();
+        let mut catalog = catalog_from_litellm(feed).unwrap();
+        catalog
+            .entries
+            .get_mut("model")
+            .unwrap()
+            .cache_write_1h_per_million = Some(6.0);
         let rates = catalog.entries["model"];
         assert_eq!(rates.input_per_million, 3.0);
         assert_eq!(rates.cache_write_per_million, 3.0);

@@ -1,7 +1,8 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::Path,
+    ops::Deref,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -104,16 +105,80 @@ fn hosted_cost_sql(has_parts: bool) -> String {
     )
 }
 
-fn open_read_only(path: &Path) -> Result<Connection, ()> {
-    let connection = Connection::open_with_flags(
+struct OpenedDatabase {
+    // Field order matters: close SQLite before TempDir removes its database
+    // and WAL/SHM files.
+    connection: Connection,
+    _temporary_directory: Option<tempfile::TempDir>,
+}
+
+impl Deref for OpenedDatabase {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.connection
+    }
+}
+
+fn open_read_only(path: &Path) -> Result<OpenedDatabase, ()> {
+    match Connection::open_with_flags(
         path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .and_then(|connection| {
+        connection.busy_timeout(Duration::from_millis(150))?;
+        Ok(connection)
+    }) {
+        Ok(connection) => Ok(OpenedDatabase {
+            connection,
+            _temporary_directory: None,
+        }),
+        Err(_) => {
+            // A foreign WAL-mode database whose -shm was cleaned up after an
+            // unclean shutdown cannot be opened read-only (it would need to
+            // recreate the shm). Read temp copies of db + wal instead.
+            crate::app_debug!(
+                "opencode",
+                "foreign database read-only open failed; retrying from temp copies"
+            );
+            open_temp_copy(path)
+        }
+    }
+}
+
+fn open_temp_copy(path: &Path) -> Result<OpenedDatabase, ()> {
+    // Use the OS temporary location, not the foreign database's directory:
+    // the read-only WAL failure this path handles commonly means that source
+    // directory cannot create a missing -shm file.
+    let temporary_directory = tempfile::Builder::new()
+        .prefix("usagedeck-opencode-")
+        .tempdir()
+        .map_err(|_| ())?;
+    let primary = temporary_directory.path().join("opencode.db");
+    std::fs::copy(path, &primary).map_err(|_| ())?;
+    let wal_source = sqlite_sidecar(path, "-wal");
+    if wal_source.is_file() {
+        let wal_dest = sqlite_sidecar(&primary, "-wal");
+        std::fs::copy(&wal_source, &wal_dest).map_err(|_| ())?;
+    }
+    let connection = Connection::open_with_flags(
+        &primary,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|_| ())?;
     connection
         .busy_timeout(Duration::from_millis(150))
         .map_err(|_| ())?;
-    Ok(connection)
+    Ok(OpenedDatabase {
+        connection,
+        _temporary_directory: Some(temporary_directory),
+    })
+}
+
+fn sqlite_sidecar(path: &Path, suffix: &str) -> PathBuf {
+    let mut sidecar = path.as_os_str().to_os_string();
+    sidecar.push(suffix);
+    PathBuf::from(sidecar)
 }
 
 struct DatabaseSchema {
@@ -261,9 +326,20 @@ fn load_parts(
     } else {
         String::new()
     };
+    // Only step-finish parts carry hosted cost carriers; text, reasoning,
+    // and tool-call parts cannot contribute and on a heavy user constitute
+    // the bulk of the 33-day window. Filtering in SQL keeps the bulk out of
+    // the SQLite boundary and avoids paging+JSON-parsing it per refresh.
+    let part_filter =
+        "json_extract(p.data,'$.type') IN ('step-finish','step_finish') AND json_valid(p.data)";
+    let where_keyword = if filter.is_empty() {
+        " WHERE "
+    } else {
+        " AND "
+    };
     let sql = format!(
         "SELECT p.message_id, p.data FROM part p \
-         INNER JOIN message m ON m.id = p.message_id{filter}"
+         INNER JOIN message m ON m.id = p.message_id{filter}{where_keyword}{part_filter}"
     );
     let mut statement = connection.prepare(&sql).map_err(|_| ())?;
     let mut rows = if schema.message_time_created || part_schema.time_created {
@@ -324,4 +400,59 @@ fn row_i64(row: &Row<'_>, index: usize) -> Option<i64> {
 fn non_empty(value: impl AsRef<str>) -> Option<String> {
     let value = value.as_ref().trim();
     (!value.is_empty()).then(|| value.to_owned())
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use std::collections::HashSet;
+
+    use rusqlite::Connection;
+    use tempfile::tempdir;
+
+    use super::{open_temp_copy, sqlite_sidecar};
+
+    #[test]
+    fn temp_copy_uses_a_separate_writable_directory_and_cleans_up_sidecars() {
+        let source_directory = tempdir().unwrap();
+        // A non-.db extension also proves sidecar lookup appends "-wal"
+        // instead of replacing the source extension.
+        let source = source_directory.path().join("opencode.sqlite");
+        let writer = Connection::open(&source).unwrap();
+        writer
+            .execute_batch(
+                "PRAGMA journal_mode = WAL;
+                 PRAGMA wal_autocheckpoint = 0;
+                 CREATE TABLE sample(value INTEGER);
+                 INSERT INTO sample VALUES (42);",
+            )
+            .unwrap();
+        assert!(sqlite_sidecar(&source, "-wal").is_file());
+        let source_entries_before = std::fs::read_dir(source_directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<HashSet<_>>();
+
+        let copied = open_temp_copy(&source).unwrap();
+        let temporary_path = copied
+            ._temporary_directory
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_path_buf();
+
+        assert!(!temporary_path.starts_with(source_directory.path()));
+        assert_eq!(
+            copied
+                .query_row("SELECT value FROM sample", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            42
+        );
+        drop(copied);
+        assert!(!temporary_path.exists());
+        let source_entries_after = std::fs::read_dir(source_directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<HashSet<_>>();
+        assert_eq!(source_entries_after, source_entries_before);
+    }
 }

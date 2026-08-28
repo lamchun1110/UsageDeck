@@ -9,7 +9,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use thiserror::Error;
 
 use crate::{
-    models::{AppSettings, DailyUsage, ProviderSnapshot},
+    models::{AppSettings, ProviderSnapshot},
     providers::CacheIdentity,
 };
 
@@ -21,6 +21,8 @@ pub enum StorageError {
     Database(#[from] rusqlite::Error),
     #[error("Cached UsageDeck data is invalid")]
     InvalidCache(#[from] serde_json::Error),
+    #[error("{0}")]
+    InvalidInput(String),
     #[error("UsageDeck database lock is unavailable")]
     Poisoned,
 }
@@ -31,6 +33,18 @@ pub const MANUAL_HEIGHT_MODE: &str = "manual";
 
 pub struct Storage {
     connection: Mutex<Connection>,
+    /// Dedicated read-only path. WAL mode allows readers to proceed while a
+    /// writer commits, but only through separate connections — routing reads
+    /// here keeps UI-facing queries from queueing behind snapshot saves on
+    /// the write connection's mutex. A failure to open the second connection
+    /// (fd exhaustion, an AV scan lock) degrades to sharing the writer
+    /// instead of failing `open_at`, whose errors quarantine the database.
+    reader_connection: ReaderConnection,
+}
+
+enum ReaderConnection {
+    Dedicated(Mutex<Connection>),
+    Shared,
 }
 
 pub struct ProviderAccountUpdate {
@@ -124,14 +138,6 @@ impl Storage {
                refreshed_at TEXT NOT NULL,
                identity_key TEXT
              );
-             CREATE TABLE IF NOT EXISTS daily_usage (
-               provider_id TEXT NOT NULL,
-               date TEXT NOT NULL,
-               tokens INTEGER NOT NULL,
-               estimated_cost_usd REAL,
-               estimate_complete INTEGER NOT NULL,
-               PRIMARY KEY(provider_id, date)
-             );
              CREATE TABLE IF NOT EXISTS log_file_cache (
                provider_id TEXT NOT NULL,
                path TEXT NOT NULL,
@@ -213,9 +219,39 @@ impl Storage {
              );",
             )?;
         }
+        // The daily_usage table was rewritten on every snapshot save but never read — the
+        // snapshot JSON payload already carries the daily history. Drop it once to reclaim
+        // the space; a failed drop is harmless and logged rather than fatal.
+        if let Err(error) = connection.execute("DROP TABLE IF EXISTS daily_usage", []) {
+            crate::app_warn!(
+                "storage",
+                "dead daily_usage table could not be dropped: {error}"
+            );
+        }
+        let reader_connection = match Self::open_reader(path) {
+            Ok(reader) => ReaderConnection::Dedicated(Mutex::new(reader)),
+            Err(error) => {
+                crate::app_warn!(
+                    "storage",
+                    "dedicated read connection could not be opened; reads share the writer: {error}"
+                );
+                ReaderConnection::Shared
+            }
+        };
         Ok(Self {
             connection: Mutex::new(connection),
+            reader_connection,
         })
+    }
+
+    fn open_reader(path: &Path) -> Result<Connection, StorageError> {
+        let reader = Connection::open(path)?;
+        reader.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 2000;",
+        )?;
+        Ok(reader)
     }
 
     #[cfg(test)]
@@ -231,7 +267,7 @@ impl Storage {
         provider_id: &str,
         identity: CacheIdentity<'_>,
     ) -> Result<Option<ProviderSnapshot>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         let cached: Option<(String, Option<String>)> = connection
             .query_row(
                 "SELECT payload, identity_key FROM provider_snapshots WHERE provider_id = ?1",
@@ -287,13 +323,6 @@ impl Storage {
                 identity_key,
             ],
         )?;
-        transaction.execute(
-            "DELETE FROM daily_usage WHERE provider_id = ?1",
-            [&snapshot.provider_id],
-        )?;
-        for day in &snapshot.usage.daily {
-            Self::insert_day(&transaction, &snapshot.provider_id, day)?;
-        }
         Self::record_quota_history(&transaction, snapshot)?;
         transaction.commit()?;
         Ok(())
@@ -333,7 +362,7 @@ impl Storage {
     pub fn load_quota_history(
         &self,
     ) -> Result<HashMap<String, Vec<crate::models::QuotaHistorySample>>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         let mut statement = connection.prepare(
             "SELECT provider_id, quota_id, sampled_at, used_percent FROM (
                SELECT provider_id, quota_id, sampled_at, used_percent,
@@ -371,7 +400,7 @@ impl Storage {
         size: u64,
         modified_nanos: i64,
     ) -> Result<Option<String>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         connection
             .query_row(
                 "SELECT events_json FROM log_file_cache
@@ -451,7 +480,7 @@ impl Storage {
     }
 
     pub fn load_settings(&self) -> Result<Option<AppSettings>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         let payload: Option<String> = connection
             .query_row("SELECT payload FROM app_settings WHERE id = 1", [], |row| {
                 row.get(0)
@@ -502,7 +531,7 @@ impl Storage {
     pub fn load_provider_environment(
         &self,
     ) -> Result<Option<HashMap<String, String>>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         let payload: Option<String> = connection
             .query_row(
                 "SELECT payload FROM provider_environment WHERE id = 1",
@@ -510,7 +539,16 @@ impl Storage {
                 |row| row.get(0),
             )
             .optional()?;
-        Ok(payload.and_then(|json| serde_json::from_str(&json).ok()))
+        Ok(payload.and_then(|json| match serde_json::from_str(&json) {
+            Ok(environment) => Some(environment),
+            Err(error) => {
+                crate::app_warn!(
+                    "storage",
+                    "stored provider environment is unreadable and was reset: {error}"
+                );
+                None
+            }
+        }))
     }
 
     #[cfg(unix)]
@@ -531,7 +569,7 @@ impl Storage {
         &self,
         provider_family: &str,
     ) -> Result<Vec<(String, String, String)>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         let mut statement = connection.prepare(
             "SELECT identity_key, provider_id, payload
              FROM provider_account_records
@@ -550,7 +588,7 @@ impl Storage {
     pub fn load_all_provider_account_records(
         &self,
     ) -> Result<Vec<(String, String, String, String)>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         let mut statement = connection.prepare(
             "SELECT provider_family, identity_key, provider_id, payload
              FROM provider_account_records
@@ -566,7 +604,7 @@ impl Storage {
     }
 
     pub fn load_observed_account_provider_ids(&self) -> Result<Vec<String>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         let mut statement = connection.prepare(
             "SELECT DISTINCT provider_id
              FROM provider_account_records
@@ -628,8 +666,8 @@ impl Storage {
     ) -> Result<String, StorageError> {
         let account_name = account_name.trim();
         if account_name.is_empty() || account_name.chars().count() > 48 {
-            return Err(StorageError::InvalidCache(
-                serde_json::from_str::<serde_json::Value>("\"invalid account name\"").unwrap_err(),
+            return Err(StorageError::InvalidInput(
+                "Provider account name must be 1 to 48 characters.".to_owned(),
             ));
         }
         let mut identity_suffix = {
@@ -712,7 +750,7 @@ impl Storage {
     }
 
     pub fn load_panel_height(&self) -> Result<Option<u32>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         let height = connection
             .query_row("SELECT height FROM panel_state WHERE id = 1", [], |row| {
                 row.get::<_, i64>(0)
@@ -746,7 +784,7 @@ impl Storage {
     }
 
     pub fn load_panel_height_mode(&self) -> Result<Option<String>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         let mode = connection
             .query_row(
                 "SELECT height_mode FROM panel_state WHERE id = 1",
@@ -758,7 +796,7 @@ impl Storage {
     }
 
     pub fn load_panel_width(&self) -> Result<Option<u32>, StorageError> {
-        let connection = self.connection()?;
+        let connection = self.reader()?;
         let width = connection
             .query_row("SELECT width FROM panel_state WHERE id = 1", [], |row| {
                 row.get::<_, Option<i64>>(0)
@@ -770,38 +808,36 @@ impl Storage {
 
     pub fn save_panel_width(&self, width: u32) -> Result<(), StorageError> {
         // height is NOT NULL on panel_state, so preserve the stored height (or 0) when upserting the
-        // width on a row that does not exist yet.
-        let height = self.load_panel_height()?.unwrap_or(0) as i64;
-        self.connection()?.execute(
+        // width on a row that does not exist yet. The read and the upsert share one transaction so
+        // a concurrent manual-height save cannot be clobbered with a stale placeholder.
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let height: Option<i64> = transaction
+            .query_row("SELECT height FROM panel_state WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        transaction.execute(
             "INSERT INTO panel_state(id, height, width) VALUES (1, ?1, ?2)
              ON CONFLICT(id) DO UPDATE SET width = excluded.width",
-            [height, i64::from(width)],
+            [height.unwrap_or(0), i64::from(width)],
         )?;
-        Ok(())
-    }
-
-    fn insert_day(
-        transaction: &rusqlite::Transaction<'_>,
-        provider_id: &str,
-        day: &DailyUsage,
-    ) -> Result<(), rusqlite::Error> {
-        transaction.execute(
-            "INSERT INTO daily_usage(
-               provider_id, date, tokens, estimated_cost_usd, estimate_complete
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                provider_id,
-                day.date,
-                day.tokens as i64,
-                day.estimated_cost_usd,
-                day.estimate_complete as i64
-            ],
-        )?;
+        transaction.commit()?;
         Ok(())
     }
 
     fn connection(&self) -> Result<MutexGuard<'_, Connection>, StorageError> {
         self.connection.lock().map_err(|_| StorageError::Poisoned)
+    }
+
+    /// Lock for read-only queries. Separate from the write connection so WAL
+    /// readers never queue behind a snapshot save; falls back to the writer
+    /// when the dedicated reader could not be opened.
+    fn reader(&self) -> Result<MutexGuard<'_, Connection>, StorageError> {
+        match &self.reader_connection {
+            ReaderConnection::Dedicated(mutex) => mutex.lock().map_err(|_| StorageError::Poisoned),
+            ReaderConnection::Shared => self.connection.lock().map_err(|_| StorageError::Poisoned),
+        }
     }
 
     fn has_column(

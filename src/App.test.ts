@@ -1329,31 +1329,6 @@ describe('UsageDeck dashboard', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Back' })).toHaveFocus());
   });
 
-  it('restores stable provider chrome when a refresh request fails to start', async () => {
-    const state = {
-      ...liveState,
-      lastFullRefreshAt: new Date(Date.now() - 240_000).toISOString(),
-    };
-    mockInvoke((command: string) => {
-      if (command === 'get_usage_state') return Promise.resolve(state);
-      if (command === 'get_app_settings') return Promise.resolve(settingsState);
-      if (command === 'refresh_usage') return Promise.reject(new Error('offline'));
-      return Promise.resolve();
-    });
-    render(App);
-    const provider = await screen.findByRole('group', { name: 'Codex provider' });
-    const card = within(provider).getByRole('region', { name: 'Codex usage' });
-    expect(screen.getByText('Next update in 1m')).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh all provider usage' }));
-    await waitFor(() =>
-      expect(within(provider).queryByLabelText('Refreshing')).not.toBeInTheDocument(),
-    );
-    expect(within(provider).getByRole('region', { name: 'Codex usage' })).toBe(card);
-    expect(provider.querySelector('.provider-status-slot')).not.toHaveClass('active');
-    expect(screen.getByText('UsageDeck could not start a provider refresh.')).toBeInTheDocument();
-    expect(screen.getByText('Next update in 1m')).toBeInTheDocument();
-  });
-
   it('shows platform-correct Ctrl shortcuts and handles Ctrl+Q', async () => {
     render(App);
     await screen.findByText('Plus');

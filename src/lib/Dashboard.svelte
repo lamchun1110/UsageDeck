@@ -9,6 +9,12 @@
   import ProviderLinks from './ProviderLinks.svelte';
   import ProviderNoticeRow from './ProviderNoticeRow.svelte';
   import Icon from './Icon.svelte';
+  import { t } from './i18n.svelte';
+  import {
+    moveMetricIntoSection as moveMetric,
+    reorderMetric as reorderMetricList,
+    reorderProviders,
+  } from './reorder';
   import MetricRenderer from './MetricRenderer.svelte';
   import type { ProviderCatalogIndex } from './metrics';
   import { canRenameProvider } from './providerNames';
@@ -169,15 +175,8 @@
   }
   onDestroy(() => window.clearTimeout(demandMorphTimer));
   function reorderProvider(draggedId: string, targetId: string) {
-    if (draggedId === targetId) return;
-    const enabled = settings.providers.filter((provider) => provider.enabled);
-    const from = enabled.findIndex((provider) => provider.id === draggedId);
-    const to = enabled.findIndex((provider) => provider.id === targetId);
-    if (from < 0 || to < 0) return;
-    const [moved] = enabled.splice(from, 1);
-    enabled.splice(to, 0, moved);
-    const providers = [...enabled, ...settings.providers.filter((provider) => !provider.enabled)];
-    onCustomizationChange({ ...settings, providers });
+    const providers = reorderProviders(settings.providers, draggedId, targetId);
+    if (providers) onCustomizationChange({ ...settings, providers });
   }
   function reorderMetric(
     draggedMetricId: string,
@@ -186,15 +185,14 @@
     targetSection: MetricLayout['section'],
   ) {
     const provider = settings.providers.find((item) => item.id === providerId);
-    if (!provider || draggedMetricId === targetMetricId) return;
-    const metrics = [...provider.metrics];
-    const from = metrics.findIndex((metric) => metric.id === draggedMetricId);
-    const to = metrics.findIndex((metric) => metric.id === targetMetricId);
-    if (from < 0 || to < 0) return;
-    const [source] = metrics.splice(from, 1);
-    const moved = { ...source, section: targetSection };
-    metrics.splice(to, 0, moved);
-    updateProvider({ ...provider, metrics });
+    if (!provider) return;
+    const metrics = reorderMetricList(
+      provider.metrics,
+      draggedMetricId,
+      targetMetricId,
+      targetSection,
+    );
+    if (metrics) updateProvider({ ...provider, metrics });
   }
   function reorderMetricToTarget(
     draggedMetricId: string,
@@ -217,18 +215,8 @@
   ) {
     const provider = settings.providers.find((item) => item.id === providerId);
     if (!provider) return;
-    const metrics = [...provider.metrics];
-    const from = metrics.findIndex((metric) => metric.id === draggedMetricId);
-    if (from < 0) return;
-    const [source] = metrics.splice(from, 1);
-    const lastInSection = metrics.reduce(
-      (last, metric, index) => (metric.section === section ? index : last),
-      -1,
-    );
-    const insertAt =
-      lastInSection >= 0 ? lastInSection + 1 : section === 'alwaysVisible' ? 0 : metrics.length;
-    metrics.splice(insertAt, 0, { ...source, section });
-    updateProvider({ ...provider, metrics });
+    const metrics = moveMetric(provider.metrics, draggedMetricId, section);
+    if (metrics) updateProvider({ ...provider, metrics });
   }
   function openProviderMenu(event: MouseEvent, providerId: string) {
     event.preventDefault();
@@ -309,13 +297,15 @@
   }
   function stalenessTooltip(refreshedAt: string) {
     const elapsedSeconds = Math.max(0, Math.floor((now - Date.parse(refreshedAt)) / 1000));
-    if (!Number.isFinite(elapsedSeconds)) return 'Last update time unavailable';
-    if (elapsedSeconds < 60) return 'Last updated moments ago';
+    if (!Number.isFinite(elapsedSeconds)) return t('dashboard.staleness.unavailable');
+    if (elapsedSeconds < 60) return t('dashboard.staleness.moments');
     const minutes = Math.floor(elapsedSeconds / 60);
-    if (minutes < 60) return `Last updated ${minutes}m ago`;
+    if (minutes < 60) return t('dashboard.staleness.minutesAgo', { minutes });
     const hours = Math.floor(minutes / 60);
     const remainingMinutes = minutes % 60;
-    return `Last updated ${hours}h${remainingMinutes ? ` ${remainingMinutes}m` : ''} ago`;
+    return remainingMinutes
+      ? t('dashboard.staleness.hoursMinutesAgo', { hours, minutes: remainingMinutes })
+      : t('dashboard.staleness.hoursAgo', { hours });
   }
 </script>
 
@@ -327,20 +317,20 @@
 />
 
 {#if updateStatus?.available && updateStatus.version !== settings.dismissedUpdateVersion}
-  <section class="hint-card update-banner" aria-label="Update Available">
+  <section class="hint-card update-banner" aria-label={t('dashboard.update.bannerLabel')}>
     <span class="hint-card__icon"><Icon name="refresh" size={16} strokeWidth={2} /></span>
     <div>
-      <strong>Update Available</strong>
-      <span>UsageDeck {updateStatus.version} is ready to download.</span>
+      <strong>{t('dashboard.update.title')}</strong>
+      <span>{t('dashboard.update.ready', { version: updateStatus.version ?? '' })}</span>
       {#if updateStatus.body}<details class="update-notes">
-          <summary>What’s new</summary>
+          <summary>{t('dashboard.update.whatsNew')}</summary>
           <p>{updateStatus.body}</p>
         </details>{/if}
       {#if installingUpdate && updateProgress}
         <div
           class="update-progress"
           role="progressbar"
-          aria-label="Update download"
+          aria-label={t('dashboard.update.progressLabel')}
           aria-valuemin="0"
           aria-valuemax="100"
           aria-valuenow={updateProgress.phase === 'installing'
@@ -353,12 +343,12 @@
         </div>
         <small>
           {updateProgress.phase === 'installing'
-            ? 'Installing update…'
+            ? t('dashboard.update.installing')
             : updateProgress.phase === 'retrying'
-              ? 'Download interrupted. Retrying…'
+              ? t('dashboard.update.retrying')
               : updateProgress.percent === null
-                ? 'Downloading update…'
-                : `Downloading update… ${updateProgress.percent}%`}
+                ? t('dashboard.update.downloading')
+                : t('dashboard.update.downloadingPercent', { percent: updateProgress.percent })}
         </small>
       {/if}
       {#if updateError}<div class="update-error" role="alert">
@@ -373,22 +363,22 @@
         disabled={installingUpdate}
         >{updateStatus.installable
           ? installingUpdate
-            ? 'Updating…'
+            ? t('dashboard.update.updating')
             : updateError?.retryable
-              ? 'Try Again'
-              : 'Install Update'
-          : 'Download from GitHub'}</button
+              ? t('dashboard.update.tryAgain')
+              : t('dashboard.update.install')
+          : t('dashboard.update.downloadFromGitHub')}</button
       >
       {#if updateStatus.installable && !installingUpdate}
         <button type="button" class="update-release-action" onclick={onOpenUpdatePage}
-          >View Release</button
+          >{t('dashboard.update.viewRelease')}</button
         >
       {/if}
     </div>
     <button
       class="hint-card__dismiss"
       type="button"
-      aria-label="Dismiss"
+      aria-label={t('dashboard.dismiss')}
       onclick={() =>
         onSettingsChange({
           ...settings,
@@ -401,13 +391,14 @@
 {#if !settings.detectionNoticeDismissed}
   <section class="detection-card" out:scale={{ start: 0.95, ...springMotion(reducedMotion) }}>
     <div>
-      <strong>Welcome to UsageDeck</strong><span
-        >We set you up with the AI tools found on your computer. Add or hide providers any time.</span
-      >
+      <strong>{t('dashboard.welcome.title')}</strong><span>{t('dashboard.welcome.body')}</span>
     </div>
-    <button type="button" onclick={onCustomize}>Open Customize</button>
-    <button class="dismiss" type="button" aria-label="Dismiss" onclick={dismissDetection}
-      ><Icon name="close" size={10} strokeWidth={2.2} /></button
+    <button type="button" onclick={onCustomize}>{t('dashboard.welcome.openCustomize')}</button>
+    <button
+      class="dismiss"
+      type="button"
+      aria-label={t('dashboard.dismiss')}
+      onclick={dismissDetection}><Icon name="close" size={10} strokeWidth={2.2} /></button
     >
   </section>
 {/if}
@@ -451,7 +442,9 @@
           data-reorder-touch-handle
           role="button"
           tabindex="0"
-          aria-label={`Move ${providerDisplayName(provider.id)}`}
+          aria-label={t('dashboard.provider.moveHandle', {
+            provider: providerDisplayName(provider.id),
+          })}
           aria-describedby="reorder-instructions"
           aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"><Icon name="grip-dots" size={13} /></span
         >
@@ -460,14 +453,16 @@
         {#if state?.snapshot && state.stale}<span
             class="status-badge"
             data-tooltip={stalenessTooltip(snapshot.refreshedAt)}
-            >Outdated<span class="sr-only">. {stalenessTooltip(snapshot.refreshedAt)}</span></span
+            >{t('dashboard.provider.outdated')}<span class="sr-only"
+              >. {stalenessTooltip(snapshot.refreshedAt)}</span
+            ></span
           >{/if}
         <span
           class="provider-status-slot"
           class:active={Boolean(state?.refreshing || state?.error || snapshot.warnings.length > 0)}
         >
           {#if state?.refreshing}
-            <span class="provider-refreshing" aria-label="Refreshing"
+            <span class="provider-refreshing" aria-label={t('dashboard.provider.refreshing')}
               ><Icon name="refresh" size={12} strokeWidth={2} /></span
             >
           {:else if state?.error}
@@ -490,7 +485,7 @@
       </header>
       <section
         class="provider-card"
-        aria-label={`${providerDisplayName(provider.id)} usage`}
+        aria-label={t('dashboard.provider.usage', { provider: providerDisplayName(provider.id) })}
         aria-busy={state?.refreshing ? 'true' : undefined}
       >
         {#each snapshot.notices as notice (notice.id)}
@@ -506,16 +501,26 @@
               {#if catalog.supportsApiKeyConfiguration(provider.id) && (state.errorKind === 'authentication' || state.errorKind === 'permission' || state.errorKind === 'credentialStorage')}
                 <button
                   type="button"
-                  aria-label={`Configure ${providerDisplayName(provider.id)}`}
-                  onclick={() => onOpenProviderCustomize(provider.id)}>Configure</button
+                  aria-label={t('dashboard.provider.configureAria', {
+                    provider: providerDisplayName(provider.id),
+                  })}
+                  onclick={() => onOpenProviderCustomize(provider.id)}
+                  >{t('dashboard.provider.configure')}</button
                 >
               {/if}
               <button
                 type="button"
-                aria-label={`${state.refreshing ? 'Retrying' : 'Retry'} ${providerDisplayName(provider.id)}`}
+                aria-label={t('dashboard.provider.retryAria', {
+                  action: state.refreshing
+                    ? t('dashboard.provider.retryingAria')
+                    : t('dashboard.provider.retry'),
+                  provider: providerDisplayName(provider.id),
+                })}
                 aria-disabled={state.refreshing}
                 onclick={(event) => void retryProvider(event, provider.id, state.refreshing)}
-                >{state.refreshing ? 'Retrying…' : 'Retry'}</button
+                >{state.refreshing
+                  ? t('dashboard.provider.retrying')
+                  : t('dashboard.provider.retry')}</button
               >
             </span>
           </div>
@@ -527,7 +532,9 @@
             data-reorder-group={`dashboard-metrics:${provider.id}`}
             data-reorder-id={metric.id}
             role="group"
-            aria-label={`${metricDefinition(metric.id)?.label ?? metric.id} options`}
+            aria-label={t('dashboard.provider.metricOptions', {
+              metric: metricDefinition(metric.id)?.label ?? metric.id,
+            })}
             use:pointerReorder={{
               id: metric.id,
               group: `dashboard-metrics:${provider.id}`,
@@ -650,23 +657,27 @@
         type="button"
         role="menuitem"
         onclick={() => hideProvider(menuProvider.id)}
-        ><Icon name="power" size={15} />Hide {providerDisplayName(menuProvider.id)}</button
+        ><Icon name="power" size={15} />{t('dashboard.menu.hideProvider', {
+          provider: providerDisplayName(menuProvider.id),
+        })}</button
       >
       <hr />
       <button type="button" role="menuitem" onclick={() => onRefresh(menuProvider.id)}
-        ><Icon name="refresh" size={15} />Refresh {providerDisplayName(menuProvider.id)}</button
+        ><Icon name="refresh" size={15} />{t('dashboard.menu.refreshProvider', {
+          provider: providerDisplayName(menuProvider.id),
+        })}</button
       >
       {#if canRenameProvider(menuProvider.id, renamableProviderIds)}
         <button type="button" role="menuitem" onclick={() => onRenameProvider(menuProvider.id)}
-          ><Icon name="edit" size={15} />Rename…</button
+          ><Icon name="edit" size={15} />{t('dashboard.menu.rename')}</button
         >
       {/if}
       <button type="button" role="menuitem" onclick={() => onOpenProviderCustomize(menuProvider.id)}
-        ><Icon name="sliders" size={15} />Customize…</button
+        ><Icon name="sliders" size={15} />{t('dashboard.menu.customize')}</button
       >
       <hr />
       <button type="button" role="menuitem" onclick={() => onShare(menuProvider.id)}
-        ><Icon name="share" size={15} />Share Screenshot</button
+        ><Icon name="share" size={15} />{t('dashboard.menu.shareScreenshot')}</button
       >
     </div>
   {/if}
@@ -690,7 +701,7 @@
         type="button"
         role="menuitem"
         onclick={() => patchMetric(metricProvider.id, menuMetric.id, { enabled: false })}
-        ><Icon name="power" size={15} />Hide</button
+        ><Icon name="power" size={15} />{t('dashboard.menu.hide')}</button
       >
       {#if metricDefinition(menuMetric.id)?.pinnable}
         <button
@@ -703,19 +714,21 @@
               pinned: !menuMetric.pinned,
             })}
           ><Icon name={menuMetric.pinned ? 'star-filled' : 'star'} size={15} />{menuMetric.pinned
-            ? 'Unstar'
-            : 'Star for menu bar'}</button
+            ? t('dashboard.menu.unstar')
+            : t('dashboard.menu.star')}</button
         >
       {/if}
       <hr />
       <button type="button" role="menuitem" onclick={() => onRefresh(metricProvider.id)}
-        ><Icon name="refresh" size={15} />Refresh {providerDisplayName(metricProvider.id)}</button
+        ><Icon name="refresh" size={15} />{t('dashboard.menu.refreshProvider', {
+          provider: providerDisplayName(metricProvider.id),
+        })}</button
       >
       <button
         type="button"
         role="menuitem"
         onclick={() => onOpenProviderCustomize(metricProvider.id)}
-        ><Icon name="sliders" size={15} />Customize…</button
+        ><Icon name="sliders" size={15} />{t('dashboard.menu.customize')}</button
       >
     </div>
   {/if}
@@ -723,7 +736,7 @@
 
 {#if enabledProviders.length === 0}
   <section class="empty-dashboard">
-    <span>Turn on Customize to choose what to show.</span>
+    <span>{t('dashboard.empty')}</span>
   </section>
 {/if}
 
@@ -748,24 +761,6 @@
       font-size: 14px;
       font-weight: 650;
       letter-spacing: -0.01em;
-    }
-
-    .plan {
-      color: var(--secondary);
-      font-size: 11px;
-      line-height: 1;
-      white-space: nowrap;
-    }
-
-    .status-badge {
-      padding: 2px 6px;
-      border-radius: 999px;
-      color: var(--warning);
-      background: var(--warning-bg);
-      font-size: 9px;
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
     }
 
     .provider-mark {
@@ -826,12 +821,6 @@
       height: 2px;
       border-radius: 50%;
       background: var(--tertiary);
-    }
-
-    .provider-card {
-      padding: 5px 12px;
-      border-radius: 14px;
-      background: var(--card);
     }
 
     .provider-error-row {

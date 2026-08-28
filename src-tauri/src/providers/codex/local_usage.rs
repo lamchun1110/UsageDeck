@@ -17,6 +17,7 @@ use crate::{
 };
 
 use super::CodexError;
+use crate::providers::paths::{expand_home, home_directory};
 use crate::providers::{
     daily_usage::DailyUsageAccumulator,
     log_usage::{load_or_parse_log, parse_log_timestamp, LogCacheError},
@@ -122,26 +123,6 @@ fn codex_homes(configured_home: Option<&OsStr>, home: &Path) -> Vec<PathBuf> {
     vec![home.join(".codex")]
 }
 
-fn expand_home(value: &str, home: &Path) -> PathBuf {
-    if value == "~" {
-        return home.to_path_buf();
-    }
-    if let Some(relative) = value
-        .strip_prefix("~/")
-        .or_else(|| value.strip_prefix("~\\"))
-    {
-        return home.join(relative);
-    }
-    PathBuf::from(value)
-}
-
-fn home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
-}
-
 fn discover_session_files(homes: &[PathBuf]) -> Vec<PathBuf> {
     let mut output = Vec::new();
     let mut seen_directories = HashSet::new();
@@ -184,7 +165,7 @@ fn discover_session_files(homes: &[PathBuf]) -> Vec<PathBuf> {
     output
 }
 
-pub fn parse_jsonl(content: &str) -> Vec<TokenEvent> {
+pub fn parse_jsonl(lines: &mut dyn Iterator<Item = std::io::Result<String>>) -> Vec<TokenEvent> {
     let mut current_model: Option<String> = None;
     let mut current_tier_is_fast = false;
     let mut previous_totals: Option<RawUsage> = None;
@@ -192,7 +173,7 @@ pub fn parse_jsonl(content: &str) -> Vec<TokenEvent> {
     let mut replay_gate: Option<ChildReplayGate> = None;
     let mut events = Vec::new();
 
-    for line in content.lines() {
+    for line in lines.map_while(|line| line.ok()) {
         let is_turn_context = line.contains("\"type\":\"turn_context\"");
         let is_session_meta = !saw_session_meta && line.contains("\"type\":\"session_meta\"");
         let is_task_started = replay_gate.is_some() && line.contains("\"type\":\"task_started\"");
@@ -205,7 +186,7 @@ pub fn parse_jsonl(content: &str) -> Vec<TokenEvent> {
         {
             continue;
         }
-        let Ok(object) = serde_json::from_str::<Value>(line) else {
+        let Ok(object) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
         let object_type = object.get("type").and_then(Value::as_str);
@@ -499,6 +480,10 @@ fn aggregate_into(
     let mut seen = HashSet::new();
 
     for event in events {
+        // The exact-tuple key must not collapse events from distinct sessions
+        // whose replay happened to share a timestamp — an archived/active
+        // mirror pair is the only intended hit, and even there the tier
+        // distinguishes a cached fast turn from a placement variant.
         let key = (
             event.timestamp,
             event.model.clone(),
@@ -507,6 +492,7 @@ fn aggregate_into(
             event.output,
             event.reasoning,
             event.total,
+            event.is_fast,
         );
         if !seen.insert(key) {
             continue;
@@ -620,6 +606,10 @@ fn dated_base_model(model: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    fn parse(content: &str) -> Vec<TokenEvent> {
+        parse_jsonl(&mut content.lines().map(|line| Ok(line.to_owned())))
+    }
+
     use std::{collections::HashMap, fs, io, path::Path};
 
     use chrono::{NaiveDate, TimeZone, Utc};
@@ -641,7 +631,7 @@ mod tests {
     fn parses_last_usage_and_tracks_turn_model() {
         let content = r#"{"timestamp":"2026-07-10T08:00:00Z","type":"turn_context","payload":{"model":"gpt-5.5"}}
 {"timestamp":"2026-07-10T08:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":10,"reasoning_output_tokens":5,"total_tokens":115}}}}"#;
-        let events = parse_jsonl(content);
+        let events = parse(content);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].model, "gpt-5.5");
         assert_eq!(events[0].total, 115);
@@ -652,7 +642,7 @@ mod tests {
     fn cumulative_totals_become_deltas() {
         let content = r#"{"timestamp":"2026-07-10T08:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}
 {"timestamp":"2026-07-10T08:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":160,"output_tokens":20,"total_tokens":180}}}}"#;
-        let events = parse_jsonl(content);
+        let events = parse(content);
         assert_eq!(events.len(), 2);
         assert_eq!(events[1].input, 60);
         assert_eq!(events[1].output, 10);
@@ -662,7 +652,7 @@ mod tests {
     fn auto_review_keeps_its_model_name() {
         let content = r#"{"timestamp":"2026-03-10T08:00:00Z","type":"turn_context","payload":{"model":"codex-auto-review"}}
 {"timestamp":"2026-03-10T08:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}}"#;
-        let events = parse_jsonl(content);
+        let events = parse(content);
         assert_eq!(events[0].model, "codex-auto-review");
     }
 
@@ -680,7 +670,7 @@ mod tests {
             PricingCatalog::default(),
         );
 
-        let history = aggregate(parse_jsonl(content), now, &pricing);
+        let history = aggregate(parse(content), now, &pricing);
         let today = history.today.unwrap();
         let breakdown = today.model_breakdown.unwrap();
 
@@ -699,7 +689,7 @@ mod tests {
 {"timestamp":"2026-05-12T08:04:30Z","type":"event_msg","payload":{"type":"task_started","started_at":1}}
 {"timestamp":"2026-05-12T08:05:00Z","type":"event_msg","payload":{"type":"task_started","started_at":9999999999}}
 {"timestamp":"2026-05-12T08:06:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1600,"cached_input_tokens":160,"output_tokens":320,"total_tokens":1920}}}}"#;
-        let events = parse_jsonl(content);
+        let events = parse(content);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].input, 100);
         assert_eq!(events[0].cached, 10);
@@ -711,7 +701,7 @@ mod tests {
     fn child_without_a_live_task_emits_no_replayed_usage() {
         let content = r#"{"timestamp":"2026-05-12T08:03:00Z","type":"session_meta","payload":{"forked_from_id":"parent"}}
 {"timestamp":"2026-05-12T08:04:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120},"total_token_usage":{"input_tokens":1000,"output_tokens":200,"total_tokens":1200}}}}"#;
-        assert!(parse_jsonl(content).is_empty());
+        assert!(parse(content).is_empty());
     }
 
     #[test]
@@ -722,7 +712,7 @@ mod tests {
 {"timestamp":"2026-05-12T08:04:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1500,"output_tokens":300,"total_tokens":1800}}}}
 {"timestamp":"2026-05-12T08:05:00Z","type":"event_msg","payload":{"type":"task_started","started_at":9999999999}}
 {"timestamp":"2026-05-12T08:06:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1600,"output_tokens":320,"total_tokens":1920}}}}"#;
-        let events = parse_jsonl(content);
+        let events = parse(content);
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].input, 100);
@@ -734,7 +724,7 @@ mod tests {
     fn null_parent_metadata_keeps_root_session_usage() {
         let content = r#"{"timestamp":"2026-05-12T08:03:00Z","type":"session_meta","payload":{"forked_from_id":null,"parent_thread_id":" "}}
 {"timestamp":"2026-05-12T08:04:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120}}}}"#;
-        assert_eq!(parse_jsonl(content).len(), 1);
+        assert_eq!(parse(content).len(), 1);
     }
 
     #[test]
@@ -743,7 +733,7 @@ mod tests {
 {"timestamp":"2026-07-10T08:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}
 {"timestamp":"2026-07-10T08:02:00Z","type":"event_msg","payload":{"type":"thread_settings_applied","service_tier":"default"}}
 {"timestamp":"2026-07-10T08:03:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"output_tokens":5,"total_tokens":55}}}}"#;
-        let events = parse_jsonl(content);
+        let events = parse(content);
         assert!(events[0].is_fast);
         assert!(!events[1].is_fast);
     }
@@ -752,14 +742,14 @@ mod tests {
     fn unchanged_cumulative_snapshot_is_not_counted_twice() {
         let content = r#"{"timestamp":"2026-07-10T08:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110},"total_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}
 {"timestamp":"2026-07-10T08:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110},"total_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}"#;
-        assert_eq!(parse_jsonl(content).len(), 1);
+        assert_eq!(parse(content).len(), 1);
     }
 
     #[test]
     fn accepts_trimmed_timestamps_and_rejects_numeric_strings() {
         let content = r#"{"timestamp":" 2026-07-10T08:00:00Z ","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.5","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}
 {"timestamp":"2026-07-10T08:01:00Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.5","info":{"last_token_usage":{"input_tokens":"100","output_tokens":"10","total_tokens":"110"}}}}"#;
-        let events = parse_jsonl(content);
+        let events = parse(content);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].total, 110);
     }
@@ -767,7 +757,7 @@ mod tests {
     #[test]
     fn parses_cross_device_timestamp_offsets() {
         let content = r#"{"timestamp":"2026-07-15 15:00:00.123456+03:00","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.5","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}"#;
-        let events = parse_jsonl(content);
+        let events = parse(content);
         assert_eq!(
             events[0].timestamp.to_rfc3339(),
             "2026-07-15T12:00:00.123+00:00"
@@ -935,7 +925,7 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 7, 10, 12, 0, 0).unwrap();
         let content = r#"{"timestamp":"2026-07-10T08:00:00Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.6-sol","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}"#;
         let pricing = test_bundled_pricing();
-        let history = aggregate(parse_jsonl(content), now, &pricing);
+        let history = aggregate(parse(content), now, &pricing);
         assert_eq!(history.today.as_ref().unwrap().tokens, 110);
         assert!(history.today.as_ref().unwrap().estimated_cost_usd.is_some());
         assert!(history.today.as_ref().unwrap().estimate_complete);
@@ -947,7 +937,7 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 7, 10, 12, 0, 0).unwrap();
         let content = r#"{"timestamp":"2026-07-10T08:00:00Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-daybreak-blue-latest","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}"#;
         let pricing = test_bundled_pricing();
-        let history = aggregate(parse_jsonl(content), now, &pricing);
+        let history = aggregate(parse(content), now, &pricing);
         let today = history.today.as_ref().unwrap();
         assert_eq!(today.tokens, 110);
         assert_eq!(today.estimated_cost_usd, Some(0.0008));
@@ -966,7 +956,7 @@ mod tests {
 {"timestamp":"2026-07-10T09:00:00Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5.3-codex","info":{"last_token_usage":{"input_tokens":800,"output_tokens":100,"total_tokens":900}}}}
 {"timestamp":"2026-07-10T10:00:00Z","type":"event_msg","payload":{"type":"token_count","model":"future-unpriced-model","info":{"last_token_usage":{"input_tokens":400,"output_tokens":100,"total_tokens":500}}}}"#;
         let pricing = test_bundled_pricing();
-        let history = aggregate(parse_jsonl(content), now, &pricing);
+        let history = aggregate(parse(content), now, &pricing);
         let today = history.today.unwrap();
         let breakdown = today.model_breakdown.unwrap();
 
@@ -988,7 +978,7 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 7, 10, 12, 0, 0).unwrap();
         let content = r#"{"timestamp":"2026-07-10T10:00:00Z","type":"event_msg","payload":{"type":"token_count","model":"future-unpriced-model","info":{"last_token_usage":{"input_tokens":400,"output_tokens":100,"total_tokens":500}}}}"#;
         let pricing = test_bundled_pricing();
-        let history = aggregate(parse_jsonl(content), now, &pricing);
+        let history = aggregate(parse(content), now, &pricing);
 
         assert!(history.today.is_none());
         assert!(history.last_30_days.is_none());
@@ -999,7 +989,7 @@ mod tests {
     #[test]
     fn provider_fixture_parses_realistic_codex_jsonl() {
         let content = include_str!("../../../tests/fixtures/codex_session.jsonl");
-        let events = parse_jsonl(content);
+        let events = parse(content);
         assert_eq!(events.len(), 2);
         assert_eq!(events.iter().map(|event| event.total).sum::<u64>(), 225);
         assert!(events.iter().all(|event| event.model == "gpt-5.4"));

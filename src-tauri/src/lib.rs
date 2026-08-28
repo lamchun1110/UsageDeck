@@ -19,6 +19,7 @@ mod refresh_loop;
 mod service;
 mod settings;
 mod storage;
+mod svg_path;
 #[cfg(any(all(not(target_os = "macos"), not(target_os = "linux")), test))]
 mod tray_icon;
 mod tray_presentation;
@@ -28,7 +29,7 @@ mod window;
 #[cfg(any(target_os = "linux", test))]
 mod xdg_autostart;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use popup::PopupDismissGuard;
 use service::ProviderService;
@@ -206,18 +207,69 @@ fn spawn_status_notifier_monitor(app: AppHandle) {
     if std::thread::Builder::new()
         .name("usagedeck-tray-monitor".to_owned())
         .spawn(move || {
-            if let Err(error) = desktop_integration::wait_for_status_notifier_loss() {
-                app_warn!("lifecycle", "system tray monitor stopped: {error}");
-            }
-            let fallback_app = monitor_app.clone();
-            if monitor_app
-                .run_on_main_thread(move || apply_linux_tray_fallback(&fallback_app))
-                .is_err()
-            {
-                app_warn!(
-                    "lifecycle",
-                    "standalone tray fallback could not be scheduled"
-                );
+            loop {
+                match desktop_integration::wait_for_status_notifier_loss() {
+                    // A true loss: the watcher's owner went away. Keep the
+                    // current behavior (log + standalone fallback).
+                    Ok(()) => {
+                        let fallback_app = monitor_app.clone();
+                        if monitor_app
+                            .run_on_main_thread(move || {
+                                apply_linux_tray_fallback(&fallback_app)
+                            })
+                            .is_err()
+                        {
+                            app_warn!(
+                                "lifecycle",
+                                "standalone tray fallback could not be scheduled"
+                            );
+                        }
+                        return;
+                    }
+                    // The signal stream ended without a loss event — a
+                    // session-bus restart can do this while the watcher stays
+                    // registered. Re-probe; if still registered, restart the
+                    // monitor instead of permanently floating the session.
+                    Err(error) if error.contains("watcher signal stream ended") => {
+                        if desktop_integration::probe_status_notifier_watcher_available() {
+                            crate::app_debug!(
+                                "lifecycle",
+                                "StatusNotifier monitor stream ended; watcher still registered, restarting monitor"
+                            );
+                            continue;
+                        }
+                        app_warn!("lifecycle", "system tray monitor stopped: {error}");
+                        let fallback_app = monitor_app.clone();
+                        if monitor_app
+                            .run_on_main_thread(move || {
+                                apply_linux_tray_fallback(&fallback_app)
+                            })
+                            .is_err()
+                        {
+                            app_warn!(
+                                "lifecycle",
+                                "standalone tray fallback could not be scheduled"
+                            );
+                        }
+                        return;
+                    }
+                    Err(error) => {
+                        app_warn!("lifecycle", "system tray monitor stopped: {error}");
+                        let fallback_app = monitor_app.clone();
+                        if monitor_app
+                            .run_on_main_thread(move || {
+                                apply_linux_tray_fallback(&fallback_app)
+                            })
+                            .is_err()
+                        {
+                            app_warn!(
+                                "lifecycle",
+                                "standalone tray fallback could not be scheduled"
+                            );
+                        }
+                        return;
+                    }
+                }
             }
         })
         .is_err()
@@ -225,6 +277,159 @@ fn spawn_status_notifier_monitor(app: AppHandle) {
         app_warn!("lifecycle", "system tray monitor could not be started");
         apply_linux_tray_fallback(&app);
     }
+}
+
+/// One-time legacy OpenQuota → UsageDeck migrations: the in-place database
+/// rename (ahead of the copy pass so a user's own newer file wins), the data
+/// directory copy, and credential-store re-keying. Directory and credential
+/// copies are best-effort; an incomplete in-place database rename aborts
+/// startup so a new database cannot mask retryable legacy data.
+fn migrate_legacy_data(app_data_dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    match migration::rename_legacy_database(app_data_dir) {
+        Ok(true) => {
+            app_info!(
+                "lifecycle",
+                "renamed the legacy database file to usagedeck.db"
+            );
+        }
+        Ok(false) => {}
+        // Do not continue into Storage::open after an incomplete in-place
+        // database migration: that would create a fresh current database and
+        // permanently mask the still-retryable legacy database on next launch.
+        Err(error) => return Err(std::io::Error::other(error).into()),
+    }
+    let data_migration = migration::migrate_app_data(app_data_dir);
+    for copied in &data_migration.copied {
+        app_info!("lifecycle", "migrated legacy OpenQuota data: {copied}");
+    }
+    for error in &data_migration.errors {
+        app_warn!("lifecycle", "legacy data migration issue: {error}");
+    }
+    let key_migration = migration::migrate_api_keys(app_data_dir);
+    if !key_migration.migrated.is_empty() {
+        app_info!(
+            "lifecycle",
+            "migrated {} saved API key(s) from the OpenQuota credential entry",
+            key_migration.migrated.len()
+        );
+    }
+    for (account, error) in &key_migration.failures {
+        app_warn!(
+            "lifecycle",
+            "API key migration failed for {account}: {error}"
+        );
+    }
+    Ok(())
+}
+
+/// Opens the database, restores the persisted provider environment, and wires
+/// the panel resize session.
+fn open_application_storage(
+    app: &App,
+    app_data_dir: &std::path::Path,
+) -> Result<Arc<Storage>, Box<dyn std::error::Error>> {
+    let database_path = app_data_dir.join(migration::DATABASE_FILE);
+    let storage = Arc::new(Storage::open(&database_path)?);
+    provider_environment::initialize(storage.load_provider_environment()?);
+    provider_environment::refresh_for_next_launch(storage.clone());
+    app.manage(Arc::new(PanelResizeSession::new(storage.clone())));
+    app_debug!("cache", "application database opened");
+    Ok(storage)
+}
+
+/// Builds the full provider registry: every built-in provider plus the
+/// per-account API-key providers materialized from the database.
+fn build_provider_registry(
+    app_data_dir: &std::path::Path,
+    storage: &Arc<Storage>,
+    pricing: &Arc<PricingStore>,
+) -> Result<Arc<ProviderRegistry>, Box<dyn std::error::Error>> {
+    let mut providers = claude::runtimes(storage.clone(), pricing.clone())?;
+    providers.extend(vec![
+        Arc::new(CodexProvider::new(storage.clone(), pricing.clone())?) as Arc<dyn UsageProvider>,
+        Arc::new(CommandCodeProvider::new()?) as Arc<dyn UsageProvider>,
+        Arc::new(CursorProvider::new(pricing.clone())?) as Arc<dyn UsageProvider>,
+        Arc::new(AntigravityProvider::new(
+            app_data_dir.join("antigravity").join("auth.json"),
+        )?) as Arc<dyn UsageProvider>,
+        Arc::new(CopilotProvider::new()?) as Arc<dyn UsageProvider>,
+        Arc::new(DevinProvider::new()?) as Arc<dyn UsageProvider>,
+        Arc::new(GrokProvider::new(storage.clone(), pricing.clone())?) as Arc<dyn UsageProvider>,
+        Arc::new(OpenCodeProvider::new(pricing.clone())) as Arc<dyn UsageProvider>,
+        Arc::new(OpenRouterProvider::new()?) as Arc<dyn UsageProvider>,
+        Arc::new(ZaiProvider::new()?) as Arc<dyn UsageProvider>,
+        Arc::new(KimiProvider::new()?) as Arc<dyn UsageProvider>,
+        Arc::new(MiniMaxProvider::new()?) as Arc<dyn UsageProvider>,
+    ]);
+    providers.extend(crate::providers::api_key_account::api_key_account_providers(storage)?);
+    Ok(Arc::new(ProviderRegistry::new(providers)?))
+}
+
+/// Applies the persisted panel surface and (for standalone installs) the
+/// window mode, and registers the saved global shortcut.
+fn apply_initial_window_state(
+    app: &App,
+    desktop_integration: &DesktopIntegration,
+    settings: &Arc<SettingsService>,
+    floating_window: bool,
+) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        if window::apply_panel_surface(&window, settings.get().theme).is_err() {
+            app_warn!("window", "initial panel surface theme could not be applied");
+        }
+        if !floating_window {
+            webview_memory::set_inactive(&window, true);
+        }
+    }
+
+    if let Some(shortcut) = settings.get().global_shortcut.clone() {
+        let _ = register_shortcut(app.handle(), &shortcut);
+    }
+
+    if desktop_integration.is_floating() {
+        if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+            if let Err(error) = window::apply_window_mode(&window, settings.get().window_mode, true)
+            {
+                app_warn!(
+                    "window",
+                    "standalone startup mode could not be applied: {error}"
+                );
+                show_standalone_window_fallback(&window);
+            }
+        }
+    }
+}
+
+/// Installs the tray when the desktop supports one, degrading to the
+/// standalone window (and watching for StatusNotifier loss on Linux) when it
+/// does not. Returns whether the tray is active.
+fn install_tray_with_fallback(app: &mut App, desktop_integration: &DesktopIntegration) -> bool {
+    let tray_installed = if desktop_integration.tray_available() {
+        match install_tray(app) {
+            Ok(()) => {
+                app_info!("lifecycle", "system tray integration ready");
+                true
+            }
+            Err(error) => {
+                app_warn!(
+                    "lifecycle",
+                    "system tray integration failed; using standalone window: {error}"
+                );
+                desktop_integration.disable_tray();
+                let _ = app.remove_tray_by_id("usagedeck-tray");
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    #[cfg(target_os = "linux")]
+    if tray_installed {
+        spawn_status_notifier_monitor(app.handle().clone());
+    }
+
+    tray_installed
 }
 
 fn spawn_startup_credential_detection(
@@ -270,19 +475,16 @@ fn spawn_startup_credential_detection(
         if outcome.newly_enabled_provider_ids.is_empty() {
             return;
         }
-        let progress_app = app.clone();
-        service
-            .refresh_enabled_with_progress(
-                &outcome.newly_enabled_provider_ids,
-                true,
-                move |state| {
-                    let _ = progress_app.emit("usage-state", state);
-                },
-            )
-            .await;
-        let state = service.state();
-        let _ = app.emit("usage-state", &state);
-        notifications::finish_refresh(&app, &state, &settings, &notifications);
+        commands::usage::refresh_with_events(
+            &app,
+            &service,
+            &settings,
+            &notifications,
+            &outcome.newly_enabled_provider_ids,
+            true,
+            false,
+        )
+        .await;
     });
 }
 
@@ -324,33 +526,58 @@ pub(crate) fn apply_shortcut_change(
 
 pub(crate) fn set_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    {
+    let result = {
         let _ = app;
         xdg_autostart::set_enabled(enabled)
-            .map_err(|_| "Launch at login could not be updated.".to_owned())
-    }
+    };
     #[cfg(not(target_os = "linux"))]
-    {
+    let result = {
         let manager = app.autolaunch();
-        let result = if enabled {
+        if enabled {
             manager.enable()
         } else {
             manager.disable()
-        };
-        result.map_err(|_| "Launch at login could not be updated.".to_owned())
-    }
+        }
+    };
+    result
+        .map(|_| {
+            // Keep the probe cache in step so settings emissions stop re-reading
+            // the OS registration (a registry / LaunchAgents / XDG file probe).
+            *AUTOSTART_CACHE
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(enabled);
+        })
+        .map_err(|_| "Launch at login could not be updated.".to_owned())
 }
 
+/// Cached autostart registration. `autostart_is_enabled` is called for every
+/// settings emission and a handful of commands; the underlying OS probe hits
+/// the registry, a LaunchAgents file, or an XDG directory each time, so the
+/// last answer is cached and invalidated by `set_autostart`. External changes
+/// (toggled from the OS itself) surface after the next in-app toggle or restart.
+static AUTOSTART_CACHE: Mutex<Option<bool>> = Mutex::new(None);
+
 pub(crate) fn autostart_is_enabled(app: &AppHandle) -> Result<bool, ()> {
+    let mut cache = AUTOSTART_CACHE.lock().map_err(|_| ())?;
+    if let Some(enabled) = *cache {
+        return Ok(enabled);
+    }
     #[cfg(target_os = "linux")]
-    {
+    let enabled = {
+        // The XDG probe reads the autostart file directly; consume the app
+        // handle so Linux builds stay clean under -D warnings.
         let _ = app;
-        xdg_autostart::is_enabled().map_err(|_| ())
-    }
+        xdg_autostart::is_enabled()
+    };
     #[cfg(not(target_os = "linux"))]
-    {
-        app.autolaunch().is_enabled().map_err(|_| ())
-    }
+    let enabled = app.autolaunch().is_enabled();
+    // Errors stay uncached: a transient probe failure deserves a retry on the
+    // next emission rather than a permanently sticky value.
+    enabled
+        .inspect(|enabled| {
+            *cache = Some(*enabled);
+        })
+        .map_err(|_| ())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -388,70 +615,10 @@ pub fn run() {
             app.manage(desktop_integration.clone());
 
             let app_data_dir = app.path().app_data_dir()?;
-            // Run ahead of the legacy-directory copy so the user's own newer
-            // database is promoted under its current name first.
-            match migration::rename_legacy_database(&app_data_dir) {
-                Ok(true) => {
-                    app_info!(
-                        "lifecycle",
-                        "renamed the legacy database file to usagedeck.db"
-                    );
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    app_warn!("lifecycle", "legacy database rename failed: {error}");
-                }
-            }
-            let data_migration = migration::migrate_app_data(&app_data_dir);
-            for copied in &data_migration.copied {
-                app_info!("lifecycle", "migrated legacy OpenQuota data: {copied}");
-            }
-            for error in &data_migration.errors {
-                app_warn!("lifecycle", "legacy data migration issue: {error}");
-            }
-            let key_migration = migration::migrate_api_keys(&app_data_dir);
-            if !key_migration.migrated.is_empty() {
-                app_info!(
-                    "lifecycle",
-                    "migrated {} saved API key(s) from the OpenQuota credential entry",
-                    key_migration.migrated.len()
-                );
-            }
-            for (account, error) in &key_migration.failures {
-                app_warn!(
-                    "lifecycle",
-                    "API key migration failed for {account}: {error}"
-                );
-            }
-            let database_path = app_data_dir.join(migration::DATABASE_FILE);
-            let storage = Arc::new(Storage::open(&database_path)?);
-            provider_environment::initialize(storage.load_provider_environment()?);
-            provider_environment::refresh_for_next_launch(storage.clone());
-            app.manage(Arc::new(PanelResizeSession::new(storage.clone())));
-            app_debug!("cache", "application database opened");
+            migrate_legacy_data(&app_data_dir)?;
+            let storage = open_application_storage(app, &app_data_dir)?;
             let pricing = Arc::new(PricingStore::new(app_data_dir.join("pricing"))?);
-            let mut providers = claude::runtimes(storage.clone(), pricing.clone())?;
-            providers.extend(vec![
-                Arc::new(CodexProvider::new(storage.clone(), pricing.clone())?)
-                    as Arc<dyn UsageProvider>,
-                Arc::new(CommandCodeProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(CursorProvider::new(pricing.clone())?) as Arc<dyn UsageProvider>,
-                Arc::new(AntigravityProvider::new(
-                    app_data_dir.join("antigravity").join("auth.json"),
-                )?) as Arc<dyn UsageProvider>,
-                Arc::new(CopilotProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(DevinProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(GrokProvider::new(storage.clone(), pricing.clone())?)
-                    as Arc<dyn UsageProvider>,
-                Arc::new(OpenCodeProvider::new(pricing.clone())) as Arc<dyn UsageProvider>,
-                Arc::new(OpenRouterProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(ZaiProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(KimiProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(MiniMaxProvider::new()?) as Arc<dyn UsageProvider>,
-            ]);
-            providers
-                .extend(crate::providers::api_key_account::api_key_account_providers(&storage)?);
-            let registry = Arc::new(ProviderRegistry::new(providers)?);
+            let registry = build_provider_registry(&app_data_dir, &storage, &pricing)?;
             let (settings_service, credential_detection_plan) =
                 SettingsService::new_deferred(storage.clone(), registry.clone())?;
             let settings = Arc::new(settings_service);
@@ -475,59 +642,8 @@ pub fn run() {
             app.manage(notifications.clone());
             app.manage(Arc::new(CodexResetClaimService::new()?));
 
-            if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-                if window::apply_panel_surface(&window, settings.get().theme).is_err() {
-                    app_warn!("window", "initial panel surface theme could not be applied");
-                }
-                if !floating_window {
-                    webview_memory::set_inactive(&window, true);
-                }
-            }
-
-            if let Some(shortcut) = settings.get().global_shortcut {
-                let _ = register_shortcut(app.handle(), &shortcut);
-            }
-
-            let tray_installed = if desktop_integration.tray_available() {
-                match install_tray(app) {
-                    Ok(()) => {
-                        app_info!("lifecycle", "system tray integration ready");
-                        true
-                    }
-                    Err(error) => {
-                        app_warn!(
-                            "lifecycle",
-                            "system tray integration failed; using standalone window: {error}"
-                        );
-                        desktop_integration.disable_tray();
-                        let _ = app.remove_tray_by_id("usagedeck-tray");
-                        false
-                    }
-                }
-            } else {
-                false
-            };
-
-            if desktop_integration.is_floating() {
-                if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-                    if let Err(error) =
-                        window::apply_window_mode(&window, settings.get().window_mode, true)
-                    {
-                        app_warn!(
-                            "window",
-                            "standalone startup mode could not be applied: {error}"
-                        );
-                        show_standalone_window_fallback(&window);
-                    }
-                }
-            }
-
-            #[cfg(target_os = "linux")]
-            if tray_installed {
-                spawn_status_notifier_monitor(app.handle().clone());
-            }
-            #[cfg(not(target_os = "linux"))]
-            let _ = tray_installed;
+            apply_initial_window_state(app, &desktop_integration, &settings, floating_window);
+            install_tray_with_fallback(app, &desktop_integration);
 
             tray_presentation::update(
                 app.handle(),
@@ -562,6 +678,7 @@ pub fn run() {
             commands::usage::quota_history,
             commands::settings::get_app_settings,
             commands::settings::save_app_settings,
+            commands::settings::record_update_check,
             commands::settings::reset_customization,
             commands::settings::reset_all_settings,
             commands::settings::reset_provider_customization,

@@ -16,6 +16,7 @@ use crate::{
 };
 
 use super::ClaudeError;
+use crate::providers::paths::{expand_home, home_directory};
 use crate::providers::{
     daily_usage::DailyUsageAccumulator,
     log_usage::{load_or_parse_log, parse_log_timestamp},
@@ -223,32 +224,14 @@ fn env_text(name: &str) -> Option<String> {
     crate::provider_environment::value(name)
 }
 
-fn home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
-}
-
-fn expand_home(value: &str, home: &Path) -> PathBuf {
-    if value == "~" {
-        return home.to_path_buf();
-    }
-    if let Some(rest) = value
-        .strip_prefix("~/")
-        .or_else(|| value.strip_prefix("~\\"))
-    {
-        return home.join(rest);
-    }
-    PathBuf::from(value)
-}
-
-pub fn parse_jsonl(content: &str) -> Vec<ClaudeTokenEvent> {
-    content
-        .lines()
+pub fn parse_jsonl(
+    lines: &mut dyn Iterator<Item = std::io::Result<String>>,
+) -> Vec<ClaudeTokenEvent> {
+    lines
+        .map_while(|line| line.ok())
         .filter(|line| line.contains("\"usage\":{"))
         .filter(|line| !has_unsupported_null_field(line))
-        .flat_map(|line| parse_entries(line).unwrap_or_default())
+        .flat_map(|line| parse_entries(&line).unwrap_or_default())
         .collect()
 }
 
@@ -473,7 +456,7 @@ fn aggregate_into(
             .filter(|name| !name.is_empty());
         let cost = event
             .cost_usd
-            .or_else(|| pricing.estimated_cost_dollars(model_name?, tokens, true));
+            .or_else(|| pricing.estimated_cost_dollars_anthropic(model_name?, tokens, true));
         if let Some(cost) = cost {
             accumulator.add(
                 date,
@@ -539,6 +522,10 @@ fn has_unsupported_null_field(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    fn parse(content: &str) -> Vec<ClaudeTokenEvent> {
+        parse_jsonl(&mut content.lines().map(|line| Ok(line.to_owned())))
+    }
+
     use std::{fs, io, path::Path};
 
     use chrono::{TimeZone, Utc};
@@ -552,7 +539,7 @@ mod tests {
 
     #[test]
     fn provider_fixture_parses_and_deduplicates_claude_usage_lines() {
-        let events = parse_jsonl(include_str!("fixtures/usage.jsonl"));
+        let events = parse(include_str!("fixtures/usage.jsonl"));
         assert_eq!(events.len(), 2);
         let now =
             events.iter().map(|event| event.timestamp).max().unwrap() + chrono::Duration::days(1);
@@ -584,7 +571,7 @@ mod tests {
     fn expands_only_advisor_iterations_without_recounting_main_usage() {
         let line = r#"{"timestamp":"2026-02-20T12:00:00.000Z","requestId":"req_1","costUSD":1.23,"message":{"id":"msg_1","model":"main-model","usage":{"input_tokens":2,"output_tokens":491,"cache_creation_input_tokens":7853,"cache_read_input_tokens":226584,"iterations":[{"type":"message","input_tokens":1,"output_tokens":200},{"type":"advisor_message","model":"claude-opus-4-6","input_tokens":10,"output_tokens":2,"cache_creation_input_tokens":3,"cache_read_input_tokens":4},{"type":"message","input_tokens":1,"output_tokens":291}]}}}"#;
 
-        let events = parse_jsonl(line);
+        let events = parse(line);
 
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].model.as_deref(), Some("main-model"));
@@ -603,7 +590,7 @@ mod tests {
         assert_eq!(events[1].cost_usd, None);
 
         let duplicated = format!("{line}\n{line}");
-        assert_eq!(deduplicate(parse_jsonl(&duplicated)).len(), 2);
+        assert_eq!(deduplicate(parse(&duplicated)).len(), 2);
     }
 
     #[test]
@@ -623,7 +610,7 @@ mod tests {
             .unwrap();
         let now = Utc.with_ymd_and_hms(2026, 7, 15, 12, 0, 0).unwrap();
 
-        let history = aggregate(deduplicate(parse_jsonl(content)), now, &pricing);
+        let history = aggregate(deduplicate(parse(content)), now, &pricing);
         let today = history.today.unwrap();
 
         assert_eq!(today.tokens, 15);
@@ -641,7 +628,7 @@ mod tests {
     #[test]
     fn parses_cross_device_timestamp_variants() {
         let content = r#"{"timestamp":"2026-07-15 12:00:00.123456 UTC","message":{"model":"claude-opus-4-6","usage":{"input_tokens":10,"output_tokens":5}}}"#;
-        let event = parse_jsonl(content).pop().unwrap();
+        let event = parse(content).pop().unwrap();
         assert_eq!(
             event.timestamp.to_rfc3339(),
             "2026-07-15T12:00:00.123+00:00"
@@ -659,7 +646,7 @@ mod tests {
         for line in [missing_input, invalid_version, empty_model, string_tokens] {
             assert!(parse_line(line).is_none(), "unexpectedly accepted: {line}");
         }
-        assert!(parse_jsonl(null_speed).is_empty());
+        assert!(parse(null_speed).is_empty());
         assert!(is_semver_prefix("1.0.24-beta.1"));
         assert!(!is_semver_prefix("1.0"));
         assert!(!has_unsupported_null_field(
@@ -786,7 +773,7 @@ mod tests {
         let content = r#"{"timestamp":"2026-07-15T08:00:00Z","message":{"model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":100,"output_tokens":10}}}
 {"timestamp":"2026-07-15T09:00:00Z","message":{"model":"future-unpriced-model","usage":{"input_tokens":500,"output_tokens":20}}}"#;
         let now = Utc.with_ymd_and_hms(2026, 7, 15, 12, 0, 0).unwrap();
-        let history = aggregate(parse_jsonl(content), now, &test_bundled_pricing());
+        let history = aggregate(parse(content), now, &test_bundled_pricing());
         let today = history.today.unwrap();
         assert_eq!(today.tokens, 110);
         assert!(!today.estimate_complete);
@@ -797,7 +784,7 @@ mod tests {
     fn explicit_cost_wins_even_when_model_has_no_catalog_entry() {
         let content = r#"{"timestamp":"2026-07-15T08:00:00Z","costUSD":1.75,"message":{"model":"future-unpriced-model","usage":{"input_tokens":500,"output_tokens":20}}}"#;
         let now = Utc.with_ymd_and_hms(2026, 7, 15, 12, 0, 0).unwrap();
-        let history = aggregate(parse_jsonl(content), now, &test_bundled_pricing());
+        let history = aggregate(parse(content), now, &test_bundled_pricing());
         let today = history.today.unwrap();
         assert_eq!(today.tokens, 520);
         assert_eq!(today.estimated_cost_usd, Some(1.75));
@@ -808,7 +795,7 @@ mod tests {
     #[test]
     fn parser_preserves_supported_speed_for_fast_pricing() {
         let content = r#"{"timestamp":"2026-07-15T08:00:00Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":100,"output_tokens":10,"speed":"fast"}}}"#;
-        let event = parse_jsonl(content).pop().unwrap();
+        let event = parse(content).pop().unwrap();
         assert!(event.is_fast);
         assert!(event.has_speed);
     }

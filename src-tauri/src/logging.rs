@@ -168,7 +168,12 @@ pub struct LogFile {
     size: u64,
     opened: bool,
     disabled: bool,
+    write_failures: u32,
 }
+
+/// Consecutive write failures tolerated before file logging gives up for the
+/// session.
+const WRITE_FAILURE_LIMIT: u32 = 3;
 
 impl LogFile {
     pub fn new(path: PathBuf, max_bytes: u64) -> Self {
@@ -181,6 +186,7 @@ impl LogFile {
             size: 0,
             opened: false,
             disabled: false,
+            write_failures: 0,
         }
     }
 
@@ -212,11 +218,24 @@ impl LogFile {
         if !self.opened {
             self.open()?;
         }
+        // A write failure drops the handle instead of latching the logger off:
+        // transient causes (a full disk, an archive momentarily locked by a
+        // backup scan) deserve a retry on the next line, not a silent logger
+        // for the rest of a long-running session.
+        if self.file.is_none() {
+            match self.open_inner() {
+                Ok(()) => self.write_failures = 0,
+                Err(error) => {
+                    self.record_write_failure();
+                    return Err(error);
+                }
+            }
+        }
         let mut bytes = line.as_bytes().to_vec();
         bytes.push(b'\n');
         if self.size.saturating_add(bytes.len() as u64) > self.max_bytes {
             if let Err(error) = self.rotate() {
-                self.disable();
+                self.record_write_failure();
                 return Err(error);
             }
         }
@@ -224,11 +243,23 @@ impl LogFile {
             return Ok(());
         };
         if let Err(error) = file.write_all(&bytes) {
-            self.disable();
+            self.record_write_failure();
             return Err(error);
         }
+        self.write_failures = 0;
         self.size = self.size.saturating_add(bytes.len() as u64);
         Ok(())
+    }
+
+    fn record_write_failure(&mut self) {
+        self.file = None;
+        self.write_failures = self.write_failures.saturating_add(1);
+        if self.write_failures >= WRITE_FAILURE_LIMIT {
+            // Repeated failures point at a real problem (a removed directory,
+            // a permanently full disk); stop retrying rather than raising an
+            // error for every log line.
+            self.disable();
+        }
     }
 
     fn open_inner(&mut self) -> io::Result<()> {
@@ -562,6 +593,25 @@ mod tests {
         body_preview, default_log_path, format_line, redact_body, redact_log_message, redact_url,
         redact_value, update_local_usage_failure, LogFile,
     };
+
+    #[test]
+    fn a_transient_rotate_failure_recovers_on_the_next_append() {
+        let directory = tempdir().unwrap();
+        let mut log = LogFile::new(directory.path().join("usagedeck.log"), 64);
+        log.open().unwrap();
+        log.append("first line").unwrap();
+        // Occupy the archive path with a directory so rotation fails, then
+        // push the log past its size cap to trigger it.
+        fs::create_dir(log.archive_path()).unwrap();
+        let oversized = "x".repeat(96);
+        assert!(log.append(&oversized).is_err());
+        // The obstacle is gone: the next append must reopen and succeed
+        // instead of staying disabled for the whole session.
+        fs::remove_dir(log.archive_path()).unwrap();
+        log.append("recovered").unwrap();
+        let contents = fs::read_to_string(directory.path().join("usagedeck.log")).unwrap();
+        assert!(contents.contains("recovered"));
+    }
 
     #[test]
     fn redacts_short_and_long_values() {

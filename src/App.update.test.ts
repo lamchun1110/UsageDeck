@@ -45,6 +45,7 @@ describe('UsageDeck update lifecycle', () => {
     mockInvoke((command: string, args?: InvokeArgs) => {
       if (command === 'get_usage_state') return Promise.resolve(liveState);
       if (command === 'get_app_settings') return Promise.resolve(settingsState);
+      if (command === 'record_update_check') return Promise.resolve(settingsState);
       if (command === 'save_app_settings')
         return Promise.resolve({
           ...settingsState,
@@ -79,12 +80,9 @@ describe('UsageDeck update lifecycle', () => {
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('check_for_updates'));
     expect(await screen.findByText('UsageDeck 0.1.0 is up to date.')).toBeInTheDocument();
     expect(document.querySelector('.settings-update-status')).toBeNull();
-    expect(mocks.invoke).toHaveBeenCalledWith(
-      'save_app_settings',
-      expect.objectContaining({
-        settings: expect.objectContaining({ lastUpdateCheckAt: expect.any(String) }),
-      }),
-    );
+    expect(mocks.invoke).toHaveBeenCalledWith('record_update_check', {
+      checkedAt: expect.any(String),
+    });
     await fireEvent.click(screen.getByRole('combobox', { name: 'Icon Style' }));
     await fireEvent.click(screen.getByRole('option', { name: 'Bars' }));
     await waitFor(() =>
@@ -110,6 +108,7 @@ describe('UsageDeck update lifecycle', () => {
     mockInvoke((command: string, args?: InvokeArgs) => {
       if (command === 'get_usage_state') return Promise.resolve(liveState);
       if (command === 'get_app_settings') return Promise.resolve(settingsState);
+      if (command === 'record_update_check') return Promise.resolve(settingsState);
       if (command === 'save_app_settings')
         return Promise.resolve({
           ...settingsState,
@@ -148,6 +147,7 @@ describe('UsageDeck update lifecycle', () => {
     mockInvoke((command: string) => {
       if (command === 'get_usage_state') return Promise.resolve(liveState);
       if (command === 'get_app_settings') return Promise.resolve(settingsState);
+      if (command === 'record_update_check') return Promise.resolve(settingsState);
       if (command === 'save_app_settings') return Promise.resolve(settingsState);
       if (command === 'check_for_updates')
         return Promise.resolve({
@@ -180,6 +180,7 @@ describe('UsageDeck update lifecycle', () => {
     mockInvoke((command: string) => {
       if (command === 'get_usage_state') return Promise.resolve(liveState);
       if (command === 'get_app_settings') return Promise.resolve(settingsState);
+      if (command === 'record_update_check') return Promise.resolve(settingsState);
       if (command === 'save_app_settings') return Promise.resolve(settingsState);
       if (command === 'check_for_updates')
         return Promise.resolve({
@@ -225,6 +226,7 @@ describe('UsageDeck update lifecycle', () => {
     mockInvoke((command: string) => {
       if (command === 'get_usage_state') return Promise.resolve(liveState);
       if (command === 'get_app_settings') return Promise.resolve(settingsState);
+      if (command === 'record_update_check') return Promise.resolve(settingsState);
       if (command === 'save_app_settings') return Promise.resolve(settingsState);
       if (command === 'check_for_updates')
         return Promise.resolve({

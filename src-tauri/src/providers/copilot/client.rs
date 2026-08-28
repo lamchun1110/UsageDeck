@@ -158,52 +158,14 @@ fn response_body(response: reqwest::blocking::Response) -> Result<CopilotRespons
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io::{Read, Write},
-        net::TcpListener,
-        sync::mpsc,
-        thread,
-        time::Duration,
-    };
+    use std::time::Duration;
 
     use super::CopilotClient;
     use crate::providers::{copilot::CopilotError, test_http};
 
-    fn capture_once(body: &str) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let body = body.to_owned();
-        let (sender, receiver) = mpsc::channel();
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(1)))
-                .unwrap();
-            let mut request = Vec::new();
-            loop {
-                let mut chunk = [0_u8; 1024];
-                let count = stream.read(&mut chunk).unwrap_or(0);
-                if count == 0 {
-                    break;
-                }
-                request.extend_from_slice(&chunk[..count]);
-                if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                    break;
-                }
-            }
-            let _ = sender.send(String::from_utf8_lossy(&request).into_owned());
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(response.as_bytes());
-        });
-        (format!("http://{address}"), receiver, handle)
-    }
-
     #[test]
     fn usage_request_matches_the_copilot_client_contract_without_logging_secrets() {
-        let (url, request, handle) = capture_once("{}");
+        let (url, request, handle) = test_http::capture_once(200, "{}");
         let base = format!("{url}/");
         let client = CopilotClient::for_test(&url, &url, &base, Duration::from_secs(1));
 
@@ -220,7 +182,7 @@ mod tests {
 
     #[test]
     fn organization_slug_is_encoded_as_one_url_path_segment() {
-        let (url, request, handle) = capture_once("{}");
+        let (url, request, handle) = test_http::capture_once(200, "{}");
         let base = format!("{url}/");
         let client = CopilotClient::for_test(&url, &url, &base, Duration::from_secs(1));
 

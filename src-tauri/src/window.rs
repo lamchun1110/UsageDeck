@@ -124,10 +124,12 @@ impl PanelResizeSession {
         let Ok(_guard) = self.persistence.lock() else {
             return;
         };
-        if !self.automatic.load(Ordering::SeqCst) && self.storage.save_panel_height(height).is_ok()
-        {
-            self.generation.fetch_add(1, Ordering::SeqCst);
+        if !self.automatic.load(Ordering::SeqCst) {
+            let _ = self.storage.save_panel_height(height);
         }
+        // Invalidate a queued intermediate drag height even when the final
+        // save failed or automatic mode was restored while finishing.
+        self.generation.fetch_add(1, Ordering::SeqCst);
     }
 
     pub fn set_manual(&self, height: u32) -> Result<(), String> {
@@ -453,6 +455,14 @@ fn panel_resize_edge_for_frames(
     }
 }
 
+fn resolve_monitor(window: &WebviewWindow) -> Result<tauri::Monitor, String> {
+    window
+        .current_monitor()
+        .map_err(|_| "UsageDeck display is unavailable.")?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or("UsageDeck display is unavailable.".to_owned())
+}
+
 fn panel_resize_edge_for_context(
     current: VerticalFrame,
     work_area: VerticalFrame,
@@ -488,10 +498,7 @@ pub fn panel_resize_edge(window: &WebviewWindow) -> Result<PanelResizeEdge, Stri
     let size = window
         .outer_size()
         .map_err(|_| "UsageDeck window size is unavailable.")?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|_| "UsageDeck display is unavailable.")?
-        .ok_or("UsageDeck display is unavailable.")?;
+    let monitor = resolve_monitor(window)?;
     let work_area = monitor.work_area();
     Ok(panel_resize_edge_for_context(
         VerticalFrame {
@@ -522,10 +529,7 @@ fn panel_maximum_height(window: &WebviewWindow) -> Result<u32, String> {
     let scale = window
         .scale_factor()
         .map_err(|_| "UsageDeck display scale is unavailable.")?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|_| "UsageDeck display is unavailable.")?
-        .ok_or("UsageDeck display is unavailable.")?;
+    let monitor = resolve_monitor(window)?;
     let work_area = monitor.work_area();
     let current = VerticalFrame {
         top: position.y,
@@ -778,10 +782,7 @@ pub fn resize_popup_anchored(window: &WebviewWindow, height: u32) -> Result<(), 
     let scale = window
         .scale_factor()
         .map_err(|_| "UsageDeck display scale is unavailable.")?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|_| "UsageDeck display is unavailable.")?
-        .ok_or("UsageDeck display is unavailable.")?;
+    let monitor = resolve_monitor(window)?;
     let work_area = monitor.work_area();
     let frame_overhead = outer_size.height.saturating_sub(inner_size.height);
     let target_inner_height = (f64::from(height) * scale)
@@ -827,10 +828,7 @@ pub fn resize_popup_anchored(window: &WebviewWindow, height: u32) -> Result<(), 
     let outer_size = window
         .outer_size()
         .map_err(|_| "UsageDeck window size is unavailable.")?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|_| "UsageDeck display is unavailable.")?
-        .ok_or("UsageDeck display is unavailable.")?;
+    let monitor = resolve_monitor(window)?;
     let work_area = monitor.work_area();
     let scale = window
         .scale_factor()
@@ -862,8 +860,11 @@ fn schedule_outside_click_dismiss(window: Window) {
     let app = window.app_handle().clone();
     let token = app.state::<PopupDismissGuard>().token();
 
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(100));
+    // Focus chatter on a non-floating window used to cost an OS thread per
+    // event just to wait out the debounce; the async runtime does that for
+    // free.
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let app_for_dismiss = app.clone();
         let _ = app.run_on_main_thread(move || {
             let guard = app_for_dismiss.state::<PopupDismissGuard>();

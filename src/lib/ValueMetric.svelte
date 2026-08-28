@@ -137,7 +137,7 @@
       {#if hasEstimatedValue}
         <span
           class="value-estimate"
-          data-tooltip="Estimated locally, so it may differ from billed usage."
+          data-tooltip={t('value.estimatedLocally')}
           aria-label="Estimated value"
           role="img"><Icon name="about" size={11} strokeWidth={1.9} /></span
         >
@@ -149,7 +149,7 @@
       {#if hasEstimatedValue}
         <span
           class="value-estimate"
-          data-tooltip="Estimated locally, so it may differ from billed usage."
+          data-tooltip={t('value.estimatedLocally')}
           aria-label="Estimated value"
           role="img"><Icon name="about" size={11} strokeWidth={1.9} /></span
         >

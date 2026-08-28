@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { t } from './i18n.svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { claimCodexResetCredit } from './backend';
   import { formatReset } from './pacing';
@@ -48,7 +49,7 @@
         expiry,
         number: index + 1,
         severity,
-        exact: imminent ? 'Expiring soon' : exact,
+        exact: imminent ? t('reset.expiringSoon') : exact,
         relative: imminent ? null : relative,
       };
     }),
@@ -56,13 +57,13 @@
 
   const resultMessage = $derived(
     result?.outcome === 'success'
-      ? 'Reset applied.'
+      ? t('reset.applied')
       : result?.outcome === 'nothingToReset'
-        ? 'No active limit needs resetting.'
+        ? t('reset.nothingToReset')
         : result?.outcome === 'noCredit'
-          ? 'This reset is no longer available.'
+          ? t('reset.noLongerAvailable')
           : result?.outcome === 'failed'
-            ? 'Could not use this reset. Try again.'
+            ? t('reset.failed')
             : null,
   );
 
@@ -168,10 +169,8 @@
                   aria-labelledby={`reset-confirm-title-${index}`}
                   aria-describedby={`reset-confirm-message-${index}`}
                 >
-                  <strong id={`reset-confirm-title-${index}`}>Use this reset?</strong>
-                  <span id={`reset-confirm-message-${index}`}
-                    >Immediately reset your usage limits. This can't be undone.</span
-                  >
+                  <strong id={`reset-confirm-title-${index}`}>{t('reset.useTitle')}</strong>
+                  <span id={`reset-confirm-message-${index}`}>{t('reset.description')}</span>
                   <div>
                     <button
                       class="reset-confirm-primary"
@@ -184,7 +183,7 @@
                       bind:this={cancelButton}
                       type="button"
                       disabled={pendingExpiry !== null}
-                      onclick={() => void cancelClaim()}>Cancel</button
+                      onclick={() => void cancelClaim()}>{t('reset.cancel')}</button
                     >
                   </div>
                 </div>
@@ -197,9 +196,9 @@
                       class="reset-use"
                       type="button"
                       data-reset-trigger={index}
-                      aria-label={`Use reset expiring ${entry.exact}`}
+                      aria-label={t('reset.useExpiringAria', { time: entry.exact })}
                       disabled={pendingExpiry !== null}
-                      onclick={() => void beginClaim(entry.expiry, index)}>Use</button
+                      onclick={() => void beginClaim(entry.expiry, index)}>{t('reset.use')}</button
                     >
                   </div>
                 </div>

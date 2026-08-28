@@ -109,6 +109,11 @@ impl CommandCodeProvider {
             client: CommandCodeClient::new().map_err(ProviderError::from)?,
         })
     }
+
+    #[cfg(test)]
+    fn with_dependencies(auth: CommandCodeAuthStore, client: CommandCodeClient) -> Self {
+        Self { auth, client }
+    }
 }
 
 impl UsageProvider for CommandCodeProvider {
@@ -138,5 +143,157 @@ impl UsageProvider for CommandCodeProvider {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         })
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use std::{fs, time::Duration};
+
+    use tempfile::tempdir;
+
+    use crate::{
+        models::{ProviderErrorKind, QuotaFormat},
+        providers::{test_http, UsageProvider},
+    };
+
+    use super::{auth::CommandCodeAuthStore, client::CommandCodeClient, CommandCodeProvider};
+
+    const CREDITS_BODY: &str = r#"{
+        "credits": {"monthlyCredits": 7.5, "purchasedCredits": 2.0},
+        "windowLimits": {
+            "fiveHour": {"cap": 3, "used": 0.75, "resetAt": 1786363200000},
+            "weekly": {"cap": 6, "used": 3, "resetAt": 1786795200}
+        }
+    }"#;
+    const SUBSCRIPTION_BODY: &str = r#"{
+        "success": true,
+        "data": {
+            "planId": "individual-goat",
+            "currentPeriodStart": "2026-08-01T12:00:00Z",
+            "currentPeriodEnd": "2026-09-01T12:00:00Z"
+        }
+    }"#;
+
+    fn auth(key: Option<&str>) -> CommandCodeAuthStore {
+        crate::providers::http::clear_rate_limits();
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("auth.json");
+        if let Some(key) = key {
+            fs::write(&path, format!(r#"{{"apiKey":"{key}"}}"#)).unwrap();
+        }
+        // The store only keeps the path; hold the directory open for the rest
+        // of the test process rather than racing its cleanup.
+        std::mem::forget(directory);
+        CommandCodeAuthStore::with_path(path)
+    }
+
+    fn provider(
+        key: Option<&str>,
+        credits_status: u16,
+        credits_body: &str,
+        subscription_status: u16,
+        subscription_body: &str,
+    ) -> CommandCodeProvider {
+        let credits_url = test_http::serve_once(credits_status, &[], credits_body);
+        let subscription_url = test_http::serve_once(subscription_status, &[], subscription_body);
+        let auth = auth(key);
+        CommandCodeProvider::with_dependencies(
+            auth,
+            CommandCodeClient::for_test(&credits_url, &subscription_url, Duration::from_secs(1)),
+        )
+    }
+
+    #[test]
+    fn refresh_maps_window_limits_and_plan_through_the_transport() {
+        let snapshot = provider(
+            Some("secret-key"),
+            200,
+            CREDITS_BODY,
+            200,
+            SUBSCRIPTION_BODY,
+        )
+        .refresh()
+        .unwrap();
+
+        assert_eq!(snapshot.plan.as_deref(), Some("GOAT"));
+        assert_eq!(
+            snapshot
+                .quotas
+                .iter()
+                .map(|quota| quota.id.as_str())
+                .collect::<Vec<_>>(),
+            ["session", "weekly", "monthly"]
+        );
+        assert_eq!(snapshot.quotas[0].format, QuotaFormat::Dollars);
+        assert_eq!(snapshot.quotas[0].used_percent, 25.0);
+        assert_eq!(snapshot.value_metrics[0].id, "extraCredits");
+    }
+
+    #[test]
+    fn missing_credentials_are_authentication_errors() {
+        let error = provider(None, 200, CREDITS_BODY, 200, SUBSCRIPTION_BODY)
+            .refresh()
+            .unwrap_err();
+        assert_eq!(error.kind(), ProviderErrorKind::Authentication);
+        assert!(error.to_string().contains("command-code login"));
+    }
+
+    #[test]
+    fn unauthorized_forbidden_and_rate_limited_statuses_are_classified() {
+        for status in [401, 403] {
+            let error = provider(Some("secret-key"), status, "{}", 200, SUBSCRIPTION_BODY)
+                .refresh()
+                .unwrap_err();
+            assert_eq!(error.kind(), ProviderErrorKind::Authentication, "{status}");
+        }
+
+        let rate_limited = provider(
+            Some("limited-secret-key"),
+            429,
+            "{}",
+            200,
+            SUBSCRIPTION_BODY,
+        )
+        .refresh()
+        .unwrap_err();
+        assert_eq!(rate_limited.kind(), ProviderErrorKind::RateLimited);
+
+        let server_error = provider(Some("secret-key"), 500, "{}", 200, SUBSCRIPTION_BODY)
+            .refresh()
+            .unwrap_err();
+        assert_eq!(server_error.kind(), ProviderErrorKind::InvalidResponse);
+    }
+
+    #[test]
+    fn malformed_success_bodies_are_invalid_responses() {
+        let error = provider(Some("secret-key"), 200, "not json", 200, SUBSCRIPTION_BODY)
+            .refresh()
+            .unwrap_err();
+        assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
+    }
+
+    #[test]
+    fn timeouts_are_network_errors_and_never_expose_the_key() {
+        let credits_url = test_http::serve_once_after(
+            test_http::TIMEOUT_TEST_RESPONSE_DELAY,
+            200,
+            &[],
+            CREDITS_BODY,
+        );
+        let subscription_url = test_http::serve_once(200, &[], SUBSCRIPTION_BODY);
+        let auth = auth(Some("secret-key"));
+        let provider = CommandCodeProvider::with_dependencies(
+            auth,
+            CommandCodeClient::for_test(
+                &credits_url,
+                &subscription_url,
+                test_http::TIMEOUT_TEST_CLIENT_LIMIT,
+            ),
+        );
+
+        let error = provider.refresh().unwrap_err();
+        assert_eq!(error.kind(), ProviderErrorKind::Network);
+        assert!(!error.to_string().contains("secret-key"));
     }
 }

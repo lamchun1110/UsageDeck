@@ -15,7 +15,7 @@ use crate::{
     apply_shortcut_change, autostart_is_enabled, child_process,
     desktop_integration::DesktopIntegration,
     models::{AppSettings, SettingsViewState},
-    notifications::{finish_refresh, permission as notification_permission},
+    notifications::permission as notification_permission,
     pacing::NotificationEvaluator,
     providers::{detect_local_credentials, ProviderRegistry},
     service::ProviderService,
@@ -32,11 +32,27 @@ enum SettingsSaveMode {
 }
 
 #[tauri::command]
-pub fn get_app_settings(
+pub async fn get_app_settings(
     app: AppHandle,
     settings: State<'_, Arc<SettingsService>>,
-) -> SettingsViewState {
-    settings_view_state(&app, &settings)
+) -> Result<SettingsViewState, ()> {
+    // The view-state build reads storage (and the OS autostart state); it must
+    // not run as a sync command on the main thread.
+    let service = settings.inner().clone();
+    let fallback = service.clone();
+    let view_app = app.clone();
+    Ok(
+        tauri::async_runtime::spawn_blocking(move || settings_view_state(&view_app, &service))
+            .await
+            .unwrap_or_else(move |_| {
+                fallback.view_state(
+                    crate::models::NotificationPermission::Unavailable,
+                    Some("Settings could not be read.".to_owned()),
+                    false,
+                    None,
+                )
+            }),
+    )
 }
 
 #[tauri::command]
@@ -63,6 +79,47 @@ pub async fn save_app_settings(
     Ok(state)
 }
 
+/// Which OS-level side effects a settings save applied before it failed, so
+/// the rollback undoes exactly what happened and logs what it could not.
+#[derive(Default)]
+struct AppliedSideEffects {
+    shortcut: bool,
+    autostart: bool,
+    window_mode: bool,
+}
+
+/// Reverts the side effects a failed save already applied. Each failed
+/// rollback step is logged — a silently stuck autostart entry or shortcut
+/// registration is otherwise invisible until the next reboot.
+fn rollback_settings_side_effects(
+    app: &AppHandle,
+    previous: &AppSettings,
+    attempted_shortcut: Option<&str>,
+    applied: AppliedSideEffects,
+) {
+    if applied.autostart {
+        if let Err(error) = set_autostart(app, previous.launch_at_login) {
+            crate::app_error!("config", "launch-at-login rollback failed: {error}");
+        }
+    }
+    if applied.shortcut {
+        if let Err(error) =
+            apply_shortcut_change(app, attempted_shortcut, previous.global_shortcut.as_deref())
+        {
+            crate::app_error!("config", "global shortcut rollback failed: {error}");
+        }
+    }
+    if applied.window_mode {
+        if let Some(window) = app.get_webview_window(crate::window::MAIN_WINDOW) {
+            if let Err(error) =
+                crate::window::apply_window_mode(&window, previous.window_mode, false)
+            {
+                crate::app_error!("config", "window mode rollback failed: {error}");
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn save_app_settings_inner(
     app: AppHandle,
@@ -79,74 +136,72 @@ async fn save_app_settings_inner(
     let next_shortcut = settings.global_shortcut.clone();
     let autostart_changed = previous.launch_at_login != settings.launch_at_login;
     let window_mode_changed = previous.window_mode != settings.window_mode;
+    let mut applied = AppliedSideEffects::default();
     apply_shortcut_change(
         &app,
         previous.global_shortcut.as_deref(),
         settings.global_shortcut.as_deref(),
     )?;
+    applied.shortcut = true;
     if autostart_changed {
         if let Err(error) = set_autostart(&app, settings.launch_at_login) {
-            let _ = apply_shortcut_change(
+            rollback_settings_side_effects(
                 &app,
+                &previous,
                 settings.global_shortcut.as_deref(),
-                previous.global_shortcut.as_deref(),
+                applied,
             );
             return Err(error);
         }
+        applied.autostart = true;
     }
     if window_mode_changed {
         let Some(window) = app.get_webview_window(crate::window::MAIN_WINDOW) else {
-            if autostart_changed {
-                let _ = set_autostart(&app, previous.launch_at_login);
-            }
-            let _ = apply_shortcut_change(
+            rollback_settings_side_effects(
                 &app,
+                &previous,
                 settings.global_shortcut.as_deref(),
-                previous.global_shortcut.as_deref(),
+                applied,
             );
             return Err("UsageDeck window is unavailable.".to_owned());
         };
         if let Err(error) = crate::window::apply_window_mode(&window, settings.window_mode, true) {
-            if autostart_changed {
-                let _ = set_autostart(&app, previous.launch_at_login);
-            }
-            let _ = apply_shortcut_change(
+            rollback_settings_side_effects(
                 &app,
+                &previous,
                 settings.global_shortcut.as_deref(),
-                previous.global_shortcut.as_deref(),
+                applied,
             );
             return Err(error);
         }
+        applied.window_mode = true;
     }
+    let persist_service = settings_service.clone();
     let persisted = match mode {
-        SettingsSaveMode::Normal => settings_service.update_from_view(
-            settings,
-            expected_settings_revision,
-            expected_account_revision,
-        ),
-        SettingsSaveMode::ResetAll => settings_service.reset_all_from_view(
-            settings,
-            expected_settings_revision,
-            expected_account_revision,
-        ),
+        SettingsSaveMode::Normal => tauri::async_runtime::spawn_blocking(move || {
+            persist_service.update_from_view(
+                settings,
+                expected_settings_revision,
+                expected_account_revision,
+            )
+        })
+        .await
+        .map_err(|_| "UsageDeck settings could not be saved.".to_owned())?,
+        SettingsSaveMode::ResetAll => tauri::async_runtime::spawn_blocking(move || {
+            persist_service.reset_all_from_view(
+                settings,
+                expected_settings_revision,
+                expected_account_revision,
+            )
+        })
+        .await
+        .map_err(|_| "UsageDeck settings could not be saved.".to_owned())?,
     };
     let updated = match persisted {
         Ok(settings) => settings,
         Err(error) => {
             crate::app_error!("config", "settings could not be persisted");
-            if autostart_changed {
-                let _ = set_autostart(&app, previous.launch_at_login);
-            }
-            let _ = apply_shortcut_change(
-                &app,
-                next_shortcut.as_deref(),
-                previous.global_shortcut.as_deref(),
-            );
-            if window_mode_changed {
-                if let Some(window) = app.get_webview_window(crate::window::MAIN_WINDOW) {
-                    let _ = crate::window::apply_window_mode(&window, previous.window_mode, false);
-                }
-            }
+            rollback_settings_side_effects(&app, &previous, next_shortcut.as_deref(), applied);
             return Err(error);
         }
     };
@@ -181,21 +236,40 @@ async fn save_app_settings_inner(
     let credential_detection_plan = settings_service.reset_detection_plan();
     drop(command_guard);
     if matches!(mode, SettingsSaveMode::Normal) && !newly_enabled.is_empty() {
-        let progress_app = app.clone();
-        service
-            .refresh_enabled_with_progress(&newly_enabled, true, move |state| {
-                let _ = progress_app.emit("usage-state", state);
-            })
-            .await;
-        let state = service.state();
-        let _ = app.emit("usage-state", &state);
-        finish_refresh(&app, &state, &settings_service, &notifications);
+        crate::commands::usage::refresh_with_events(
+            &app,
+            &service,
+            &settings_service,
+            &notifications,
+            &newly_enabled,
+            true,
+            false,
+        )
+        .await;
     }
     Ok((
         settings_view_state(&app, &settings_service),
         newly_enabled,
         credential_detection_plan,
     ))
+}
+
+/// Persists only the update-check timestamp; avoids the full save pipeline
+/// (and its side-effect checks) when the periodic auto-check stamps its clock.
+#[tauri::command]
+pub async fn record_update_check(
+    app: AppHandle,
+    settings: State<'_, Arc<SettingsService>>,
+    checked_at: chrono::DateTime<chrono::Utc>,
+) -> Result<SettingsViewState, String> {
+    let service = settings.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || service.record_update_check(checked_at))
+        .await
+        .map_err(|_| "The update check could not be recorded.".to_owned())?
+        .map_err(|_| "The update check could not be recorded.".to_owned())?;
+    let state = settings_view_state(&app, &settings);
+    let _ = app.emit("settings-state", &state);
+    Ok(state)
 }
 
 #[tauri::command]
@@ -211,7 +285,7 @@ pub async fn reset_customization(
     crate::app_info!("config", "reset all customization requested");
     let command_guard = settings.lock_command_mutation().await;
     let previous = settings.get();
-    let mut next = previous.clone();
+    let mut next = previous.as_ref().clone();
     let detected_before_reset = next
         .providers
         .iter()
@@ -220,8 +294,16 @@ pub async fn reset_customization(
         .collect::<HashSet<_>>();
     next.providers = settings.default_settings(&detected_before_reset).providers;
     next.detection_notice_dismissed = false;
-    let next =
-        settings.update_from_view(next, expected_settings_revision, expected_account_revision)?;
+    let persist_service = settings.inner().clone();
+    let next = tauri::async_runtime::spawn_blocking(move || {
+        persist_service.update_from_view(
+            next,
+            expected_settings_revision,
+            expected_account_revision,
+        )
+    })
+    .await
+    .map_err(|_| "UsageDeck settings could not be saved.".to_owned())??;
     let newly_enabled = newly_enabled_provider_ids(&previous, &next);
     let credential_detection_plan = settings.reset_detection_plan();
     tray_presentation::update(&app, &service.state(), &next, settings.registry());
@@ -304,12 +386,24 @@ fn spawn_provider_reseed(
     tauri::async_runtime::spawn(async move {
         let detected = detect_local_credentials(registry, plan.provider_ids()).await;
         let command_guard = settings.lock_command_mutation().await;
-        let outcome = match settings.apply_credential_detection(&plan, &detected) {
-            Ok(outcome) => Some(outcome),
-            Err(_) => {
+        let apply_settings = settings.clone();
+        let outcome = match tauri::async_runtime::spawn_blocking(move || {
+            apply_settings.apply_credential_detection(&plan, &detected)
+        })
+        .await
+        {
+            Ok(Ok(outcome)) => Some(outcome),
+            Ok(Err(_)) => {
                 crate::app_warn!(
                     "config",
                     "provider detection after reset could not be saved"
+                );
+                None
+            }
+            Err(_) => {
+                crate::app_warn!(
+                    "config",
+                    "provider detection after reset could not be applied"
                 );
                 None
             }
@@ -337,14 +431,16 @@ fn spawn_provider_reseed(
         if refresh_provider_ids.is_empty() {
             return;
         }
-        let progress_app = app.clone();
-        let usage_state = service
-            .refresh_enabled_with_progress(&refresh_provider_ids, true, move |state| {
-                let _ = progress_app.emit("usage-state", state);
-            })
-            .await;
-        let _ = app.emit("usage-state", &usage_state);
-        finish_refresh(&app, &usage_state, &settings, &notifications);
+        crate::commands::usage::refresh_with_events(
+            &app,
+            &service,
+            &settings,
+            &notifications,
+            &refresh_provider_ids,
+            true,
+            false,
+        )
+        .await;
         let _ = app.emit("settings-state", settings_view_state(&app, &settings));
     });
 }
@@ -412,11 +508,17 @@ pub async fn reset_provider_customization(
 ) -> Result<SettingsViewState, String> {
     crate::app_info!("config", "provider customization reset for {provider_id}");
     let command_guard = settings.lock_command_mutation().await;
-    let updated = settings.reset_provider(
-        &provider_id,
-        expected_settings_revision,
-        expected_account_revision,
-    )?;
+    let persist_settings = settings.inner().clone();
+    let provider_for_reset = provider_id.clone();
+    let updated = tauri::async_runtime::spawn_blocking(move || {
+        persist_settings.reset_provider(
+            &provider_for_reset,
+            expected_settings_revision,
+            expected_account_revision,
+        )
+    })
+    .await
+    .map_err(|_| "UsageDeck settings could not be saved.".to_owned())??;
     tray_presentation::update(&app, &service.state(), &updated, settings.registry());
     let state = settings_view_state(&app, &settings);
     let _ = app.emit("settings-state", &state);
@@ -508,7 +610,7 @@ pub(crate) fn settings_view_state(app: &AppHandle, service: &SettingsService) ->
             Some("Launch at login status could not be read.".to_owned()),
         ),
     };
-    if let Some(shortcut) = service.get().global_shortcut {
+    if let Some(shortcut) = service.get().global_shortcut.clone() {
         if !app.global_shortcut().is_registered(shortcut.as_str()) {
             integration_error =
                 Some("The saved global shortcut is currently unavailable.".to_owned());
