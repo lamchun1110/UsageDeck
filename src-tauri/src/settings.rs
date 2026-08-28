@@ -193,11 +193,11 @@ impl SettingsService {
     }
 
     fn activate_launch_accounts(&self) -> Result<(), StorageError> {
-        let identity = self
-            .registry
-            .cache_identity("codex")
-            .resolved_value()
-            .map(str::to_owned);
+        let runtime = self.registry.runtime("codex");
+        let identity = runtime
+            .as_deref()
+            .map(|runtime| runtime.cache_identity())
+            .and_then(|identity| identity.resolved_value().map(str::to_owned));
         if let Some(identity) = identity {
             self.activate_account("codex", "codex", &identity)?;
         }
@@ -609,6 +609,47 @@ impl SettingsService {
         })
     }
 
+    /// Reconciles stored layouts with the registry after a named API-key
+    /// account was registered or unregistered live. A newly registered
+    /// account gains a disabled default layout that activates once its saved
+    /// key is detected; a removed account loses its layout and custom name
+    /// through normalization. Always bumps the account revision so watchers
+    /// (including the frontend catalog) re-sync.
+    pub fn reconcile_registry_change(&self) -> Result<AppSettings, String> {
+        let _commit = self
+            .commit
+            .lock()
+            .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())?;
+        let current = self
+            .settings
+            .read()
+            .map(|settings| settings.as_ref().clone())
+            .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())?;
+        let detected = detected_provider_set(&current);
+        let persisted_accounts = persisted_account_provider_ids(&self.storage)
+            .map_err(|_| "UsageDeck account settings could not be loaded.".to_owned())?;
+        let mut next = current.clone();
+        normalize_with_persisted_accounts(
+            &self.registry,
+            &mut next,
+            &detected,
+            &persisted_accounts,
+        );
+        if next != current {
+            self.storage
+                .save_settings(&next)
+                .map_err(|_| "UsageDeck settings could not be saved.".to_owned())?;
+            *self
+                .settings
+                .write()
+                .map_err(|_| "UsageDeck settings are temporarily unavailable.".to_owned())? =
+                Arc::new(next.clone());
+            self.settings_revision.fetch_add(1, Ordering::SeqCst);
+        }
+        self.account_revision.fetch_add(1, Ordering::SeqCst);
+        Ok(next)
+    }
+
     pub fn enabled_provider_ids(&self) -> Vec<String> {
         self.get()
             .providers
@@ -636,7 +677,7 @@ impl SettingsService {
             .find(|provider| provider.id == provider_id)
             .ok_or_else(|| "Provider settings are unavailable.".to_owned())?;
         provider.expanded = false;
-        provider.metrics = default_provider(definition, provider.detected).metrics;
+        provider.metrics = default_provider(&definition, provider.detected).metrics;
         self.update_from_view(
             settings,
             expected_settings_revision,
@@ -719,7 +760,7 @@ impl SettingsService {
         default_settings(&self.registry, detected)
     }
 
-    pub fn catalog(&self) -> &ProviderCatalog {
+    pub fn catalog(&self) -> Arc<ProviderCatalog> {
         self.registry.catalog()
     }
 
@@ -868,7 +909,7 @@ fn normalize_with_persisted_accounts(
         *name = name.trim().chars().take(48).collect();
         !name.is_empty()
     });
-    normalize_provider_options(catalog, settings);
+    normalize_provider_options(&catalog, settings);
 
     if settings.known_provider_ids.is_empty() {
         settings.known_provider_ids = settings

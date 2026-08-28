@@ -49,7 +49,7 @@ if (!/fn definition\(&self\) -> ProviderDefinition;/.test(providerRuntime)) {
 }
 
 const bootstrap = fs.readFileSync(new URL('src-tauri/src/commands/bootstrap.rs', root), 'utf8');
-if (!/pub catalog: ProviderCatalog/.test(bootstrap)) {
+if (!/pub catalog: (?:Arc<ProviderCatalog>|ProviderCatalog)/.test(bootstrap)) {
   throw new Error('BootstrapState does not expose the provider catalog.');
 }
 

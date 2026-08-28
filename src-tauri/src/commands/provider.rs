@@ -15,14 +15,14 @@ use crate::{
     tray_presentation,
 };
 
-fn resolve_provider_link<'a>(
-    registry: &'a ProviderRegistry,
+fn resolve_provider_link(
+    registry: &ProviderRegistry,
     provider_id: &str,
     link_index: usize,
-) -> Result<&'a ProviderLink, String> {
+) -> Result<ProviderLink, String> {
     registry
         .definition(provider_id)
-        .and_then(|provider| provider.links.get(link_index))
+        .and_then(|provider| provider.links.into_iter().nth(link_index))
         .ok_or_else(|| "That provider link is unavailable.".to_owned())
 }
 
@@ -297,6 +297,10 @@ pub async fn delete_provider_api_key(
 /// register the new `family@suffix` provider id.
 #[tauri::command]
 pub async fn add_api_key_account(
+    app: AppHandle,
+    registry: State<'_, Arc<ProviderRegistry>>,
+    service: State<'_, Arc<ProviderService>>,
+    settings: State<'_, Arc<SettingsService>>,
     storage: tauri::State<'_, std::sync::Arc<crate::storage::Storage>>,
     family: String,
     account_name: String,
@@ -314,21 +318,56 @@ pub async fn add_api_key_account(
         ));
     }
     let storage = storage.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        storage.allocate_api_key_account(&family, &account_name)
+    let family_for_record = family.clone();
+    let account_name_for_record = account_name.clone();
+    let provider_id = tauri::async_runtime::spawn_blocking(move || {
+        storage.allocate_api_key_account(&family_for_record, &account_name_for_record)
     })
     .await
     .map_err(|_| "The provider account could not be created.".to_owned())?
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+
+    // Materialize the runtime and its settings layout now so the new card
+    // appears immediately; it stays inactive until a key is saved and detected.
+    let command_guard = settings.lock_command_mutation().await;
+    let runtime = crate::providers::api_key_account::api_key_account_provider(
+        &family,
+        &provider_id,
+        &account_name,
+    )
+    .ok_or_else(|| format!("Provider family '{family}' does not support multiple accounts."))?
+    .map_err(|error| error.to_string())?;
+    registry
+        .register_provider(runtime)
+        .map_err(|error| error.to_string())?;
+    match settings.reconcile_registry_change() {
+        Ok(updated) => {
+            tray_presentation::update(&app, &service.state(), &updated, settings.registry());
+            let _ = app.emit("settings-state", settings_view_state(&app, &settings));
+        }
+        Err(error) => {
+            crate::app_warn!(
+                "auth",
+                "account {provider_id} registered but settings reconciliation failed: {error}"
+            );
+            return Err(error);
+        }
+    }
+    drop(command_guard);
+    Ok(provider_id)
 }
 
 /// Removes an API-key account by its derived provider id (e.g. `kimi@1a2b3c4d`). The credential
 /// entry is cleared, the account is graveyarded so its id cannot be reallocated to a different
-/// logical account, and the dashboard card disappears after restart (`RestartRequired`). The
-/// cached snapshot survives: `CacheIdentity::Unscoped` walls it off, so it is silently ignored
+/// logical account, and the runtime is unregistered so the dashboard card disappears immediately.
+/// The cached snapshot survives: `CacheIdentity::Unscoped` walls it off, so it is silently ignored
 /// when no runtime exists.
 #[tauri::command]
 pub async fn remove_api_key_account(
+    app: AppHandle,
+    registry: State<'_, Arc<ProviderRegistry>>,
+    service: State<'_, Arc<ProviderService>>,
+    settings: State<'_, Arc<SettingsService>>,
     storage: tauri::State<'_, std::sync::Arc<crate::storage::Storage>>,
     provider_id: String,
 ) -> Result<(), String> {
@@ -387,10 +426,30 @@ pub async fn remove_api_key_account(
         storage
             .delete_provider_account_by_identity(&family, &identity_key)
             .map_err(|error| error.to_string())?;
-        Ok(())
+        Ok::<(), String>(())
     })
     .await
-    .map_err(|_| "The provider account could not be removed.".to_owned())?
+    .map_err(|_| "The provider account could not be removed.".to_owned())??;
+
+    // Drop the runtime and its settings layout now so the card disappears
+    // immediately instead of lingering until the next launch.
+    let command_guard = settings.lock_command_mutation().await;
+    registry.unregister_provider(&provider_id);
+    match settings.reconcile_registry_change() {
+        Ok(updated) => {
+            tray_presentation::update(&app, &service.state(), &updated, settings.registry());
+            let _ = app.emit("settings-state", settings_view_state(&app, &settings));
+        }
+        Err(error) => {
+            crate::app_warn!(
+                "auth",
+                "account {provider_id} removed but settings reconciliation failed: {error}"
+            );
+            return Err(error);
+        }
+    }
+    drop(command_guard);
+    Ok(())
 }
 
 #[cfg(test)]

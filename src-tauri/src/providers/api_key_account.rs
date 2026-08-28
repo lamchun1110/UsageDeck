@@ -59,54 +59,57 @@ pub fn api_key_account_providers(
             if !observed_account_ids.contains(&provider_id) {
                 continue;
             }
-            let runtime: Result<std::sync::Arc<dyn super::UsageProvider>, _> = match *family {
-                "openrouter" => crate::providers::openrouter::OpenRouterProvider::new_for_account(
-                    &provider_id,
-                    &account_name,
-                )
-                .map(|runtime| {
-                    std::sync::Arc::new(runtime) as std::sync::Arc<dyn super::UsageProvider>
-                }),
-                "zai" => {
-                    crate::providers::zai::ZaiProvider::new_for_account(&provider_id, &account_name)
-                        .map(|runtime| {
-                            std::sync::Arc::new(runtime) as std::sync::Arc<dyn super::UsageProvider>
-                        })
-                }
-                "kimi" => crate::providers::kimi::KimiProvider::new_for_account(
-                    &provider_id,
-                    &account_name,
-                )
-                .map(|runtime| {
-                    std::sync::Arc::new(runtime) as std::sync::Arc<dyn super::UsageProvider>
-                }),
-                "minimax" => crate::providers::minimax::MiniMaxProvider::new_for_account(
-                    &provider_id,
-                    &account_name,
-                )
-                .map(|runtime| {
-                    std::sync::Arc::new(runtime) as std::sync::Arc<dyn super::UsageProvider>
-                }),
-                _ => {
-                    crate::app_warn!("lifecycle", "unknown API-key account family {family}");
-                    continue;
-                }
-            };
-            match runtime {
-                Ok(runtime) => {
+            let _ = identity;
+            match api_key_account_provider(family, &provider_id, &account_name) {
+                Some(Ok(runtime)) => {
                     providers.push(runtime);
                 }
-                Err(error) => {
+                Some(Err(error)) => {
                     crate::app_warn!(
                         "lifecycle",
                         "API-key account {provider_id} could not be created: {error}"
                     );
                 }
+                None => {}
             }
-            let _ = identity;
         }
     }
     Ok(providers)
+}
+
+/// Builds the runtime for one named API-key account. `None` means the family
+/// is unknown; `Err` carries the family constructor's failure.
+pub fn api_key_account_provider(
+    family: &str,
+    provider_id: &str,
+    account_name: &str,
+) -> Option<Result<std::sync::Arc<dyn super::UsageProvider>, String>> {
+    let runtime: Result<std::sync::Arc<dyn super::UsageProvider>, _> = match family {
+        "openrouter" => crate::providers::openrouter::OpenRouterProvider::new_for_account(
+            provider_id,
+            account_name,
+        )
+        .map(|runtime| std::sync::Arc::new(runtime) as std::sync::Arc<dyn super::UsageProvider>),
+        "zai" => crate::providers::zai::ZaiProvider::new_for_account(provider_id, account_name)
+            .map(|runtime| {
+                std::sync::Arc::new(runtime) as std::sync::Arc<dyn super::UsageProvider>
+            }),
+        "kimi" => crate::providers::kimi::KimiProvider::new_for_account(provider_id, account_name)
+            .map(|runtime| {
+                std::sync::Arc::new(runtime) as std::sync::Arc<dyn super::UsageProvider>
+            }),
+        "minimax" => {
+            crate::providers::minimax::MiniMaxProvider::new_for_account(provider_id, account_name)
+                .map(|runtime| {
+                    std::sync::Arc::new(runtime) as std::sync::Arc<dyn super::UsageProvider>
+                })
+        }
+        _ => {
+            crate::app_warn!("lifecycle", "unknown API-key account family {family}");
+            return None;
+        }
+    };
+    Some(runtime.map_err(|error| error.to_string()))
 }
 
 /// Identity of one API-key provider instance: either the shared base provider (which keeps

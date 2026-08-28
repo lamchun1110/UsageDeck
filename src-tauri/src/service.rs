@@ -123,11 +123,12 @@ impl ProviderService {
         drain_grace_base: Duration,
         settings: Option<Arc<SettingsService>>,
     ) -> Self {
+        let snapshot = registry.snapshot();
         let mut states = BTreeMap::new();
         let mut refresh_flights = HashMap::new();
-        for definition in &registry.catalog().providers {
+        for definition in snapshot.catalog().providers.iter() {
             let id = definition.id.clone();
-            let state = match storage.load_snapshot_for_identity(&id, registry.cache_identity(&id))
+            let state = match storage.load_snapshot_for_identity(&id, snapshot.cache_identity(&id))
             {
                 Ok(Some(snapshot)) => {
                     crate::app_debug!("cache", "loaded cached snapshot for {id}");

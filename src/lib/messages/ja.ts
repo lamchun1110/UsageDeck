@@ -249,6 +249,7 @@ export const ja = {
   'settings.account.add': 'アカウントを追加',
   'settings.account.nameRequired': 'アカウント名を入力してください。',
   'settings.accountRemovedRestart': 'アカウントを削除しました — 再起動すると反映されます。',
+  'settings.accountRemoved': 'アカウントを削除しました。',
   'settings.customize.accountHint': 'API アカウントは独立したカードとして表示されます。',
 
   'apikey.sectionAria': '{provider} API キー',

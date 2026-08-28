@@ -245,6 +245,7 @@ export const zhTW = {
   'settings.account.add': '新增帳戶',
   'settings.account.nameRequired': '請輸入帳戶名稱。',
   'settings.accountRemovedRestart': '帳戶已移除 — 重新啟動 UsageDeck 後生效。',
+  'settings.accountRemoved': '帳戶已移除。',
   'settings.customize.accountHint': 'API 帳戶以獨立卡片顯示，可在此新增或移除。',
 
   'apikey.sectionAria': '{provider} API Key',

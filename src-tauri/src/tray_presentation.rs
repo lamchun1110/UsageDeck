@@ -315,10 +315,10 @@ fn resolved_groups(
                 .filter_map(|metric| {
                     let metric_definition = registry.metric(&metric.id)?;
                     let mut resolved =
-                        tray_metric(metric_definition, snapshot, settings.usage_display)?;
+                        tray_metric(&metric_definition, snapshot, settings.usage_display)?;
                     resolved.detail = format!(
                         "{} {}",
-                        settings.provider_display_name(definition),
+                        settings.provider_display_name(&definition),
                         resolved.detail
                     );
                     Some(resolved)
@@ -362,7 +362,7 @@ fn tooltip_entries(
             for metric in provider.metrics.iter().filter(|metric| metric.enabled) {
                 let metric_definition = registry.metric(&metric.id)?;
                 let Some(resolved) =
-                    tray_metric(metric_definition, snapshot, settings.usage_display)
+                    tray_metric(&metric_definition, snapshot, settings.usage_display)
                 else {
                     continue;
                 };
@@ -379,7 +379,7 @@ fn tooltip_entries(
                 None => chosen.value.clone(),
             };
             Some(TooltipEntry {
-                name: settings.provider_display_name(definition).to_owned(),
+                name: settings.provider_display_name(&definition).to_owned(),
                 value,
             })
         })
@@ -884,9 +884,9 @@ mod tests {
         let definition = catalog.metric("cursor.requests").unwrap();
 
         let left =
-            super::tray_metric(definition, &snapshot, crate::models::UsageDisplay::Left).unwrap();
+            super::tray_metric(&definition, &snapshot, crate::models::UsageDisplay::Left).unwrap();
         let used =
-            super::tray_metric(definition, &snapshot, crate::models::UsageDisplay::Used).unwrap();
+            super::tray_metric(&definition, &snapshot, crate::models::UsageDisplay::Used).unwrap();
 
         assert_eq!(left.value, "75");
         assert_eq!(left.detail, "Requests 75 searches left");
@@ -1107,7 +1107,7 @@ mod tests {
         };
         let catalog = ProviderRegistry::from_definitions(vec![codex::definition()]).unwrap();
         let metric = super::tray_metric(
-            catalog.metric("codex.credits").unwrap(),
+            &catalog.metric("codex.credits").unwrap(),
             &snapshot,
             crate::models::UsageDisplay::Left,
         )

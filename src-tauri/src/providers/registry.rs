@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use crate::models::{MetricSection, MetricSource, ProviderCatalog, ProviderDefinition};
@@ -17,76 +17,20 @@ pub enum ProviderRegistryError {
     Invalid(String),
 }
 
-pub struct ProviderRegistry {
+/// An immutable registry view. Readers clone the `Arc` and work without
+/// holding any lock; mutations (API-key account registration) build a fresh
+/// snapshot and swap it in.
+pub struct RegistrySnapshot {
+    providers: Vec<Arc<dyn UsageProvider>>,
     runtimes: HashMap<String, Arc<dyn UsageProvider>>,
-    catalog: ProviderCatalog,
+    catalog: Arc<ProviderCatalog>,
     definition_indices: HashMap<String, usize>,
     metric_indices: HashMap<String, (usize, usize)>,
 }
 
-impl ProviderRegistry {
-    pub fn new(providers: Vec<Arc<dyn UsageProvider>>) -> Result<Self, ProviderRegistryError> {
-        if providers.is_empty() {
-            return Err(ProviderRegistryError::Empty);
-        }
-
-        let mut runtimes = HashMap::new();
-        let mut definitions = Vec::with_capacity(providers.len());
-        let mut definition_indices = HashMap::new();
-        let mut metric_indices = HashMap::new();
-        let mut metric_owners = BTreeMap::<String, String>::new();
-        let mut api_key_provider_ids = Vec::new();
-
-        for provider in providers {
-            let mut definition = provider.definition();
-            definition.links = definition
-                .links
-                .iter()
-                .filter_map(crate::models::ProviderLink::visible)
-                .collect();
-            if runtimes.contains_key(&definition.id) {
-                return Err(invalid(format!(
-                    "duplicate provider id `{}`",
-                    definition.id
-                )));
-            }
-            validate_definition(&definition, &metric_owners)?;
-            let provider_index = definitions.len();
-            definition_indices.insert(definition.id.clone(), provider_index);
-            for (metric_index, metric) in definition.metrics.iter().enumerate() {
-                metric_owners.insert(metric.id.clone(), definition.id.clone());
-                metric_indices.insert(metric.id.clone(), (provider_index, metric_index));
-            }
-            if provider.supports_api_key_configuration() {
-                api_key_provider_ids.push(definition.id.clone());
-            }
-            runtimes.insert(definition.id.clone(), provider);
-            definitions.push(definition);
-        }
-        if !definitions
-            .iter()
-            .any(|definition| definition.fallback_enabled)
-        {
-            return Err(invalid("registry has no fallback-enabled provider"));
-        }
-
-        Ok(Self {
-            runtimes,
-            catalog: ProviderCatalog {
-                providers: definitions,
-                api_key_provider_ids,
-            },
-            definition_indices,
-            metric_indices,
-        })
-    }
-
+impl RegistrySnapshot {
     pub fn catalog(&self) -> &ProviderCatalog {
         &self.catalog
-    }
-
-    pub fn runtime(&self, id: &str) -> Option<Arc<dyn UsageProvider>> {
-        self.runtimes.get(id).cloned()
     }
 
     pub fn definition(&self, id: &str) -> Option<&ProviderDefinition> {
@@ -128,6 +72,151 @@ impl ProviderRegistry {
             .get(provider_index)?
             .metrics
             .get(metric_index)
+    }
+}
+
+/// The live provider registry. Base providers register once at startup;
+/// named API-key accounts register and unregister when the user adds or
+/// removes them, so the dashboard updates without an application restart.
+pub struct ProviderRegistry {
+    snapshot: RwLock<Arc<RegistrySnapshot>>,
+}
+
+fn build_snapshot(
+    providers: Vec<Arc<dyn UsageProvider>>,
+) -> Result<RegistrySnapshot, ProviderRegistryError> {
+    if providers.is_empty() {
+        return Err(ProviderRegistryError::Empty);
+    }
+
+    let mut runtimes = HashMap::new();
+    let mut definitions = Vec::with_capacity(providers.len());
+    let mut definition_indices = HashMap::new();
+    let mut metric_indices = HashMap::new();
+    let mut metric_owners = BTreeMap::<String, String>::new();
+    let mut api_key_provider_ids = Vec::new();
+
+    for provider in providers.iter() {
+        let mut definition = provider.definition();
+        definition.links = definition
+            .links
+            .iter()
+            .filter_map(crate::models::ProviderLink::visible)
+            .collect();
+        if runtimes.contains_key(&definition.id) {
+            return Err(invalid(format!(
+                "duplicate provider id `{}`",
+                definition.id
+            )));
+        }
+        validate_definition(&definition, &metric_owners)?;
+        let provider_index = definitions.len();
+        definition_indices.insert(definition.id.clone(), provider_index);
+        for (metric_index, metric) in definition.metrics.iter().enumerate() {
+            metric_owners.insert(metric.id.clone(), definition.id.clone());
+            metric_indices.insert(metric.id.clone(), (provider_index, metric_index));
+        }
+        if provider.supports_api_key_configuration() {
+            api_key_provider_ids.push(definition.id.clone());
+        }
+        runtimes.insert(definition.id.clone(), provider.clone());
+        definitions.push(definition);
+    }
+    if !definitions
+        .iter()
+        .any(|definition| definition.fallback_enabled)
+    {
+        return Err(invalid("registry has no fallback-enabled provider"));
+    }
+
+    Ok(RegistrySnapshot {
+        runtimes,
+        catalog: Arc::new(ProviderCatalog {
+            providers: definitions,
+            api_key_provider_ids,
+        }),
+        definition_indices,
+        metric_indices,
+        providers,
+    })
+}
+
+impl ProviderRegistry {
+    pub fn new(providers: Vec<Arc<dyn UsageProvider>>) -> Result<Self, ProviderRegistryError> {
+        Ok(Self {
+            snapshot: RwLock::new(Arc::new(build_snapshot(providers)?)),
+        })
+    }
+
+    /// The current immutable view. Clone the `Arc` and keep it for the
+    /// duration of a multi-step operation so ids, definitions, and identities
+    /// stay coherent even if an account is registered concurrently.
+    pub fn snapshot(&self) -> Arc<RegistrySnapshot> {
+        self.snapshot
+            .read()
+            .map(|snapshot| Arc::clone(&snapshot))
+            .unwrap_or_else(|poisoned| Arc::clone(&poisoned.into_inner()))
+    }
+
+    pub fn catalog(&self) -> Arc<ProviderCatalog> {
+        Arc::clone(&self.snapshot().catalog)
+    }
+
+    pub fn runtime(&self, id: &str) -> Option<Arc<dyn UsageProvider>> {
+        self.snapshot().runtimes.get(id).cloned()
+    }
+
+    pub fn definition(&self, id: &str) -> Option<ProviderDefinition> {
+        self.snapshot().definition(id).cloned()
+    }
+
+    pub fn supports_account_names(&self, id: &str) -> bool {
+        self.snapshot().supports_account_names(id)
+    }
+
+    pub fn observed_account_provider_ids(&self) -> Vec<String> {
+        self.snapshot().observed_account_provider_ids()
+    }
+
+    pub fn metric(&self, id: &str) -> Option<crate::models::MetricDefinition> {
+        self.snapshot().metric(id).cloned()
+    }
+
+    /// Registers an additional runtime (a named API-key account), keeping the
+    /// existing providers in their established order and appending the newcomer.
+    /// The whole snapshot is revalidated, so an id collision or an invalid
+    /// definition leaves the live registry untouched.
+    pub fn register_provider(
+        &self,
+        provider: Arc<dyn UsageProvider>,
+    ) -> Result<(), ProviderRegistryError> {
+        let current = self.snapshot();
+        let mut providers = current.providers.clone();
+        providers.push(provider);
+        let next = build_snapshot(providers)?;
+        match self.snapshot.write() {
+            Ok(mut guard) => *guard = Arc::new(next),
+            Err(poisoned) => *poisoned.into_inner() = Arc::new(next),
+        }
+        Ok(())
+    }
+
+    /// Removes a runtime (a removed API-key account). Unknown ids are a no-op
+    /// so removal stays idempotent alongside the database cleanup.
+    pub fn unregister_provider(&self, id: &str) {
+        let current = self.snapshot();
+        if !current.runtimes.contains_key(id) {
+            return;
+        }
+        let mut providers = current.providers.clone();
+        providers.retain(|provider| provider.definition().id != id);
+        // The registry keeps at least the base providers, so a rebuild failure
+        // here can only mean an invariant is broken; keep the current snapshot.
+        if let Ok(next) = build_snapshot(providers) {
+            if let Ok(mut guard) = self.snapshot.write() {
+                *guard = Arc::new(next);
+            }
+        }
     }
 
     #[cfg(test)]
@@ -374,6 +463,61 @@ mod tests {
         assert!(registry.runtime("second").is_some());
         assert!(registry.definition("first").is_some());
         assert!(registry.metric("first.session").is_some());
+    }
+
+    #[test]
+    fn registered_provider_extends_catalog_and_runtime_live() {
+        let registry = ProviderRegistry::new(vec![runtime(definition("base"))]).unwrap();
+
+        registry
+            .register_provider(runtime(definition("kimi@1a2b3c4d")))
+            .unwrap();
+
+        assert!(registry.runtime("kimi@1a2b3c4d").is_some());
+        assert_eq!(
+            registry
+                .catalog()
+                .providers
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            ["base", "kimi@1a2b3c4d"]
+        );
+        assert!(registry.metric("kimi@1a2b3c4d.session").is_some());
+        assert_eq!(registry.definition("base").unwrap().id, "base");
+    }
+
+    #[test]
+    fn unregister_provider_removes_runtime_and_is_idempotent() {
+        let registry = ProviderRegistry::new(vec![
+            runtime(definition("base")),
+            runtime(definition("kimi@1a2b3c4d")),
+        ])
+        .unwrap();
+
+        registry.unregister_provider("kimi@1a2b3c4d");
+        assert!(registry.runtime("kimi@1a2b3c4d").is_none());
+        assert!(registry.definition("kimi@1a2b3c4d").is_none());
+        assert!(registry.metric("kimi@1a2b3c4d.session").is_none());
+        assert!(registry.runtime("base").is_some());
+
+        // Removing an unknown id must be a harmless no-op.
+        registry.unregister_provider("kimi@1a2b3c4d");
+        assert!(registry.runtime("base").is_some());
+    }
+
+    #[test]
+    fn register_rejects_duplicate_id_without_disturbing_live_registry() {
+        let registry = ProviderRegistry::new(vec![runtime(definition("base"))]).unwrap();
+
+        let outcome = registry.register_provider(runtime(definition("base")));
+
+        assert!(matches!(
+            outcome,
+            Err(ProviderRegistryError::Invalid(message)) if message.contains("duplicate provider")
+        ));
+        assert_eq!(registry.catalog().providers.len(), 1);
+        assert!(registry.runtime("base").is_some());
     }
 
     #[test]

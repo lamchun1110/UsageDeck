@@ -330,7 +330,7 @@ impl NotificationEvaluator {
             );
             for alert in &mut new_alerts {
                 alert.provider = settings
-                    .provider_display_name(provider_definition)
+                    .provider_display_name(&provider_definition)
                     .to_owned();
                 alert.metric_id.clone_from(&metric_id);
                 alert.previous_severity = previous_severity;

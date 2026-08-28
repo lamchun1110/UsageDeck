@@ -244,6 +244,7 @@ export const zhCN = {
   'settings.account.add': '添加账户',
   'settings.account.nameRequired': '请输入账户名称。',
   'settings.accountRemovedRestart': '账户已移除 — 重启 UsageDeck 后生效。',
+  'settings.accountRemoved': '账户已移除。',
   'settings.customize.accountHint': 'API 账户以独立卡片显示，可在此添加或移除。',
 
   'apikey.sectionAria': '{provider} API Key',

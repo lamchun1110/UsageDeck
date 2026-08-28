@@ -246,6 +246,7 @@ export const ko = {
   'settings.account.add': '계정 추가',
   'settings.account.nameRequired': '계정 이름을 입력하세요.',
   'settings.accountRemovedRestart': '계정이 삭제되었습니다 — 재시작하면 반영됩니다.',
+  'settings.accountRemoved': '계정이 삭제되었습니다.',
   'settings.customize.accountHint': 'API 계정은 별도 카드로 표시됩니다.',
 
   'apikey.sectionAria': '{provider} API 키',

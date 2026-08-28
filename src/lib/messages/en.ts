@@ -250,6 +250,7 @@ export const en = {
   'settings.account.add': 'Add Account',
   'settings.account.nameRequired': 'Enter an account name.',
   'settings.accountRemovedRestart': 'Account removed — restart UsageDeck to update the dashboard.',
+  'settings.accountRemoved': 'Account removed.',
   'settings.customize.accountHint':
     'API accounts appear as separate cards. Add or remove them here.',
 

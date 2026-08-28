@@ -57,7 +57,9 @@
     if (!isApiKeyAccount) return;
     try {
       await removeApiKeyAccount(providerId);
-      showMessage(t('settings.accountRemovedRestart'), 'success');
+      // The registry update lands with the next settings-state event, which
+      // removes this screen; keep a brief confirmation in case it lingers.
+      showMessage(t('settings.accountRemoved'), 'success');
     } catch (error) {
       showMessage((error as Error).message ?? String(error), 'denied');
     }

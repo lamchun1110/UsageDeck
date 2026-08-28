@@ -15,7 +15,7 @@ use crate::{
 pub struct BootstrapState {
     pub usage: UsageViewState,
     pub settings: SettingsViewState,
-    pub catalog: ProviderCatalog,
+    pub catalog: Arc<ProviderCatalog>,
 }
 
 #[tauri::command]
@@ -27,6 +27,6 @@ pub fn get_bootstrap_state(
     BootstrapState {
         usage: service.state(),
         settings: settings_view_state(&app, &settings),
-        catalog: settings.catalog().clone(),
+        catalog: settings.catalog(),
     }
 }

@@ -50,7 +50,7 @@
   import { buildProviderShareRows, renderProviderShareCard } from './lib/shareCard';
   import SettingsScreen from './lib/SettingsScreen.svelte';
   import { SettingsController } from './lib/settingsController.svelte';
-  import type { AppSettings, UsageViewState } from './lib/types';
+  import type { AppSettings, BootstrapState, UsageViewState } from './lib/types';
   import { nextUpdateLabel, UpdateController } from './lib/updateController.svelte';
   import { automaticUpdateDelay, UPDATE_CHECK_INTERVAL_MS } from './lib/updateSchedule';
   import { createWindowController, type AppScreen } from './lib/windowController';
@@ -64,6 +64,7 @@
 
   let viewState = $state<UsageViewState>(emptyView);
   let catalog = $state<ProviderCatalogIndex>(emptyProviderCatalog);
+  let lastAccountRevision = $state(0);
   let screen = $state<Screen>('dashboard');
   let now = $state(Date.now());
   let settingsError = $state<string | null>(null);
@@ -751,12 +752,32 @@
         catalog = new ProviderCatalogIndex(state.catalog);
         viewState = state.usage;
         settingsController.setState(state.settings);
+        lastAccountRevision = state.settings.accountRevision;
         automaticUpdatesReady = true;
       })
       .catch(() => {
         bootstrapFailed = true;
         settingsError = t('app.backendUnavailable');
       });
+  }
+
+  // Adding or removing a named API account swaps the provider registry live;
+  // the settings-state event carries the new layouts, and this refetch brings
+  // the matching catalog definitions. If the screen showing the removed
+  // account is open, fall back to Customize.
+  async function resyncAfterAccountChange() {
+    let state: BootstrapState;
+    try {
+      state = await getBootstrapState();
+    } catch {
+      return;
+    }
+    catalog = new ProviderCatalogIndex(state.catalog);
+    settingsController.setState(state.settings);
+    const activeProviderId = screen.startsWith('provider:') ? screen.slice(9) : null;
+    if (activeProviderId !== null && catalog.provider(activeProviderId) === undefined) {
+      navigate('customize');
+    }
   }
 
   onMount(() => {
@@ -840,6 +861,10 @@
     listeners.add(
       onSettingsState((state) => {
         settingsController.acceptExternalState(state);
+        if (state.accountRevision !== lastAccountRevision) {
+          lastAccountRevision = state.accountRevision;
+          void resyncAfterAccountChange();
+        }
       }),
     );
     listeners.add(
