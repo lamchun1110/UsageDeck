@@ -1,7 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Snippet } from 'svelte';
 import Sheet from './Sheet.svelte';
 import TestChild from './TestChild.svelte';
+
+// A component doubles as a snippet at runtime; the prop type wants a snippet.
+const child = TestChild as unknown as Snippet;
 
 describe('Sheet', () => {
   afterEach(() => {
@@ -18,7 +22,7 @@ describe('Sheet', () => {
     const { unmount } = render(Sheet, {
       label: 'test dialog',
       onDismiss,
-      children: TestChild,
+      children: child,
     });
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'inside' })).toHaveFocus());
@@ -28,7 +32,7 @@ describe('Sheet', () => {
 
   it('dismisses with Escape, traps Tab, and honors dismissible=false while pending', async () => {
     const onDismiss = vi.fn();
-    const props = { label: 'test dialog', onDismiss, children: TestChild };
+    const props = { label: 'test dialog', onDismiss, children: child };
     const { rerender, unmount } = render(Sheet, props);
 
     await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
@@ -47,7 +51,7 @@ describe('Sheet', () => {
       label: 'test dialog',
       onDismiss,
       dismissOnBackdrop: true,
-      children: TestChild,
+      children: child,
     };
     const { rerender, unmount } = render(Sheet, props);
 

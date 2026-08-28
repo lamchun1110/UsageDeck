@@ -38,6 +38,7 @@
   import { restoreCustomization } from './lib/customizationHistory';
   import Dashboard from './lib/Dashboard.svelte';
   import Icon from './lib/Icon.svelte';
+  import DashboardSkeleton from './lib/DashboardSkeleton.svelte';
   import Sheet from './lib/Sheet.svelte';
   import { createListenerRegistry } from './lib/listenerRegistry';
   import { setLanguage, t } from './lib/i18n.svelte';
@@ -1239,7 +1240,7 @@
           >
         </div>
       {:else}
-        <p class="empty-row">{t('app.loading')}</p>
+        <DashboardSkeleton />
       {/if}
     </div>
   {/if}
