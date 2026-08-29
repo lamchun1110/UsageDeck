@@ -8,6 +8,7 @@
   import type { AppSettings, MetricLayout, MetricSection, ProviderLayout } from './types';
   import Icon from './Icon.svelte';
   import ProviderApiKeySection from './ProviderApiKeySection.svelte';
+  import ProviderIcon from './ProviderIcon.svelte';
   import ProviderNameSection from './ProviderNameSection.svelte';
   import ProviderOptionsSection from './ProviderOptionsSection.svelte';
   import { reorderFlip } from './motion';
@@ -101,6 +102,37 @@
     showMessage(metric.pinned ? t('customize.unstarred') : t('customize.starred'), 'success');
     updateMetric({ ...metric, pinned: !metric.pinned });
   }
+  // Session Kickstart: this provider must publish a rolling "session"
+  // window for the expiry trigger to exist.
+  const kickstartEligible = $derived(catalog.hasSessionWindow(providerId));
+  const hasBuiltin = $derived(catalog.supportsSessionKickstart(providerId));
+  const kickstartEnabled = $derived(settings.kickstartProviderIds.includes(providerId));
+
+  // Command edits commit on blur/Enter so typing does not save per keystroke.
+  let commandDrafts = $state<Record<string, string>>({});
+
+  function commandValue() {
+    return commandDrafts[providerId] ?? (settings.kickstartCommands[providerId] ?? '');
+  }
+
+  function commitCommand() {
+    if (!(providerId in commandDrafts)) return;
+    const draft = (commandDrafts[providerId] ?? '').trim();
+    delete commandDrafts[providerId];
+    const current = settings.kickstartCommands[providerId] ?? '';
+    if (draft === current) return;
+    const next = { ...settings.kickstartCommands };
+    if (draft) next[providerId] = draft;
+    else delete next[providerId];
+    onChange({ ...settings, kickstartCommands: next });
+  }
+
+  function toggleKickstart(enabled: boolean) {
+    const ids = settings.kickstartProviderIds.filter((id) => id !== providerId);
+    if (enabled) ids.push(providerId);
+    onChange({ ...settings, kickstartProviderIds: ids.sort() });
+  }
+
   function showMessage(text: string, kind: 'success' | 'denied') {
     message = text;
     messageKind = kind;
@@ -238,6 +270,54 @@
       </div>
     {/each}
     <ProviderOptionsSection {settings} {provider} {catalog} onChange={onOptionChange} />
+    {#if kickstartEligible}
+      <div class="metric-section">
+        <h2>{t('settings.section.kickstart')}</h2>
+        <p class="kickstart-hint">{t('settings.kickstart.hint')}</p>
+        <div class="kickstart-card">
+          <div class="kickstart-row">
+            <span class="kickstart-id">
+              <ProviderIcon providerId={provider.id} size={16} />
+              <b>{providerDisplayName(provider.id)}</b>
+              <small
+                class="kickstart-badge"
+                class:needs-command={!hasBuiltin}
+              >{hasBuiltin
+                ? t('settings.kickstart.builtinBadge')
+                : t('settings.kickstart.needsCommandBadge')}</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={kickstartEnabled}
+              disabled={!hasBuiltin && !settings.kickstartCommands[provider.id]}
+              aria-label={t('settings.kickstart.toggleAria', {
+                provider: providerDisplayName(provider.id),
+              })}
+              onchange={(event) => toggleKickstart(event.currentTarget.checked)}
+            />
+          </div>
+          <input
+            class="kickstart-command"
+            type="text"
+            maxlength="500"
+            value={commandValue()}
+            placeholder={hasBuiltin && !commandValue()
+              ? catalog.defaultKickstartCommand(provider.id)
+              : t('settings.kickstart.customRequiredPlaceholder')}
+            autocomplete="off"
+            spellcheck="false"
+            aria-label={t('settings.kickstart.customLabel', {
+              provider: providerDisplayName(provider.id),
+            })}
+            oninput={(event) => (commandDrafts[provider.id] = event.currentTarget.value)}
+            onblur={() => commitCommand()}
+            onkeydown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur();
+            }}
+          />
+        </div>
+      </div>
+    {/if}
     <ProviderApiKeySection
       providerId={provider.id}
       providerName={providerDisplayName(provider.id)}
@@ -351,6 +431,84 @@
       box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
       font-size: 10px;
       animation: detail-in var(--motion-spring) both;
+    }
+
+    .kickstart-hint {
+      margin: 0 8px 6px;
+      color: var(--secondary);
+      font-size: 10px;
+      line-height: 14px;
+    }
+
+    .kickstart-card {
+      overflow: hidden;
+      border-radius: 12px;
+      background: var(--card);
+    }
+
+    .kickstart-row {
+      display: flex;
+      min-height: 42px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 12px;
+    }
+
+    .kickstart-id {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 7px;
+      font-size: 13px;
+    }
+
+    .kickstart-id b {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .kickstart-badge {
+      flex: 0 0 auto;
+      padding: 1px 6px;
+      border-radius: 999px;
+      color: var(--secondary);
+      background: var(--button-hover);
+      font-size: 9px;
+      font-weight: 600;
+    }
+
+    .kickstart-badge.needs-command {
+      color: var(--warning);
+      background: var(--warning-bg);
+    }
+
+    .kickstart-command {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      margin: 0;
+      padding: 7px 12px 10px;
+      border: 0;
+      outline: none;
+      color: var(--text);
+      background: color-mix(in srgb, var(--card) 75%, var(--tray));
+      border-top: 1px solid var(--separator);
+      font-family:
+        ui-monospace,
+        'SF Mono',
+        Menlo,
+        monospace;
+      font-size: 10px;
+    }
+
+    .kickstart-command::placeholder {
+      color: var(--tertiary);
+    }
+
+    .kickstart-command:focus {
+      box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--meter-fill) 55%, transparent);
     }
 
     .customization-pill .symbol-icon {

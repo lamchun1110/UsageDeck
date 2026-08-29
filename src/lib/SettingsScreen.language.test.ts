@@ -59,7 +59,6 @@ describe('SettingsScreen language selector', () => {
     render(SettingsScreen, {
       props: {
         settingsView: settingsView(),
-        kickstartProviders: [],
         platform: 'linux',
         panelHeightMode: 'automatic',
         onChange,

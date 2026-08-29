@@ -2,7 +2,6 @@
   import type { PanelHeightMode } from './backend';
   import { LANGUAGE_PREFERENCES, t } from './i18n.svelte';
   import Icon from './Icon.svelte';
-  import ProviderIcon from './ProviderIcon.svelte';
   import type { DesktopPlatform } from './platform';
   import SelectMenu from './SelectMenu.svelte';
   import type {
@@ -14,12 +13,6 @@
 
   interface Props {
     settingsView: SettingsViewState;
-    kickstartProviders: {
-      id: string;
-      name: string;
-      hasBuiltin: boolean;
-      defaultCommand: string;
-    }[];
     platform: DesktopPlatform;
     panelHeightMode: PanelHeightMode;
     onChange: (settings: AppSettings) => void;
@@ -36,7 +29,6 @@
   }
   let {
     settingsView,
-    kickstartProviders,
     platform,
     panelHeightMode,
     onChange,
@@ -54,31 +46,6 @@
   let recording = $state(false);
   let logActionError = $state<string | null>(null);
   const settings = $derived(settingsView.settings);
-
-  function toggleKickstart(providerId: string, enabled: boolean) {
-    const ids = settings.kickstartProviderIds.filter((id) => id !== providerId);
-    if (enabled) ids.push(providerId);
-    onChange({ ...settings, kickstartProviderIds: ids.sort() });
-  }
-
-  // Command edits commit on blur/Enter so typing does not save on every key.
-  let commandDrafts = $state<Record<string, string>>({});
-
-  function commandValue(providerId: string) {
-    return commandDrafts[providerId] ?? settings.kickstartCommands[providerId] ?? '';
-  }
-
-  function commitCommand(providerId: string) {
-    if (!(providerId in commandDrafts)) return;
-    const draft = (commandDrafts[providerId] ?? '').trim();
-    delete commandDrafts[providerId];
-    const current = settings.kickstartCommands[providerId] ?? '';
-    if (draft === current) return;
-    const next = { ...settings.kickstartCommands };
-    if (draft) next[providerId] = draft;
-    else delete next[providerId];
-    onChange({ ...settings, kickstartCommands: next });
-  }
   const revealLogLabel = $derived(
     platform === 'macos'
       ? t('settings.btn.revealMac')
@@ -364,53 +331,6 @@
       /></label
     >
   </div>
-
-  {#if kickstartProviders.length > 0}
-    <div class="settings-section">
-      <h2>{t('settings.section.kickstart')}</h2>
-      <p class="settings-note">{t('settings.kickstart.hint')}</p>
-      {#each kickstartProviders as provider (provider.id)}
-        <div class="kickstart-provider">
-          <div class="setting-row">
-            <span class="kickstart-id">
-              <ProviderIcon providerId={provider.id} size={16} />
-              <b>{provider.name}</b>
-              <small class="kickstart-badge" class:needs-command={!provider.hasBuiltin}>
-                {provider.hasBuiltin
-                  ? t('settings.kickstart.builtinBadge')
-                  : t('settings.kickstart.needsCommandBadge')}</small
-              >
-            </span>
-            <input
-              type="checkbox"
-              checked={settings.kickstartProviderIds.includes(provider.id)}
-              disabled={!provider.hasBuiltin && !settings.kickstartCommands[provider.id]}
-              aria-label={t('settings.kickstart.toggleAria', { provider: provider.name })}
-              onchange={(event) => toggleKickstart(provider.id, event.currentTarget.checked)}
-            />
-          </div>
-          <label class="kickstart-command">
-            <input
-              type="text"
-              maxlength="500"
-              value={commandValue(provider.id)}
-              placeholder={provider.hasBuiltin && !commandValue(provider.id)
-                ? provider.defaultCommand
-                : t('settings.kickstart.customRequiredPlaceholder')}
-              autocomplete="off"
-              spellcheck="false"
-              aria-label={t('settings.kickstart.customLabel', { provider: provider.name })}
-              oninput={(event) => (commandDrafts[provider.id] = event.currentTarget.value)}
-              onblur={() => commitCommand(provider.id)}
-              onkeydown={(event) => {
-                if (event.key === 'Enter') event.currentTarget.blur();
-              }}
-            />
-          </label>
-        </div>
-      {/each}
-    </div>
-  {/if}
 
   <div class="settings-section">
     <h2>
@@ -726,71 +646,6 @@
       border-radius: 0 0 12px 12px;
     }
 
-    /* Session Kickstart: provider card with icon + badge toggle and a
-       command input showing the built-in command as its placeholder. */
-    .kickstart-provider {
-      display: grid;
-    }
-
-    .kickstart-provider > .setting-row {
-      border-radius: 0;
-    }
-
-    .kickstart-id {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-      gap: 7px;
-    }
-
-    .kickstart-id b {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .kickstart-badge {
-      flex: 0 0 auto;
-      padding: 1px 6px;
-      border-radius: 999px;
-      color: var(--secondary);
-      background: var(--button-hover);
-      font-size: 9px;
-      font-weight: 600;
-    }
-
-    .kickstart-badge.needs-command {
-      color: var(--warning);
-      background: var(--warning-bg);
-    }
-
-    .kickstart-command {
-      display: grid;
-      padding: 0 12px 10px 35px;
-      background: var(--card);
-    }
-
-    .kickstart-command > input {
-      min-width: 0;
-      box-sizing: border-box;
-      padding: 6px 8px;
-      border: 1px solid var(--separator);
-      border-radius: 7px;
-      outline: none;
-      color: var(--text);
-      background: var(--tray);
-      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-      font-size: 10px;
-    }
-
-    .kickstart-command > input::placeholder {
-      color: var(--tertiary);
-    }
-
-    .kickstart-command > input:focus {
-      border-color: var(--meter-fill);
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--meter-fill) 20%, transparent);
-    }
 
     .settings-section > h2 + .setting-row:last-child {
       border-radius: 12px;
