@@ -61,13 +61,12 @@ export class ProviderCatalogIndex {
     return this.#kickstartDefaultCommands[id] ?? '';
   }
 
+  // Every provider with a first-message rolling session publishes it as the
+  // "session" source id; the sessionWindow flag is a separate UI concern
+  // (only claude sets it) and must not gate eligibility here.
   hasSessionWindow(id: string) {
     return (
-      this.provider(id)?.metrics.some(
-        (metric) =>
-          (metric.source.kind === 'quota' || metric.source.kind === 'quotaOrValue') &&
-          metric.source.sessionWindow,
-      ) ?? false
+      this.provider(id)?.metrics.some((metric) => metric.source.sourceId === 'session') ?? false
     );
   }
 

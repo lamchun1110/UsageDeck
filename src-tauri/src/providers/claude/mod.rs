@@ -684,10 +684,11 @@ fn plan_name(credential: &ClaudeCredential) -> Option<String> {
 impl crate::providers::UsageProvider for ClaudeProvider {
     fn session_kickstart(&self) -> Option<crate::providers::SessionKickstart> {
         // Print mode sends exactly one prompt and exits, starting the 5-hour
-        // session window without an interactive session.
+        // session window without an interactive session; haiku keeps the
+        // restart prompt on the cheapest model.
         Some(crate::providers::SessionKickstart::new(
             "claude",
-            &["-p", "Hi"],
+            &["-p", "Hi", "--model", "haiku"],
         ))
     }
 
