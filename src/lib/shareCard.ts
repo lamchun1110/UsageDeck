@@ -373,18 +373,16 @@ function drawProviderHeader(
   const name = catalog.displayName(providerId, providerNames);
   context.fillStyle = palette.text;
   context.font = '600 15px system-ui';
-  context.fillText(name, 48, 31);
+  // Long custom names must not push the plan label off the card: fit the name
+  // to the full row first, then place the plan after whatever width remains.
+  const nameMaxWidth = SHARE_CARD_WIDTH - OUTER_PADDING - 48;
+  fitText(context, name, 48, 31, nameMaxWidth);
   if (!plan) return;
-  const nameWidth = context.measureText(name).width;
+  const nameWidth = context.measureText(ellipsize(context, name, nameMaxWidth)).width;
   context.fillStyle = palette.secondary;
   context.font = '12px system-ui';
-  fitText(
-    context,
-    plan,
-    48 + nameWidth + 6,
-    31,
-    SHARE_CARD_WIDTH - OUTER_PADDING - (48 + nameWidth + 6),
-  );
+  const planX = 48 + nameWidth + 6;
+  fitText(context, plan, planX, 31, Math.max(0, SHARE_CARD_WIDTH - OUTER_PADDING - planX));
 }
 
 function drawShareRow(

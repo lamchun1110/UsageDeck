@@ -284,6 +284,7 @@ export interface SettingsViewState {
   integrationError: string | null;
   trayAvailable: boolean;
   platformSummary: string | null;
+  keyMigrationFailedProviders: string[];
 }
 
 export interface BootstrapState {

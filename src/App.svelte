@@ -160,6 +160,7 @@
     void dismissMainWindow();
   }
   function resetTransientUi() {
+    panelResize.cancelWidthDrag();
     optionsMenu.close();
     showAbout = false;
     resetConfirmationOpen = false;
@@ -502,9 +503,11 @@
         settingsController
           .runMutation(() => recordUpdateCheck(checkedAt))
           .catch(() => {
-            // The stamp is cosmetic (it paces the next auto-check); a failure
-            // only means the check may re-run sooner than scheduled.
-            showConfirmation(t('app.updateCheckNotRecorded'));
+            // The stamp is cosmetic (it paces the next check); a failure only
+            // means the check may re-run sooner than scheduled. Interrupting
+            // an automatic check with a toast would be noise — only the user
+            // who asked for a manual check needs the feedback.
+            if (manual) showConfirmation(t('app.updateCheckNotRecorded'));
           });
       },
       showConfirmation,
@@ -539,7 +542,9 @@
       return;
     }
     catalog = new ProviderCatalogIndex(state.catalog);
-    settingsController.setState(state.settings);
+    // acceptExternalState, not setState: it parks the fetched snapshot while a
+    // settings mutation is in flight instead of reverting the optimistic edit.
+    settingsController.acceptExternalState(state.settings);
     const activeProviderId = screen.startsWith('provider:') ? screen.slice(9) : null;
     if (activeProviderId !== null && catalog.provider(activeProviderId) === undefined) {
       navigate('customize');

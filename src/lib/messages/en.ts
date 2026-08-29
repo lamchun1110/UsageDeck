@@ -249,8 +249,9 @@ export const en = {
   'settings.account.namePlaceholder': 'Account name',
   'settings.account.add': 'Add Account',
   'settings.account.nameRequired': 'Enter an account name.',
-  'settings.accountRemovedRestart': 'Account removed — restart UsageDeck to update the dashboard.',
   'settings.accountRemoved': 'Account removed.',
+  'settings.migration.keyTransferFailed':
+    'Some saved keys from OpenQuota could not be transferred: {providers}. Re-add them in Customize.',
   'settings.customize.accountHint':
     'API accounts appear as separate cards. Add or remove them here.',
 

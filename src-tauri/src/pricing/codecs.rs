@@ -104,7 +104,13 @@ pub fn catalog_from_models_dev(data: &[u8]) -> Result<PricingCatalog, PricingCod
 }
 
 fn number(value: Option<&Value>) -> Option<f64> {
-    value?.as_f64()
+    let value = value?;
+    value.as_f64().or_else(|| {
+        // The LiteLLM feed quotes some costs as strings.
+        value
+            .as_str()
+            .and_then(|text| text.trim().parse::<f64>().ok())
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]

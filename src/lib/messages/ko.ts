@@ -245,8 +245,9 @@ export const ko = {
   'settings.account.namePlaceholder': '계정 이름',
   'settings.account.add': '계정 추가',
   'settings.account.nameRequired': '계정 이름을 입력하세요.',
-  'settings.accountRemovedRestart': '계정이 삭제되었습니다 — 재시작하면 반영됩니다.',
   'settings.accountRemoved': '계정이 삭제되었습니다.',
+  'settings.migration.keyTransferFailed':
+    'OpenQuota의 일부 저장된 키를 전송하지 못했습니다: {providers}. 사용자 지정에서 다시 추가하세요.',
   'settings.customize.accountHint': 'API 계정은 별도 카드로 표시됩니다.',
 
   'apikey.sectionAria': '{provider} API 키',

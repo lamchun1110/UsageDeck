@@ -77,7 +77,7 @@ fn deliver(app: &AppHandle, alerts: &[PaceAlert]) -> Vec<PaceAlert> {
     alerts
         .iter()
         .filter_map(|alert| {
-            let result = show(
+            let result = show_notification(
                 app,
                 alert.milestone.title(),
                 &format!(
@@ -96,6 +96,32 @@ fn deliver(app: &AppHandle, alerts: &[PaceAlert]) -> Vec<PaceAlert> {
             }
         })
         .collect()
+}
+
+/// Delivers one notification on the platform-appropriate thread. macOS
+/// notification delivery touches AppKit, which requires the main thread, while
+/// deliver() runs on async refresh workers; Linux (D-Bus via zbus) has no
+/// such constraint.
+fn show_notification(app: &AppHandle, title: &str, body: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let app = app.clone();
+        let title = title.to_owned();
+        let body = body.to_owned();
+        app.clone()
+            .run_on_main_thread(move || {
+                let _ = sender.send(show(&app, &title, &body));
+            })
+            .map_err(|_| "The notification could not be delivered.".to_owned())?;
+        receiver
+            .recv()
+            .unwrap_or_else(|_| Err("The notification could not be delivered.".to_owned()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        show(app, title, body)
+    }
 }
 
 fn show(app: &AppHandle, title: &str, body: &str) -> Result<(), String> {

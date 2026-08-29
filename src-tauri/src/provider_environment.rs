@@ -99,12 +99,25 @@ fn capture_login_shell_snapshot() -> Option<HashMap<String, String>> {
         }
     });
     let script = format!("printf '%s\\0' '{BEGIN}'; /usr/bin/env -0; printf '%s\\0' '{END}'");
-    let output = child_process::output_with_timeout(
+    let output = match child_process::output_with_timeout(
         child_process::background_command(&shell).args(["-i", "-l", "-c", &script]),
-        Duration::from_secs(5),
-    )
-    .ok()?;
+        Duration::from_secs(10),
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            crate::app_warn!(
+                "config",
+                "login-shell environment capture from {shell} failed: {error}"
+            );
+            return None;
+        }
+    };
     if !output.status.success() {
+        crate::app_warn!(
+            "config",
+            "login-shell environment capture exited with status {}",
+            output.status
+        );
         return None;
     }
 

@@ -41,6 +41,7 @@ export class PanelResizeController {
   #heightModeMutation: Promise<void> = Promise.resolve();
   #lastResizeGripPointerAt = Number.NEGATIVE_INFINITY;
   #panelResizeOperation: Promise<void> | null = null;
+  #cancelWidthDrag: (() => void) | null = null;
 
   constructor(private readonly options: PanelResizeControllerOptions) {
     this.edge = options.platform === 'windows' ? 'top' : 'bottom';
@@ -150,6 +151,7 @@ export class PanelResizeController {
           window.removeEventListener('pointermove', onMove);
           window.removeEventListener('pointerup', finish);
           window.removeEventListener('pointercancel', finish);
+          this.#cancelWidthDrag = null;
           if (dragger.hasPointerCapture(event.pointerId)) {
             dragger.releasePointerCapture(event.pointerId);
           }
@@ -163,6 +165,7 @@ export class PanelResizeController {
           }
           void resizeOperation.finally(() => lockPanelResizeAxis().catch(() => undefined));
         };
+        this.#cancelWidthDrag = finish;
         window.addEventListener('pointermove', onMove);
         window.addEventListener('pointerup', finish);
         window.addEventListener('pointercancel', finish);
@@ -170,6 +173,13 @@ export class PanelResizeController {
         this.options.onError(t('app.error.widthResize'));
       }
     })();
+  }
+
+  /** Detaches an in-flight width drag (window hidden or surface removed) so
+   * its listeners cannot keep resizing the panel from stray pointer moves. */
+  cancelWidthDrag() {
+    this.#cancelWidthDrag?.();
+    this.#cancelWidthDrag = null;
   }
 
   async handleWidthKeydown(event: KeyboardEvent) {

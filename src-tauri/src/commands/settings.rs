@@ -6,6 +6,8 @@ use std::{
     },
 };
 
+use std::sync::OnceLock;
+
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tauri_plugin_notification::NotificationExt;
@@ -602,6 +604,14 @@ pub fn open_log_folder(app: AppHandle) -> Result<(), String> {
         })
 }
 
+static KEY_MIGRATION_FAILURES: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Records which API-key accounts failed their one-time OpenQuota migration so
+/// the Settings screen can tell the user to re-add those keys.
+pub(crate) fn set_key_migration_failures(failed_providers: Vec<String>) -> bool {
+    KEY_MIGRATION_FAILURES.set(failed_providers).is_ok()
+}
+
 pub(crate) fn settings_view_state(app: &AppHandle, service: &SettingsService) -> SettingsViewState {
     let (autostart, mut integration_error) = match autostart_is_enabled(app) {
         Ok(enabled) => (Some(enabled), None),
@@ -622,6 +632,8 @@ pub(crate) fn settings_view_state(app: &AppHandle, service: &SettingsService) ->
         app.state::<DesktopIntegration>().tray_available(),
         app.state::<DesktopIntegration>().platform_summary(),
     );
+    state.key_migration_failed_providers =
+        KEY_MIGRATION_FAILURES.get().cloned().unwrap_or_default();
     if let Some(enabled) = autostart {
         state.settings.launch_at_login = enabled;
     }

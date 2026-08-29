@@ -878,6 +878,7 @@ pub struct SettingsViewState {
     pub integration_error: Option<String>,
     pub tray_available: bool,
     pub platform_summary: Option<String>,
+    pub key_migration_failed_providers: Vec<String>,
 }
 
 #[cfg(test)]

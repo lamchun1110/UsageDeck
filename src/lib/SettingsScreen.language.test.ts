@@ -45,6 +45,7 @@ function settingsView(overrides: Partial<AppSettings> = {}): SettingsViewState {
     integrationError: null,
     trayAvailable: true,
     platformSummary: null,
+    keyMigrationFailedProviders: [],
   };
 }
 

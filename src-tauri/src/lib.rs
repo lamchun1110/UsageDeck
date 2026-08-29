@@ -324,6 +324,14 @@ fn migrate_legacy_data(app_data_dir: &std::path::Path) -> Result<(), Box<dyn std
             "API key migration failed for {account}: {error}"
         );
     }
+    // Failures are never retried (the consent marker is written before the
+    // pass), so surface them in Settings instead of leaving them log-only.
+    let failed_providers = key_migration
+        .failures
+        .iter()
+        .map(|(account, _)| account.clone())
+        .collect::<Vec<_>>();
+    let _ = crate::commands::settings::set_key_migration_failures(failed_providers);
     Ok(())
 }
 
@@ -605,6 +613,8 @@ pub fn run() {
         .manage(PopupDismissGuard::default())
         .manage(updates::UpdateCoordinator::default())
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            tray_presentation::init_main_thread_id();
             logging::init(logging::default_log_path(), models::LogLevel::Info);
 
             #[cfg(target_os = "macos")]

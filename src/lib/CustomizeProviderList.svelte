@@ -84,7 +84,7 @@
     >
       <option value="">{t('settings.account.chooseFamily')}</option>
       {#each apiKeyFamilies as family (family)}
-        <option value={family}>{family}</option>
+        <option value={family}>{providerDisplayName(family)}</option>
       {/each}
     </select>
     {#if activeAccountFamily}

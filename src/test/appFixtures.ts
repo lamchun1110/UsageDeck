@@ -342,6 +342,7 @@ export const settingsState: SettingsViewState = {
   integrationError: null,
   trayAvailable: true,
   platformSummary: null,
+  keyMigrationFailedProviders: [],
   settings: {
     // Keep in step with the Rust settings schema (models.rs pins 8): fixtures
     // running on a stale schema test payloads the backend never sends.

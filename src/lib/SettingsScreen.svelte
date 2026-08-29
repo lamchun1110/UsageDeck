@@ -129,6 +129,11 @@
   {#if settingsView.integrationError}<p class="notice" role="alert">
       {settingsView.integrationError}
     </p>{/if}
+  {#if settingsView.keyMigrationFailedProviders.length > 0}<p class="notice" role="status">
+      {t('settings.migration.keyTransferFailed', {
+        providers: settingsView.keyMigrationFailedProviders.join(', '),
+      })}
+    </p>{/if}
 
   {#if settingsView.platformSummary}<div class="settings-section">
       <h2>Linux</h2>

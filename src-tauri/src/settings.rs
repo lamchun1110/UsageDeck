@@ -795,6 +795,7 @@ impl SettingsService {
             integration_error,
             tray_available,
             platform_summary,
+            key_migration_failed_providers: Vec::new(),
         }
     }
 }

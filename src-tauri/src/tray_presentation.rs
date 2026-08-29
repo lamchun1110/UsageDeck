@@ -1,3 +1,8 @@
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
+#[cfg(target_os = "linux")]
+use std::thread::ThreadId;
+
 use tauri::{AppHandle, Manager};
 
 #[cfg(not(target_os = "linux"))]
@@ -16,6 +21,25 @@ use crate::{
 };
 
 const TRAY_ID: &str = "usagedeck-tray";
+
+#[cfg(target_os = "linux")]
+static MAIN_THREAD_ID: OnceLock<ThreadId> = OnceLock::new();
+
+/// Records the caller's thread as the process main thread. Call once from the
+/// Tauri setup hook; GTK work must run there.
+#[cfg(target_os = "linux")]
+pub fn init_main_thread_id() {
+    let _ = MAIN_THREAD_ID.set(std::thread::current().id());
+}
+
+#[cfg(target_os = "linux")]
+fn is_main_thread() -> bool {
+    match MAIN_THREAD_ID.get() {
+        Some(id) => *id == std::thread::current().id(),
+        // Uninitialized (tests, early calls): fall back to the runtime's name.
+        None => std::thread::current().name() == Some("main"),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 struct TrayMetric {
@@ -92,10 +116,7 @@ pub fn update(
         // reproduced under gdb and the cause of the flaky Linux release smokes.
         // The process main thread (where GTK pumps its loop) is named "main"
         // on Linux; anything else marshals over and lets the loop do the work.
-        if !std::thread::current()
-            .name()
-            .is_some_and(|name| name == "main")
-        {
+        if !is_main_thread() {
             // The registry is managed as an Arc in app state — the same
             // instance every caller passes — so it can be re-cloned here
             // without changing the borrowed signature.

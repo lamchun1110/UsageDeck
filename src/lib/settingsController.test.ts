@@ -22,6 +22,7 @@ function settingsView(
     integrationError: null,
     trayAvailable: true,
     platformSummary: null,
+    keyMigrationFailedProviders: [],
     settings: {
       schemaVersion: 7,
       providerNames: {},

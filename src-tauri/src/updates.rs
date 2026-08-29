@@ -250,6 +250,42 @@ pub async fn check_for_updates(
     })
 }
 
+/// A download attempt bounded in time: the updater plugin sets no HTTP
+/// timeout, so a connection stalled without RST would otherwise hold the
+/// update banner in "Downloading…" forever.
+const DOWNLOAD_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+async fn download_with_watchdog(app: &AppHandle, update: &Update) -> Result<(), UpdateFailure> {
+    match tokio::time::timeout(
+        DOWNLOAD_ATTEMPT_TIMEOUT,
+        download_and_install_once(app, update),
+    )
+    .await
+    {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => {
+            let mut failure = classify_updater_error(&error, "install the signed update");
+            if retryable_download_error(&error) {
+                failure.retryable = true;
+            }
+            Err(failure)
+        }
+        Err(_) => {
+            crate::app_warn!(
+                "updates",
+                "update download timed out after {}s",
+                DOWNLOAD_ATTEMPT_TIMEOUT.as_secs()
+            );
+            Err(UpdateFailure::new(
+                "timeout",
+                "The update download timed out.",
+                "Check your connection and try again, or download from the release page.",
+                true,
+            ))
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn install_update(
     app: AppHandle,
@@ -305,26 +341,23 @@ pub async fn install_update(
     })?;
 
     let _ = app.emit("update-progress", progress(0, None, "downloading"));
-    if let Err(first_error) = download_and_install_once(&app, &update).await {
-        if !retryable_download_error(&first_error) {
-            crate::app_warn!("updates", "update installation failed: {first_error}");
-            return Err(classify_updater_error(
-                &first_error,
-                "install the signed update",
-            ));
+    if let Err(first_failure) = download_with_watchdog(&app, &update).await {
+        if !first_failure.retryable {
+            crate::app_warn!(
+                "updates",
+                "update installation failed: {}",
+                first_failure.message
+            );
+            return Err(first_failure);
         }
         crate::app_warn!(
             "updates",
-            "update download failed; retrying once: {first_error}"
+            "update download failed; retrying once: {}",
+            first_failure.message
         );
         let _ = app.emit("update-progress", progress(0, None, "retrying"));
         tokio::time::sleep(Duration::from_millis(1200)).await;
-        download_and_install_once(&app, &update)
-            .await
-            .map_err(|error| {
-                crate::app_warn!("updates", "update retry failed: {error}");
-                classify_updater_error(&error, "install the signed update")
-            })?;
+        download_with_watchdog(&app, &update).await?;
     }
     crate::app_info!("updates", "signed update installed; restarting");
     app.restart();

@@ -346,6 +346,10 @@ pub async fn add_api_key_account(
             let _ = app.emit("settings-state", settings_view_state(&app, &settings));
         }
         Err(error) => {
+            // Roll the runtime back out so a retry with the same name does not
+            // hit a "duplicate provider id" error against the stale entry; the
+            // database record stays, and its id is reused on retry.
+            registry.unregister_provider(&provider_id);
             crate::app_warn!(
                 "auth",
                 "account {provider_id} registered but settings reconciliation failed: {error}"
@@ -445,6 +449,11 @@ pub async fn remove_api_key_account(
                 "auth",
                 "account {provider_id} removed but settings reconciliation failed: {error}"
             );
+            // The account is already gone from the registry and the database;
+            // push state anyway so the frontend drops the card instead of
+            // keeping a ghost that can never be removed again this session.
+            tray_presentation::update(&app, &service.state(), &settings.get(), settings.registry());
+            let _ = app.emit("settings-state", settings_view_state(&app, &settings));
             return Err(error);
         }
     }
