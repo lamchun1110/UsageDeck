@@ -2,6 +2,7 @@ mod child_process;
 mod commands;
 mod desktop_integration;
 mod hashing;
+mod kickstart;
 mod logging;
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod menu_bar;

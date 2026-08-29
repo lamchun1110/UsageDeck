@@ -372,6 +372,15 @@ fn provider_error(error: CodexError) -> crate::providers::ProviderError {
 }
 
 impl crate::providers::UsageProvider for CodexProvider {
+    fn session_kickstart(&self) -> Option<crate::providers::SessionKickstart> {
+        // Non-interactive exec sends one prompt and exits; the repo check is
+        // skipped because the app's working directory is not a workspace.
+        Some(crate::providers::SessionKickstart::new(
+            "codex",
+            &["exec", "--skip-git-repo-check", "Hi"],
+        ))
+    }
+
     fn definition(&self) -> ProviderDefinition {
         definition()
     }

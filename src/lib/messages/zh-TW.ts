@@ -245,6 +245,10 @@ export const zhTW = {
   'settings.account.add': '新增帳戶',
   'settings.account.nameRequired': '請輸入帳戶名稱。',
   'settings.accountRemoved': '帳戶已移除。',
+  'settings.section.kickstart': '工作階段自動重啟',
+  'settings.kickstart.hint':
+    '當滾動工作階段到期時，從供應商 CLI 送出一則極小提示，讓下一個工作階段立即開始，而不必等待你的第一則訊息。每次重啟會送出一個小提示。',
+  'settings.kickstart.toggleAria': '保持 {provider} 工作階段啟用',
   'settings.migration.keyTransferFailed':
     '部分 OpenQuota 已儲存的金鑰無法轉移：{providers}。請在自訂中重新新增。',
   'settings.customize.accountHint': 'API 帳戶以獨立卡片顯示，可在此新增或移除。',

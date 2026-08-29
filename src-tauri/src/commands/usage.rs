@@ -3,6 +3,7 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 
+use tauri::Manager;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::{
@@ -69,6 +70,16 @@ pub(crate) async fn refresh_with_events(
     emit_settings_if_account_changed(app, settings, &observed_account_revision);
     let _ = app.emit("usage-state", &state);
     finish_refresh(app, &state, settings, notifications);
+    crate::kickstart::evaluate(
+        app,
+        &state,
+        settings,
+        app.state::<std::sync::Arc<crate::providers::ProviderRegistry>>()
+            .inner(),
+        service,
+        notifications,
+    )
+    .await;
     state
 }
 

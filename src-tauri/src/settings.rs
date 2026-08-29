@@ -911,6 +911,11 @@ fn normalize_with_persisted_accounts(
         !name.is_empty()
     });
     normalize_provider_options(&catalog, settings);
+    settings.kickstart_provider_ids.retain(|provider_id| {
+        registry
+            .runtime(provider_id)
+            .is_some_and(|runtime| runtime.session_kickstart().is_some())
+    });
 
     if settings.known_provider_ids.is_empty() {
         settings.known_provider_ids = settings

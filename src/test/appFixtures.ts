@@ -70,6 +70,7 @@ function value(id: string, label: string, sourceId: string): MetricDefinition {
 
 export const providerCatalog: ProviderCatalog = {
   apiKeyProviderIds: ['openrouter'],
+  kickstartProviderIds: [],
   providers: [
     {
       id: 'claude',
@@ -369,6 +370,7 @@ export const settingsState: SettingsViewState = {
     logLevel: 'info',
     notifications: { almostOut: false, cuttingItClose: false, willRunOut: false },
     detectionNoticeDismissed: true,
+    kickstartProviderIds: [],
     providers: [
       {
         id: 'codex',

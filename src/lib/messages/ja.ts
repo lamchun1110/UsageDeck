@@ -249,6 +249,10 @@ export const ja = {
   'settings.account.add': 'アカウントを追加',
   'settings.account.nameRequired': 'アカウント名を入力してください。',
   'settings.accountRemoved': 'アカウントを削除しました。',
+  'settings.section.kickstart': 'セッション自動再開',
+  'settings.kickstart.hint':
+    'ローリングセッションが期限切れになったとき、プロバイダーの CLI から最小限のプロンプトを 1 つ送り、次のセッションをあなたの最初のメッセージを待たずに開始します。再開ごとに小さなプロンプトを 1 つ送信します。',
+  'settings.kickstart.toggleAria': '{provider} のセッションを有効に保つ',
   'settings.migration.keyTransferFailed':
     'OpenQuota から一部の保存済みキーを移行できませんでした：{providers}。カスタマイズで再追加してください。',
   'settings.customize.accountHint': 'API アカウントは独立したカードとして表示されます。',

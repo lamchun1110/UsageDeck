@@ -95,6 +95,7 @@ fn build_snapshot(
     let mut metric_indices = HashMap::new();
     let mut metric_owners = BTreeMap::<String, String>::new();
     let mut api_key_provider_ids = Vec::new();
+    let mut kickstart_provider_ids = Vec::new();
 
     for provider in providers.iter() {
         let mut definition = provider.definition();
@@ -119,6 +120,9 @@ fn build_snapshot(
         if provider.supports_api_key_configuration() {
             api_key_provider_ids.push(definition.id.clone());
         }
+        if provider.session_kickstart().is_some() {
+            kickstart_provider_ids.push(definition.id.clone());
+        }
         runtimes.insert(definition.id.clone(), provider.clone());
         definitions.push(definition);
     }
@@ -134,6 +138,7 @@ fn build_snapshot(
         catalog: Arc::new(ProviderCatalog {
             providers: definitions,
             api_key_provider_ids,
+            kickstart_provider_ids,
         }),
         definition_indices,
         metric_indices,
@@ -518,6 +523,37 @@ mod tests {
         ));
         assert_eq!(registry.catalog().providers.len(), 1);
         assert!(registry.runtime("base").is_some());
+    }
+
+    struct KickstartStubProvider(ProviderDefinition);
+
+    impl UsageProvider for KickstartStubProvider {
+        fn definition(&self) -> ProviderDefinition {
+            self.0.clone()
+        }
+
+        fn has_local_credentials(&self) -> bool {
+            false
+        }
+
+        fn session_kickstart(&self) -> Option<crate::providers::SessionKickstart> {
+            Some(crate::providers::SessionKickstart::new("stub", &["hi"]))
+        }
+
+        fn refresh(&self) -> Result<ProviderSnapshot, ProviderError> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn registry_collects_kickstart_capable_provider_ids() {
+        let registry = ProviderRegistry::new(vec![
+            runtime(definition("local")),
+            Arc::new(KickstartStubProvider(definition("kickable"))),
+        ])
+        .unwrap();
+
+        assert_eq!(registry.catalog().kickstart_provider_ids, ["kickable"]);
     }
 
     #[test]

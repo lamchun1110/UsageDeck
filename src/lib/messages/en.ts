@@ -250,6 +250,10 @@ export const en = {
   'settings.account.add': 'Add Account',
   'settings.account.nameRequired': 'Enter an account name.',
   'settings.accountRemoved': 'Account removed.',
+  'settings.section.kickstart': 'Session Kickstart',
+  'settings.kickstart.hint':
+    'When a rolling session window expires, send one tiny prompt from the provider CLI so the next window starts immediately instead of waiting for your first message. Each restart sends one small prompt.',
+  'settings.kickstart.toggleAria': 'Keep {provider} session active',
   'settings.migration.keyTransferFailed':
     'Some saved keys from OpenQuota could not be transferred: {providers}. Re-add them in Customize.',
   'settings.customize.accountHint':

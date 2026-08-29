@@ -202,6 +202,7 @@ export interface ProviderDefinition {
 export interface ProviderCatalog {
   providers: ProviderDefinition[];
   apiKeyProviderIds?: string[];
+  kickstartProviderIds?: string[];
 }
 
 export interface MetricLayout {
@@ -250,6 +251,7 @@ export interface AppSettings {
   logLevel: 'error' | 'warn' | 'info' | 'debug';
   notifications: NotificationPreferences;
   detectionNoticeDismissed: boolean;
+  kickstartProviderIds: string[];
 }
 
 export interface UpdateStatus {

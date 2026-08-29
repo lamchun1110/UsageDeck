@@ -31,6 +31,7 @@ const settings: AppSettings = {
   logLevel: 'info',
   notifications: { almostOut: false, cuttingItClose: false, willRunOut: false },
   detectionNoticeDismissed: true,
+  kickstartProviderIds: [],
   providers: [
     {
       id: 'codex',

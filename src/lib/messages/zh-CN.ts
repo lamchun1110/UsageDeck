@@ -244,6 +244,10 @@ export const zhCN = {
   'settings.account.add': '添加账户',
   'settings.account.nameRequired': '请输入账户名称。',
   'settings.accountRemoved': '账户已移除。',
+  'settings.section.kickstart': '会话自动重启',
+  'settings.kickstart.hint':
+    '当滚动会话到期时，从提供商 CLI 发送一条极小提示，让下一个会话立即开始，而不必等待你的第一条消息。每次重启会发送一个小提示。',
+  'settings.kickstart.toggleAria': '保持 {provider} 会话启用',
   'settings.migration.keyTransferFailed':
     '部分 OpenQuota 已保存的密钥无法转移：{providers}。请在自定义中重新添加。',
   'settings.customize.accountHint': 'API 账户以独立卡片显示，可在此添加或移除。',

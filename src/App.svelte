@@ -769,6 +769,12 @@
             {:else if screen === 'settings'}
               <SettingsScreen
                 settingsView={settingsState}
+                kickstartProviders={catalog.providers
+                  .filter((provider) => catalog.supportsSessionKickstart(provider.id))
+                  .map((provider) => ({
+                    id: provider.id,
+                    name: providerDisplayName(provider.id),
+                  }))}
                 {platform}
                 panelHeightMode={panelResize.heightMode}
                 onChange={saveSettings}

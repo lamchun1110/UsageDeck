@@ -48,6 +48,7 @@ function settingsView(
       logLevel: 'info',
       notifications: { almostOut: false, cuttingItClose: false, willRunOut: false },
       detectionNoticeDismissed: false,
+      kickstartProviderIds: [],
     },
   };
 }

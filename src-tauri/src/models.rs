@@ -320,7 +320,6 @@ impl MetricSource {
         }
     }
 
-    #[cfg(test)]
     pub fn session_window(&self) -> bool {
         matches!(
             self,
@@ -626,6 +625,8 @@ pub struct ProviderCatalog {
     pub providers: Vec<ProviderDefinition>,
     #[serde(default)]
     pub api_key_provider_ids: Vec<String>,
+    #[serde(default)]
+    pub kickstart_provider_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -814,6 +815,10 @@ pub struct AppSettings {
     pub log_level: LogLevel,
     pub notifications: NotificationPreferences,
     pub detection_notice_dismissed: bool,
+    /// Providers whose rolling session windows UsageDeck keeps active by
+    /// sending a tiny CLI prompt whenever the previous window has expired.
+    #[serde(default)]
+    pub kickstart_provider_ids: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -843,6 +848,7 @@ impl Default for AppSettings {
             log_level: LogLevel::Info,
             notifications: NotificationPreferences::default(),
             detection_notice_dismissed: false,
+            kickstart_provider_ids: Vec::new(),
         }
     }
 }

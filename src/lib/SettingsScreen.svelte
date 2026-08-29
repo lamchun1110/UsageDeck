@@ -13,6 +13,7 @@
 
   interface Props {
     settingsView: SettingsViewState;
+    kickstartProviders: { id: string; name: string }[];
     platform: DesktopPlatform;
     panelHeightMode: PanelHeightMode;
     onChange: (settings: AppSettings) => void;
@@ -29,6 +30,7 @@
   }
   let {
     settingsView,
+    kickstartProviders,
     platform,
     panelHeightMode,
     onChange,
@@ -46,6 +48,12 @@
   let recording = $state(false);
   let logActionError = $state<string | null>(null);
   const settings = $derived(settingsView.settings);
+
+  function toggleKickstart(providerId: string, enabled: boolean) {
+    const ids = settings.kickstartProviderIds.filter((id) => id !== providerId);
+    if (enabled) ids.push(providerId);
+    onChange({ ...settings, kickstartProviderIds: ids.sort() });
+  }
   const revealLogLabel = $derived(
     platform === 'macos'
       ? t('settings.btn.revealMac')
@@ -444,6 +452,22 @@
       >
     </div>
   </div>
+
+  {#if kickstartProviders.length > 0}
+    <div class="settings-section">
+      <h2>{t('settings.section.kickstart')}</h2>
+      <p class="settings-note">{t('settings.kickstart.hint')}</p>
+      {#each kickstartProviders as provider (provider.id)}
+        <label class="setting-row"
+          ><span><b>{provider.name}</b></span><input
+            type="checkbox"
+            checked={settings.kickstartProviderIds.includes(provider.id)}
+            onchange={(event) => toggleKickstart(provider.id, event.currentTarget.checked)}
+          /></label
+        >
+      {/each}
+    </div>
+  {/if}
 
   <div class="settings-section">
     <h2>{t('settings.section.updates')}</h2>

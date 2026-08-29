@@ -133,6 +133,22 @@ impl ProviderError {
     }
 }
 
+/// One tiny CLI invocation that starts a fresh session window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionKickstart {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+impl SessionKickstart {
+    pub fn new(program: &str, args: &[&str]) -> Self {
+        Self {
+            program: program.to_owned(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+        }
+    }
+}
+
 pub trait UsageProvider: Send + Sync {
     fn definition(&self) -> ProviderDefinition;
     fn has_local_credentials(&self) -> bool;
@@ -160,6 +176,14 @@ pub trait UsageProvider: Send + Sync {
     }
 
     fn account_identity(&self) -> Option<&str> {
+        None
+    }
+
+    /// A minimal command that starts a fresh rolling session window for this
+    /// provider (opt-in per provider in Settings). `None` when the provider
+    /// has no local CLI capable of one — API-key providers cannot be
+    /// kickstarted without spending the user's stored key on a request.
+    fn session_kickstart(&self) -> Option<SessionKickstart> {
         None
     }
 

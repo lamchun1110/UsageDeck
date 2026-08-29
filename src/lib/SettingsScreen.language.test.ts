@@ -33,6 +33,7 @@ const baseSettings: AppSettings = {
     willRunOut: true,
   },
   detectionNoticeDismissed: true,
+  kickstartProviderIds: [],
 };
 
 function settingsView(overrides: Partial<AppSettings> = {}): SettingsViewState {
@@ -57,6 +58,7 @@ describe('SettingsScreen language selector', () => {
     render(SettingsScreen, {
       props: {
         settingsView: settingsView(),
+        kickstartProviders: [],
         platform: 'linux',
         panelHeightMode: 'automatic',
         onChange,

@@ -682,6 +682,15 @@ fn plan_name(credential: &ClaudeCredential) -> Option<String> {
 }
 
 impl crate::providers::UsageProvider for ClaudeProvider {
+    fn session_kickstart(&self) -> Option<crate::providers::SessionKickstart> {
+        // Print mode sends exactly one prompt and exits, starting the 5-hour
+        // session window without an interactive session.
+        Some(crate::providers::SessionKickstart::new(
+            "claude",
+            &["-p", "Hi"],
+        ))
+    }
+
     fn definition(&self) -> ProviderDefinition {
         self.definition.clone()
     }
