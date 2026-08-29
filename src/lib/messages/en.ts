@@ -252,12 +252,12 @@ export const en = {
   'settings.accountRemoved': 'Account removed.',
   'settings.section.kickstart': 'Session Kickstart',
   'settings.kickstart.hint':
-    'When a rolling session window expires, send one tiny prompt from the provider CLI so the next window starts immediately instead of waiting for your first message. Each restart sends one small prompt.',
-  'settings.kickstart.customLabel': 'Custom command',
-  'settings.kickstart.customBuiltinPlaceholder':
-    'Optional — the built-in command is used when empty',
+    'When a rolling session window expires, send one tiny prompt from the provider CLI so the next window starts immediately instead of waiting for your first message. Each restart sends one small prompt. A custom command overrides the built-in one.',
+  'settings.kickstart.customLabel': 'Custom command for {provider}',
   'settings.kickstart.customRequiredPlaceholder':
     'Shell command required to kickstart this provider',
+  'settings.kickstart.builtinBadge': 'Built-in',
+  'settings.kickstart.needsCommandBadge': 'Needs a command',
   'settings.kickstart.toggleAria': 'Keep {provider} session active',
   'settings.migration.keyTransferFailed':
     'Some saved keys from OpenQuota could not be transferred: {providers}. Re-add them in Customize.',

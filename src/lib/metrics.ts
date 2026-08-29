@@ -11,6 +11,7 @@ export class ProviderCatalogIndex {
   readonly #metricsById: Map<string, MetricDefinition>;
   readonly #apiKeyProviderIds: Set<string>;
   readonly #kickstartProviderIds: Set<string>;
+  readonly #kickstartDefaultCommands: Record<string, string>;
 
   constructor(catalog: ProviderCatalog) {
     this.providers = catalog.providers;
@@ -18,6 +19,7 @@ export class ProviderCatalogIndex {
     this.#metricsById = new Map();
     this.#apiKeyProviderIds = new Set(catalog.apiKeyProviderIds ?? []);
     this.#kickstartProviderIds = new Set(catalog.kickstartProviderIds ?? []);
+    this.#kickstartDefaultCommands = catalog.kickstartDefaultCommands ?? {};
 
     for (const provider of catalog.providers) {
       if (this.#providersById.has(provider.id)) {
@@ -53,6 +55,10 @@ export class ProviderCatalogIndex {
 
   supportsSessionKickstart(id: string) {
     return this.#kickstartProviderIds.has(id);
+  }
+
+  defaultKickstartCommand(id: string) {
+    return this.#kickstartDefaultCommands[id] ?? '';
   }
 
   hasSessionWindow(id: string) {

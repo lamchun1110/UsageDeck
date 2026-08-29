@@ -251,11 +251,12 @@ export const ja = {
   'settings.accountRemoved': 'アカウントを削除しました。',
   'settings.section.kickstart': 'セッション自動再開',
   'settings.kickstart.hint':
-    'ローリングセッションが期限切れになったとき、プロバイダーの CLI から最小限のプロンプトを 1 つ送り、次のセッションをあなたの最初のメッセージを待たずに開始します。再開ごとに小さなプロンプトを 1 つ送信します。',
-  'settings.kickstart.customLabel': 'カスタムコマンド',
-  'settings.kickstart.customBuiltinPlaceholder': '任意 — 空欄の場合は組み込みコマンドを使用',
+    'ローリングセッションが期限切れになったとき、プロバイダーの CLI から最小限のプロンプトを 1 つ送り、次のセッションをあなたの最初のメッセージを待たずに開始します。再開ごとに小さなプロンプトを 1 つ送信します。カスタムコマンドは組み込みコマンドを上書きします。',
+  'settings.kickstart.customLabel': '{provider} のカスタムコマンド',
   'settings.kickstart.customRequiredPlaceholder':
     'このプロバイダーのセッションを再開にはシェルコマンドが必要',
+  'settings.kickstart.builtinBadge': '組み込み',
+  'settings.kickstart.needsCommandBadge': 'コマンドが必要',
   'settings.kickstart.toggleAria': '{provider} のセッションを有効に保つ',
   'settings.migration.keyTransferFailed':
     'OpenQuota から一部の保存済みキーを移行できませんでした：{providers}。カスタマイズで再追加してください。',

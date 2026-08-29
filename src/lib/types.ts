@@ -203,6 +203,7 @@ export interface ProviderCatalog {
   providers: ProviderDefinition[];
   apiKeyProviderIds?: string[];
   kickstartProviderIds?: string[];
+  kickstartDefaultCommands?: Record<string, string>;
 }
 
 export interface MetricLayout {

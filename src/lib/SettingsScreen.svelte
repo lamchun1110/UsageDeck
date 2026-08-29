@@ -2,6 +2,7 @@
   import type { PanelHeightMode } from './backend';
   import { LANGUAGE_PREFERENCES, t } from './i18n.svelte';
   import Icon from './Icon.svelte';
+  import ProviderIcon from './ProviderIcon.svelte';
   import type { DesktopPlatform } from './platform';
   import SelectMenu from './SelectMenu.svelte';
   import type {
@@ -13,7 +14,12 @@
 
   interface Props {
     settingsView: SettingsViewState;
-    kickstartProviders: { id: string; name: string; hasBuiltin: boolean }[];
+    kickstartProviders: {
+      id: string;
+      name: string;
+      hasBuiltin: boolean;
+      defaultCommand: string;
+    }[];
     platform: DesktopPlatform;
     panelHeightMode: PanelHeightMode;
     onChange: (settings: AppSettings) => void;
@@ -359,6 +365,53 @@
     >
   </div>
 
+  {#if kickstartProviders.length > 0}
+    <div class="settings-section">
+      <h2>{t('settings.section.kickstart')}</h2>
+      <p class="settings-note">{t('settings.kickstart.hint')}</p>
+      {#each kickstartProviders as provider (provider.id)}
+        <div class="kickstart-provider">
+          <div class="setting-row">
+            <span class="kickstart-id">
+              <ProviderIcon providerId={provider.id} size={16} />
+              <b>{provider.name}</b>
+              <small class="kickstart-badge" class:needs-command={!provider.hasBuiltin}>
+                {provider.hasBuiltin
+                  ? t('settings.kickstart.builtinBadge')
+                  : t('settings.kickstart.needsCommandBadge')}</small
+              >
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.kickstartProviderIds.includes(provider.id)}
+              disabled={!provider.hasBuiltin && !settings.kickstartCommands[provider.id]}
+              aria-label={t('settings.kickstart.toggleAria', { provider: provider.name })}
+              onchange={(event) => toggleKickstart(provider.id, event.currentTarget.checked)}
+            />
+          </div>
+          <label class="kickstart-command">
+            <input
+              type="text"
+              maxlength="500"
+              value={commandValue(provider.id)}
+              placeholder={provider.hasBuiltin && !commandValue(provider.id)
+                ? provider.defaultCommand
+                : t('settings.kickstart.customRequiredPlaceholder')}
+              autocomplete="off"
+              spellcheck="false"
+              aria-label={t('settings.kickstart.customLabel', { provider: provider.name })}
+              oninput={(event) => (commandDrafts[provider.id] = event.currentTarget.value)}
+              onblur={() => commitCommand(provider.id)}
+              onkeydown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
+            />
+          </label>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   <div class="settings-section">
     <h2>
       {t('settings.section.notifications')}
@@ -471,44 +524,6 @@
       >
     </div>
   </div>
-
-  {#if kickstartProviders.length > 0}
-    <div class="settings-section">
-      <h2>{t('settings.section.kickstart')}</h2>
-      <p class="settings-note">{t('settings.kickstart.hint')}</p>
-      {#each kickstartProviders as provider (provider.id)}
-        <div class="kickstart-provider">
-          <label class="setting-row"
-            ><span><b>{provider.name}</b></span><input
-              type="checkbox"
-              checked={settings.kickstartProviderIds.includes(provider.id)}
-              disabled={!provider.hasBuiltin && !settings.kickstartCommands[provider.id]}
-              aria-label={t('settings.kickstart.toggleAria', { provider: provider.name })}
-              onchange={(event) => toggleKickstart(provider.id, event.currentTarget.checked)}
-            /></label
-          >
-          <label class="kickstart-command">
-            <span>{t('settings.kickstart.customLabel')}</span>
-            <input
-              type="text"
-              maxlength="500"
-              value={commandValue(provider.id)}
-              placeholder={provider.hasBuiltin
-                ? t('settings.kickstart.customBuiltinPlaceholder')
-                : t('settings.kickstart.customRequiredPlaceholder')}
-              autocomplete="off"
-              spellcheck="false"
-              oninput={(event) => (commandDrafts[provider.id] = event.currentTarget.value)}
-              onblur={() => commitCommand(provider.id)}
-              onkeydown={(event) => {
-                if (event.key === 'Enter') event.currentTarget.blur();
-              }}
-            />
-          </label>
-        </div>
-      {/each}
-    </div>
-  {/if}
 
   <div class="settings-section">
     <h2>{t('settings.section.updates')}</h2>
@@ -711,8 +726,8 @@
       border-radius: 0 0 12px 12px;
     }
 
-    /* Custom kickstart commands: the command input sits indented under its
-       provider's toggle row. */
+    /* Session Kickstart: provider card with icon + badge toggle and a
+       command input showing the built-in command as its placeholder. */
     .kickstart-provider {
       display: grid;
     }
@@ -721,17 +736,38 @@
       border-radius: 0;
     }
 
-    .kickstart-command {
-      display: grid;
-      gap: 4px;
-      padding: 0 12px 10px 12px;
-      background: var(--card);
+    .kickstart-id {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 7px;
     }
 
-    .kickstart-command > span {
+    .kickstart-id b {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .kickstart-badge {
+      flex: 0 0 auto;
+      padding: 1px 6px;
+      border-radius: 999px;
       color: var(--secondary);
-      font-size: 10px;
+      background: var(--button-hover);
+      font-size: 9px;
       font-weight: 600;
+    }
+
+    .kickstart-badge.needs-command {
+      color: var(--warning);
+      background: var(--warning-bg);
+    }
+
+    .kickstart-command {
+      display: grid;
+      padding: 0 12px 10px 35px;
+      background: var(--card);
     }
 
     .kickstart-command > input {
@@ -743,8 +779,12 @@
       outline: none;
       color: var(--text);
       background: var(--tray);
-      font: inherit;
-      font-size: 11px;
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .kickstart-command > input::placeholder {
+      color: var(--tertiary);
     }
 
     .kickstart-command > input:focus {

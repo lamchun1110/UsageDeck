@@ -628,6 +628,10 @@ pub struct ProviderCatalog {
     pub api_key_provider_ids: Vec<String>,
     #[serde(default)]
     pub kickstart_provider_ids: Vec<String>,
+    /// The resolved built-in kickstart command per provider, so the UI can
+    /// show exactly what runs when no custom command is set.
+    #[serde(default)]
+    pub kickstart_default_commands: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -780,6 +780,7 @@
                     id: provider.id,
                     name: providerDisplayName(provider.id),
                     hasBuiltin: catalog.supportsSessionKickstart(provider.id),
+                    defaultCommand: catalog.defaultKickstartCommand(provider.id),
                   }))}
                 {platform}
                 panelHeightMode={panelResize.heightMode}

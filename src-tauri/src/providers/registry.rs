@@ -96,6 +96,7 @@ fn build_snapshot(
     let mut metric_owners = BTreeMap::<String, String>::new();
     let mut api_key_provider_ids = Vec::new();
     let mut kickstart_provider_ids = Vec::new();
+    let mut kickstart_default_commands = BTreeMap::new();
 
     for provider in providers.iter() {
         let mut definition = provider.definition();
@@ -120,7 +121,11 @@ fn build_snapshot(
         if provider.supports_api_key_configuration() {
             api_key_provider_ids.push(definition.id.clone());
         }
-        if provider.session_kickstart().is_some() {
+        if let Some(kickstart) = provider.session_kickstart() {
+            kickstart_default_commands.insert(
+                definition.id.clone(),
+                format!("{} {}", kickstart.program, kickstart.args.join(" ")),
+            );
             kickstart_provider_ids.push(definition.id.clone());
         }
         runtimes.insert(definition.id.clone(), provider.clone());
@@ -139,6 +144,7 @@ fn build_snapshot(
             providers: definitions,
             api_key_provider_ids,
             kickstart_provider_ids,
+            kickstart_default_commands,
         }),
         definition_indices,
         metric_indices,
