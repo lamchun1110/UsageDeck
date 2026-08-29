@@ -253,6 +253,11 @@ export const en = {
   'settings.section.kickstart': 'Session Kickstart',
   'settings.kickstart.hint':
     'When a rolling session window expires, send one tiny prompt from the provider CLI so the next window starts immediately instead of waiting for your first message. Each restart sends one small prompt.',
+  'settings.kickstart.customLabel': 'Custom command',
+  'settings.kickstart.customBuiltinPlaceholder':
+    'Optional — the built-in command is used when empty',
+  'settings.kickstart.customRequiredPlaceholder':
+    'Shell command required to kickstart this provider',
   'settings.kickstart.toggleAria': 'Keep {provider} session active',
   'settings.migration.keyTransferFailed':
     'Some saved keys from OpenQuota could not be transferred: {providers}. Re-add them in Customize.',

@@ -34,6 +34,7 @@ const baseSettings: AppSettings = {
   },
   detectionNoticeDismissed: true,
   kickstartProviderIds: [],
+  kickstartCommands: {},
 };
 
 function settingsView(overrides: Partial<AppSettings> = {}): SettingsViewState {

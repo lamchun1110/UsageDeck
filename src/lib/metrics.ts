@@ -55,6 +55,16 @@ export class ProviderCatalogIndex {
     return this.#kickstartProviderIds.has(id);
   }
 
+  hasSessionWindow(id: string) {
+    return (
+      this.provider(id)?.metrics.some(
+        (metric) =>
+          (metric.source.kind === 'quota' || metric.source.kind === 'quotaOrValue') &&
+          metric.source.sessionWindow,
+      ) ?? false
+    );
+  }
+
   localUsageSourceNote(id: string) {
     const provider = this.provider(id);
     return (

@@ -13,7 +13,7 @@
 
   interface Props {
     settingsView: SettingsViewState;
-    kickstartProviders: { id: string; name: string }[];
+    kickstartProviders: { id: string; name: string; hasBuiltin: boolean }[];
     platform: DesktopPlatform;
     panelHeightMode: PanelHeightMode;
     onChange: (settings: AppSettings) => void;
@@ -53,6 +53,25 @@
     const ids = settings.kickstartProviderIds.filter((id) => id !== providerId);
     if (enabled) ids.push(providerId);
     onChange({ ...settings, kickstartProviderIds: ids.sort() });
+  }
+
+  // Command edits commit on blur/Enter so typing does not save on every key.
+  let commandDrafts = $state<Record<string, string>>({});
+
+  function commandValue(providerId: string) {
+    return commandDrafts[providerId] ?? settings.kickstartCommands[providerId] ?? '';
+  }
+
+  function commitCommand(providerId: string) {
+    if (!(providerId in commandDrafts)) return;
+    const draft = (commandDrafts[providerId] ?? '').trim();
+    delete commandDrafts[providerId];
+    const current = settings.kickstartCommands[providerId] ?? '';
+    if (draft === current) return;
+    const next = { ...settings.kickstartCommands };
+    if (draft) next[providerId] = draft;
+    else delete next[providerId];
+    onChange({ ...settings, kickstartCommands: next });
   }
   const revealLogLabel = $derived(
     platform === 'macos'
@@ -458,13 +477,33 @@
       <h2>{t('settings.section.kickstart')}</h2>
       <p class="settings-note">{t('settings.kickstart.hint')}</p>
       {#each kickstartProviders as provider (provider.id)}
-        <label class="setting-row"
-          ><span><b>{provider.name}</b></span><input
-            type="checkbox"
-            checked={settings.kickstartProviderIds.includes(provider.id)}
-            onchange={(event) => toggleKickstart(provider.id, event.currentTarget.checked)}
-          /></label
-        >
+        <div class="kickstart-provider">
+          <label class="setting-row"
+            ><span><b>{provider.name}</b></span><input
+              type="checkbox"
+              checked={settings.kickstartProviderIds.includes(provider.id)}
+              disabled={!provider.hasBuiltin && !settings.kickstartCommands[provider.id]}
+              onchange={(event) => toggleKickstart(provider.id, event.currentTarget.checked)}
+            /></label
+          >
+          <label class="kickstart-command">
+            <span>{t('settings.kickstart.customLabel')}</span>
+            <input
+              type="text"
+              value={commandValue(provider.id)}
+              placeholder={provider.hasBuiltin
+                ? t('settings.kickstart.customBuiltinPlaceholder')
+                : t('settings.kickstart.customRequiredPlaceholder')}
+              autocomplete="off"
+              spellcheck="false"
+              oninput={(event) => (commandDrafts[provider.id] = event.currentTarget.value)}
+              onblur={() => commitCommand(provider.id)}
+              onkeydown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
+            />
+          </label>
+        </div>
       {/each}
     </div>
   {/if}
@@ -668,6 +707,47 @@
     .settings-section > .setting-row:last-child,
     .settings-section > .settings-note:last-child {
       border-radius: 0 0 12px 12px;
+    }
+
+    /* Custom kickstart commands: the command input sits indented under its
+       provider's toggle row. */
+    .kickstart-provider {
+      display: grid;
+    }
+
+    .kickstart-provider > .setting-row {
+      border-radius: 0;
+    }
+
+    .kickstart-command {
+      display: grid;
+      gap: 4px;
+      padding: 0 12px 10px 12px;
+      background: var(--card);
+    }
+
+    .kickstart-command > span {
+      color: var(--secondary);
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .kickstart-command > input {
+      min-width: 0;
+      box-sizing: border-box;
+      padding: 6px 8px;
+      border: 1px solid var(--separator);
+      border-radius: 7px;
+      outline: none;
+      color: var(--text);
+      background: var(--tray);
+      font: inherit;
+      font-size: 11px;
+    }
+
+    .kickstart-command > input:focus {
+      border-color: var(--meter-fill);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--meter-fill) 20%, transparent);
     }
 
     .settings-section > h2 + .setting-row:last-child {

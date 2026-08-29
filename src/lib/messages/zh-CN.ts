@@ -247,6 +247,9 @@ export const zhCN = {
   'settings.section.kickstart': '会话自动重启',
   'settings.kickstart.hint':
     '当滚动会话到期时，从提供商 CLI 发送一条极小提示，让下一个会话立即开始，而不必等待你的第一条消息。每次重启会发送一个小提示。',
+  'settings.kickstart.customLabel': '自定义命令',
+  'settings.kickstart.customBuiltinPlaceholder': '可选 — 留空时使用内置命令',
+  'settings.kickstart.customRequiredPlaceholder': '需要 Shell 命令才能重启此提供商的会话',
   'settings.kickstart.toggleAria': '保持 {provider} 会话启用',
   'settings.migration.keyTransferFailed':
     '部分 OpenQuota 已保存的密钥无法转移：{providers}。请在自定义中重新添加。',

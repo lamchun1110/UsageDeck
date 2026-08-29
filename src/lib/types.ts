@@ -252,6 +252,7 @@ export interface AppSettings {
   notifications: NotificationPreferences;
   detectionNoticeDismissed: boolean;
   kickstartProviderIds: string[];
+  kickstartCommands: Record<string, string>;
 }
 
 export interface UpdateStatus {

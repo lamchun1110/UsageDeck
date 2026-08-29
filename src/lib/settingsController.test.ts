@@ -49,6 +49,7 @@ function settingsView(
       notifications: { almostOut: false, cuttingItClose: false, willRunOut: false },
       detectionNoticeDismissed: false,
       kickstartProviderIds: [],
+      kickstartCommands: {},
     },
   };
 }

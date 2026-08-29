@@ -8,7 +8,7 @@ use crate::{
     child_process,
     commands::usage::refresh_with_events,
     pacing::NotificationEvaluator,
-    providers::{ProviderRegistry, SessionKickstart},
+    providers::ProviderRegistry,
     service::{ProviderService, UsageViewState},
     settings::SettingsService,
     AppHandle,
@@ -60,6 +60,30 @@ fn cancel_scheduled(provider_id: &str) {
     {
         task.abort();
     }
+}
+
+/// The shell command that kickstarts one provider: the user's custom command
+/// when set, otherwise the provider's built-in CLI invocation. Returns `None`
+/// for providers without session windows — the expiry the evaluator fires on —
+/// or without any usable command.
+fn resolve_command(
+    provider_id: &str,
+    kickstart_commands: &std::collections::BTreeMap<String, String>,
+    registry: &ProviderRegistry,
+) -> Option<String> {
+    if session_source_ids(registry, provider_id).is_empty() {
+        return None;
+    }
+    if let Some(custom) = kickstart_commands.get(provider_id) {
+        let trimmed = custom.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+    registry
+        .runtime(provider_id)
+        .and_then(|runtime| runtime.session_kickstart())
+        .map(|kickstart| format!("{} {}", kickstart.program, kickstart.args.join(" ")))
 }
 
 /// The provider's session-window source ids, derived from its metric
@@ -136,9 +160,8 @@ pub async fn evaluate(
         .collect::<Vec<_>>();
 
     for provider_id in targets {
-        let Some(kickstart) = registry
-            .runtime(&provider_id)
-            .and_then(|runtime| runtime.session_kickstart())
+        let Some(kickstart_command) =
+            resolve_command(&provider_id, &current_settings.kickstart_commands, registry)
         else {
             continue;
         };
@@ -180,7 +203,7 @@ pub async fn evaluate(
         }
 
         crate::app_info!("kickstart", "session rolled over; starting a fresh window");
-        if let Err(error) = send_prompt(&kickstart).await {
+        if let Err(error) = send_prompt(&kickstart_command).await {
             crate::app_warn!("kickstart", "{provider_id} kickstart failed: {error}");
             continue;
         }
@@ -271,10 +294,11 @@ async fn run_scheduled_kick(
     if !opted_in {
         return;
     }
-    let Some(kickstart) = registry
-        .runtime(&provider_id)
-        .and_then(|runtime| runtime.session_kickstart())
-    else {
+    let Some(kickstart_command) = resolve_command(
+        &provider_id,
+        &current_settings.kickstart_commands,
+        &registry,
+    ) else {
         return;
     };
     let state = service.state();
@@ -300,7 +324,7 @@ async fn run_scheduled_kick(
     }
 
     crate::app_info!("kickstart", "reset time reached; starting a fresh window");
-    if let Err(error) = send_prompt(&kickstart).await {
+    if let Err(error) = send_prompt(&kickstart_command).await {
         crate::app_warn!("kickstart", "{provider_id} kickstart failed: {error}");
         return;
     }
@@ -318,10 +342,10 @@ async fn run_scheduled_kick(
 }
 
 /// Runs the kickstart command through the user's login shell: the app process
-/// does not inherit the login PATH where `claude`/`codex` live, and the
-/// prompt/arguments are compile-time constants, so simple shell joining is
-/// sufficient.
-async fn send_prompt(kickstart: &SessionKickstart) -> Result<(), String> {
+/// does not inherit the login PATH where `claude`/`codex` live. Built-in
+/// scripts join compile-time constants; custom commands are the user's own
+/// shell input, equivalent to running them in a terminal.
+async fn send_prompt(script: &str) -> Result<(), String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| {
         if cfg!(target_os = "macos") {
             "/bin/zsh".to_owned()
@@ -329,21 +353,19 @@ async fn send_prompt(kickstart: &SessionKickstart) -> Result<(), String> {
             "/bin/sh".to_owned()
         }
     });
-    let script = format!("{} {}", kickstart.program, kickstart.args.join(" "));
     let mut command = child_process::background_command(&shell);
-    command.args(["-l", "-c", &script]);
+    command.args(["-l", "-c", script]);
     let output = tokio::task::spawn_blocking(move || {
         child_process::output_with_timeout(&mut command, KICKSTART_TIMEOUT)
     })
     .await
     .map_err(|error| format!("kickstart task failed: {error}"))?
-    .map_err(|error| format!("could not run {}: {error}", kickstart.program))?;
+    .map_err(|error| format!("could not run the kickstart command: {error}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().next().unwrap_or_default();
         return Err(format!(
-            "{} exited with status {}{}",
-            kickstart.program,
+            "the kickstart command exited with status {}{}",
             output.status,
             if detail.is_empty() {
                 String::new()
@@ -353,4 +375,195 @@ async fn send_prompt(kickstart: &SessionKickstart) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::{session_source_ids, session_window_active, LAST_ATTEMPTS};
+    use crate::models::{
+        MetricDefinition, MetricSection, MetricSource, ProviderDefinition, ProviderSnapshot,
+        QuotaWindow, UsageHistory,
+    };
+
+    fn definition_with_session_metric(id: &str) -> ProviderDefinition {
+        ProviderDefinition {
+            id: id.into(),
+            display_name: "Provider".into(),
+            short_name: "P".into(),
+            fallback_enabled: false,
+            local_usage_source_note: None,
+            links: vec![],
+            options: Vec::new(),
+            metrics: vec![MetricDefinition::new(
+                format!("{id}.session"),
+                "Session",
+                MetricSource::Quota {
+                    source_id: "session".into(),
+                    session_window: true,
+                },
+                true,
+                true,
+                MetricSection::AlwaysVisible,
+                true,
+                Some("S"),
+                None,
+            )],
+        }
+    }
+
+    fn snapshot_with_session_reset(reset: Option<chrono::DateTime<Utc>>) -> ProviderSnapshot {
+        ProviderSnapshot {
+            provider_id: "claude".into(),
+            plan: None,
+            quotas: vec![QuotaWindow {
+                id: "session".into(),
+                label: "Session".into(),
+                used_percent: 0.0,
+                resets_at: reset,
+                period_seconds: 5 * 3600,
+                format: Default::default(),
+                used_value: None,
+                limit_value: None,
+                unit: None,
+                estimated: false,
+                source_note: None,
+            }],
+            value_metrics: vec![],
+            status_metrics: vec![],
+            notices: vec![],
+            usage: UsageHistory::default(),
+            warnings: vec![],
+            refreshed_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn session_window_is_active_only_until_its_reset() {
+        let mut definition = definition_with_session_metric("claude");
+        definition.fallback_enabled = true;
+        let registry =
+            crate::providers::ProviderRegistry::from_definitions(vec![definition]).unwrap();
+        let ids = session_source_ids(&registry, "claude");
+        assert!(ids.contains("session"));
+
+        let future = Utc::now() + chrono::Duration::hours(2);
+        assert!(session_window_active(
+            &snapshot_with_session_reset(Some(future)),
+            &ids
+        ));
+
+        let past = Utc::now() - chrono::Duration::hours(1);
+        assert!(!session_window_active(
+            &snapshot_with_session_reset(Some(past)),
+            &ids
+        ));
+        assert!(!session_window_active(
+            &snapshot_with_session_reset(None),
+            &ids
+        ));
+        // A weekly window resetting in the future does not make the session active.
+        let mut snapshot = snapshot_with_session_reset(None);
+        snapshot.quotas[0].id = "weekly".into();
+        snapshot.quotas[0].resets_at = Some(future);
+        assert!(!session_window_active(&snapshot, &ids));
+    }
+
+    #[test]
+    fn attempts_respect_the_cooldown() {
+        {
+            let mut attempts = LAST_ATTEMPTS.lock().unwrap();
+            attempts.clear();
+        }
+
+        assert!(super::record_attempt("claude"));
+        assert!(!super::record_attempt("claude"));
+        assert!(super::record_attempt("codex"));
+    }
+
+    struct BuiltinKickstartProvider(ProviderDefinition);
+
+    impl crate::providers::UsageProvider for BuiltinKickstartProvider {
+        fn definition(&self) -> ProviderDefinition {
+            self.0.clone()
+        }
+
+        fn has_local_credentials(&self) -> bool {
+            false
+        }
+
+        fn session_kickstart(&self) -> Option<crate::providers::SessionKickstart> {
+            Some(crate::providers::SessionKickstart::new(
+                "claude",
+                &["-p", "Hi"],
+            ))
+        }
+
+        fn refresh(&self) -> Result<ProviderSnapshot, crate::providers::ProviderError> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn resolve_command_prefers_custom_and_gates_on_session_windows() {
+        let mut session = definition_with_session_metric("claude");
+        session.fallback_enabled = true;
+        let mut plain = definition_with_session_metric("cursor");
+        plain.metrics[0].source = MetricSource::Value {
+            source_id: "usage".into(),
+        };
+        plain.metrics[0].id = "cursor.usage".into();
+        plain.fallback_enabled = true;
+        struct PlainProvider(ProviderDefinition);
+
+        impl crate::providers::UsageProvider for PlainProvider {
+            fn definition(&self) -> ProviderDefinition {
+                self.0.clone()
+            }
+
+            fn has_local_credentials(&self) -> bool {
+                false
+            }
+
+            fn refresh(&self) -> Result<ProviderSnapshot, crate::providers::ProviderError> {
+                unreachable!()
+            }
+        }
+
+        let registry = crate::providers::ProviderRegistry::new(vec![
+            std::sync::Arc::new(BuiltinKickstartProvider(session)),
+            std::sync::Arc::new(PlainProvider(plain)),
+        ])
+        .unwrap();
+
+        let commands = std::collections::BTreeMap::from([(
+            "claude".to_owned(),
+            "claude -p hi --model haiku".to_owned(),
+        )]);
+
+        // Custom command wins over the built-in.
+        assert_eq!(
+            super::resolve_command("claude", &commands, &registry).as_deref(),
+            Some("claude -p hi --model haiku")
+        );
+        // Empty custom falls back to the built-in.
+        assert_eq!(
+            super::resolve_command(
+                "claude",
+                &std::collections::BTreeMap::from([("claude".to_owned(), "   ".to_owned())]),
+                &registry,
+            )
+            .map(|script| script.starts_with("claude ")),
+            Some(true)
+        );
+        // Built-in when no custom entry exists.
+        assert_eq!(
+            super::resolve_command("claude", &std::collections::BTreeMap::new(), &registry)
+                .map(|script| script.starts_with("claude ")),
+            Some(true)
+        );
+        // Providers without session windows are never kickstartable.
+        assert_eq!(super::resolve_command("cursor", &commands, &registry), None);
+    }
 }

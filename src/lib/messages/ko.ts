@@ -249,6 +249,10 @@ export const ko = {
   'settings.section.kickstart': '세션 자동 재시작',
   'settings.kickstart.hint':
     '롤링 세션이 만료되면 공급자 CLI에서 아주 작은 프롬프트 하나를 보내 다음 세션이 첫 메시지를 기다리지 않고 바로 시작되도록 합니다. 재시작할 때마다 작은 프롬프트를 하나 보냅니다.',
+  'settings.kickstart.customLabel': '사용자 지정 명령',
+  'settings.kickstart.customBuiltinPlaceholder': '선택 사항 — 비워 두면 내장 명령 사용',
+  'settings.kickstart.customRequiredPlaceholder':
+    '이 공급자의 세션을 재시작하려면 셸 명령이 필요합니다',
   'settings.kickstart.toggleAria': '{provider} 세션 활성 유지',
   'settings.migration.keyTransferFailed':
     'OpenQuota의 일부 저장된 키를 전송하지 못했습니다: {providers}. 사용자 지정에서 다시 추가하세요.',

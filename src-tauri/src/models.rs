@@ -819,6 +819,11 @@ pub struct AppSettings {
     /// sending a tiny CLI prompt whenever the previous window has expired.
     #[serde(default)]
     pub kickstart_provider_ids: Vec<String>,
+    /// User-provided shell command overriding the built-in kickstart for a
+    /// provider. Runs through the user's login shell; only providers with
+    /// session windows are eligible.
+    #[serde(default)]
+    pub kickstart_commands: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for AppSettings {
@@ -849,6 +854,7 @@ impl Default for AppSettings {
             notifications: NotificationPreferences::default(),
             detection_notice_dismissed: false,
             kickstart_provider_ids: Vec::new(),
+            kickstart_commands: std::collections::BTreeMap::new(),
         }
     }
 }

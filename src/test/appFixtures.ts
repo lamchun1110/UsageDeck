@@ -371,6 +371,7 @@ export const settingsState: SettingsViewState = {
     notifications: { almostOut: false, cuttingItClose: false, willRunOut: false },
     detectionNoticeDismissed: true,
     kickstartProviderIds: [],
+    kickstartCommands: {},
     providers: [
       {
         id: 'codex',

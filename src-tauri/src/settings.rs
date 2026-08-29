@@ -916,6 +916,15 @@ fn normalize_with_persisted_accounts(
             .runtime(provider_id)
             .is_some_and(|runtime| runtime.session_kickstart().is_some())
     });
+    // Custom kickstart commands are user-authored shell: trim, bound the
+    // length, and keep only providers whose catalog metrics have session
+    // windows — the trigger the evaluator fires on.
+    settings.kickstart_commands.retain(|provider_id, command| {
+        *command = command.trim().to_owned();
+        session_capable(registry, provider_id)
+            && !command.is_empty()
+            && command.chars().count() <= MAX_KICKSTART_COMMAND_CHARS
+    });
 
     if settings.known_provider_ids.is_empty() {
         settings.known_provider_ids = settings
@@ -992,6 +1001,17 @@ fn normalize_with_persisted_accounts(
     settings.providers = normalized;
     settings.known_provider_ids.sort();
     settings.known_provider_ids.dedup();
+}
+
+const MAX_KICKSTART_COMMAND_CHARS: usize = 500;
+
+fn session_capable(registry: &ProviderRegistry, provider_id: &str) -> bool {
+    registry.definition(provider_id).is_some_and(|definition| {
+        definition
+            .metrics
+            .iter()
+            .any(|metric| metric.source.session_window())
+    })
 }
 
 fn persisted_account_provider_ids(storage: &Storage) -> Result<HashSet<String>, StorageError> {
@@ -1158,6 +1178,64 @@ mod tests {
         },
         storage::Storage,
     };
+
+    #[test]
+    fn kickstart_commands_are_trimmed_and_dropped_without_session_windows() {
+        use crate::models::{MetricDefinition, MetricSource};
+
+        let mut session = ProviderDefinition {
+            id: "claude".into(),
+            display_name: "Claude".into(),
+            short_name: "C".into(),
+            fallback_enabled: true,
+            local_usage_source_note: None,
+            links: vec![],
+            options: Vec::new(),
+            metrics: vec![MetricDefinition::new(
+                "claude.session",
+                "Session",
+                MetricSource::Quota {
+                    source_id: "session".into(),
+                    session_window: true,
+                },
+                true,
+                true,
+                MetricSection::AlwaysVisible,
+                true,
+                Some("S"),
+                None,
+            )],
+        };
+        session.metrics[0].id = "claude.session".into();
+        let registry = ProviderRegistry::from_definitions(vec![session]).unwrap();
+
+        let mut settings = AppSettings::default();
+        settings
+            .kickstart_commands
+            .insert("claude".into(), "  claude -p hi --model haiku  ".into());
+        // Long input over the cap is dropped entirely.
+        settings
+            .kickstart_commands
+            .insert("cursor".into(), "x".repeat(600));
+
+        let mut normalized = settings.clone();
+        let detected = HashSet::new();
+        super::normalize_with_persisted_accounts(
+            &registry,
+            &mut normalized,
+            &detected,
+            &HashSet::new(),
+        );
+
+        assert_eq!(
+            normalized
+                .kickstart_commands
+                .get("claude")
+                .map(String::as_str),
+            Some("claude -p hi --model haiku")
+        );
+        assert!(!normalized.kickstart_commands.contains_key("cursor"));
+    }
 
     use super::{
         default_settings, normalize, normalize_with_persisted_accounts, SettingsService,

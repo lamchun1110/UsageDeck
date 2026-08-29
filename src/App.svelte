@@ -770,10 +770,11 @@
               <SettingsScreen
                 settingsView={settingsState}
                 kickstartProviders={catalog.providers
-                  .filter((provider) => catalog.supportsSessionKickstart(provider.id))
+                  .filter((provider) => catalog.hasSessionWindow(provider.id))
                   .map((provider) => ({
                     id: provider.id,
                     name: providerDisplayName(provider.id),
+                    hasBuiltin: catalog.supportsSessionKickstart(provider.id),
                   }))}
                 {platform}
                 panelHeightMode={panelResize.heightMode}
