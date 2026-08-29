@@ -66,7 +66,11 @@ export class ProviderCatalogIndex {
   // (only claude sets it) and must not gate eligibility here.
   hasSessionWindow(id: string) {
     return (
-      this.provider(id)?.metrics.some((metric) => metric.source.sourceId === 'session') ?? false
+      this.provider(id)?.metrics.some(
+        (metric) =>
+          (metric.source.kind === 'quota' || metric.source.kind === 'quotaOrValue') &&
+          metric.source.sourceId === 'session',
+      ) ?? false
     );
   }
 
