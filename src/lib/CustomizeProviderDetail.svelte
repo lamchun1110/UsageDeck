@@ -112,7 +112,7 @@
   let commandDrafts = $state<Record<string, string>>({});
 
   function commandValue() {
-    return commandDrafts[providerId] ?? (settings.kickstartCommands[providerId] ?? '');
+    return commandDrafts[providerId] ?? settings.kickstartCommands[providerId] ?? '';
   }
 
   function commitCommand() {
@@ -279,12 +279,11 @@
             <span class="kickstart-id">
               <ProviderIcon providerId={provider.id} size={16} />
               <b>{providerDisplayName(provider.id)}</b>
-              <small
-                class="kickstart-badge"
-                class:needs-command={!hasBuiltin}
-              >{hasBuiltin
-                ? t('settings.kickstart.builtinBadge')
-                : t('settings.kickstart.needsCommandBadge')}</small>
+              <small class="kickstart-badge" class:needs-command={!hasBuiltin}
+                >{hasBuiltin
+                  ? t('settings.kickstart.builtinBadge')
+                  : t('settings.kickstart.needsCommandBadge')}</small
+              >
             </span>
             <input
               type="checkbox"
@@ -495,11 +494,7 @@
       color: var(--text);
       background: color-mix(in srgb, var(--card) 75%, var(--tray));
       border-top: 1px solid var(--separator);
-      font-family:
-        ui-monospace,
-        'SF Mono',
-        Menlo,
-        monospace;
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
       font-size: 10px;
     }
 

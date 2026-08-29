@@ -646,7 +646,6 @@
       border-radius: 0 0 12px 12px;
     }
 
-
     .settings-section > h2 + .setting-row:last-child {
       border-radius: 12px;
     }
