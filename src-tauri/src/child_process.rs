@@ -55,8 +55,12 @@ pub fn output_with_timeout(command: &mut Command, timeout: Duration) -> io::Resu
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = join_reader(stdout_reader);
-                let _ = join_reader(stderr_reader);
+                // A grandchild that inherited the pipes keeps their write ends
+                // open after the shell dies; waiting unbounded for the readers
+                // would hang the caller past the deadline. Detach them instead
+                // (the threads exit whenever the pipes close).
+                abandon_reader(stdout_reader);
+                abandon_reader(stderr_reader);
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "background command timed out",
@@ -65,8 +69,8 @@ pub fn output_with_timeout(command: &mut Command, timeout: Duration) -> io::Resu
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = join_reader(stdout_reader);
-                let _ = join_reader(stderr_reader);
+                abandon_reader(stdout_reader);
+                abandon_reader(stderr_reader);
                 return Err(error);
             }
         }
@@ -89,6 +93,12 @@ fn join_reader(reader: thread::JoinHandle<io::Result<Vec<u8>>>) -> io::Result<Ve
     reader
         .join()
         .map_err(|_| io::Error::other("background output reader panicked"))?
+}
+
+/// Drops a reader thread after the child was killed: its output is no longer
+/// needed, and joining could block forever on descendants holding the pipes.
+fn abandon_reader(reader: thread::JoinHandle<io::Result<Vec<u8>>>) {
+    drop(reader);
 }
 
 #[cfg(target_os = "windows")]

@@ -320,6 +320,7 @@ impl MetricSource {
         }
     }
 
+    #[cfg(test)]
     pub fn session_window(&self) -> bool {
         matches!(
             self,

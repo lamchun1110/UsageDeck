@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -71,7 +71,7 @@ fn resolve_command(
     kickstart_commands: &std::collections::BTreeMap<String, String>,
     registry: &ProviderRegistry,
 ) -> Option<String> {
-    if session_source_ids(registry, provider_id).is_empty() {
+    if !is_session_capable(registry, provider_id) {
         return None;
     }
     if let Some(custom) = kickstart_commands.get(provider_id) {
@@ -86,43 +86,44 @@ fn resolve_command(
         .map(|kickstart| format!("{} {}", kickstart.program, kickstart.args.join(" ")))
 }
 
-/// The provider's session-window source ids, derived from its metric
-/// definitions in the catalog.
-fn session_source_ids(registry: &ProviderRegistry, provider_id: &str) -> HashSet<String> {
-    let Some(definition) = registry.definition(provider_id) else {
-        return HashSet::new();
-    };
-    definition
-        .metrics
-        .iter()
-        .filter(|metric| metric.source.session_window())
-        .filter_map(|metric| metric.source.source_id())
-        .map(str::to_owned)
-        .collect()
+/// Every provider with a first-message rolling session publishes it as the
+/// quota window with source id "session" (claude, codex, zai, kimi, minimax,
+/// opencode, commandcode). Matching by that convention keeps the kickstart
+/// trigger independent of the `sessionWindow` UI flag, which only claude sets.
+fn is_session_capable(registry: &ProviderRegistry, provider_id: &str) -> bool {
+    registry.definition(provider_id).is_some_and(|definition| {
+        definition.metrics.iter().any(|metric| {
+            matches!(
+                metric.source,
+                crate::models::MetricSource::Quota {
+                    source_id: _,
+                    session_window: _,
+                } | crate::models::MetricSource::QuotaOrValue {
+                    source_id: _,
+                    session_window: _,
+                }
+            ) && metric.source.source_id() == Some("session")
+        })
+    })
 }
 
 /// A session window is active while its reset time is still in the future;
 /// once every session window is missing or past its reset, the session has
 /// rolled over and a kickstart would begin a fresh one.
-fn session_window_active(
-    snapshot: &crate::models::ProviderSnapshot,
-    session_ids: &HashSet<String>,
-) -> bool {
-    let now = Utc::now();
-    snapshot.quotas.iter().any(|window| {
-        session_ids.contains(&window.id) && window.resets_at.is_some_and(|reset| reset > now)
-    })
-}
-
-fn active_session_reset(
-    snapshot: &crate::models::ProviderSnapshot,
-    session_ids: &HashSet<String>,
-) -> Option<DateTime<Utc>> {
+fn session_window_active(snapshot: &crate::models::ProviderSnapshot) -> bool {
     let now = Utc::now();
     snapshot
         .quotas
         .iter()
-        .filter(|window| session_ids.contains(&window.id))
+        .any(|window| window.id == "session" && window.resets_at.is_some_and(|reset| reset > now))
+}
+
+fn active_session_reset(snapshot: &crate::models::ProviderSnapshot) -> Option<DateTime<Utc>> {
+    let now = Utc::now();
+    snapshot
+        .quotas
+        .iter()
+        .filter(|window| window.id == "session")
         .filter_map(|window| window.resets_at)
         .filter(|reset| *reset > now)
         .min()
@@ -138,6 +139,8 @@ fn active_session_reset(
 ///
 /// The refresh-tail path stays as the safety net either way: system sleep can
 /// skew timers, and any later refresh re-evaluates from fresh data.
+/// Returns whether a kickstart ran a follow-up refresh, so the caller can
+/// return the fresher service state instead of its stale pre-tail snapshot.
 pub async fn evaluate(
     app: &AppHandle,
     state: &UsageViewState,
@@ -145,10 +148,11 @@ pub async fn evaluate(
     registry: &Arc<ProviderRegistry>,
     service: &Arc<ProviderService>,
     notifications: &Arc<NotificationEvaluator>,
-) {
+) -> bool {
+    let mut refreshed = false;
     let current_settings = settings.get();
     if current_settings.kickstart_provider_ids.is_empty() {
-        return;
+        return false;
     }
     let targets = current_settings
         .providers
@@ -158,6 +162,25 @@ pub async fn evaluate(
         })
         .map(|layout| layout.id.clone())
         .collect::<Vec<_>>();
+
+    // A provider that left the target set (opted out, disabled, or lost
+    // eligibility) must not keep an armed reset timer; the fired task would
+    // no-op, but cancelling is cheaper and clearer.
+    {
+        let mut scheduled = SCHEDULED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let orphaned: Vec<String> = scheduled
+            .keys()
+            .filter(|id| !targets.contains(id))
+            .cloned()
+            .collect();
+        for id in orphaned {
+            if let Some((task, _)) = scheduled.remove(&id) {
+                task.abort();
+            }
+        }
+    }
 
     for provider_id in targets {
         let Some(kickstart_command) =
@@ -179,9 +202,7 @@ pub async fn evaluate(
         ) {
             continue;
         }
-        let session_ids = session_source_ids(registry, &provider_id);
-
-        if let Some(reset_at) = active_session_reset(snapshot, &session_ids) {
+        if let Some(reset_at) = active_session_reset(snapshot) {
             // Still inside a live window: aim the timer at its reset.
             schedule_at_reset(
                 provider_id.clone(),
@@ -225,7 +246,9 @@ pub async fn evaluate(
             false,
         ))
         .await;
+        refreshed = true;
     }
+    refreshed
 }
 
 /// Arms the reset-time timer for one provider, replacing any timer that aims
@@ -314,8 +337,7 @@ async fn run_scheduled_kick(
     ) {
         return;
     }
-    let session_ids = session_source_ids(&registry, &provider_id);
-    if session_window_active(snapshot, &session_ids) {
+    if session_window_active(snapshot) {
         // The user already sent a real message; nothing to restart.
         return;
     }
@@ -346,15 +368,28 @@ async fn run_scheduled_kick(
 /// scripts join compile-time constants; custom commands are the user's own
 /// shell input, equivalent to running them in a terminal.
 async fn send_prompt(script: &str) -> Result<(), String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| {
-        if cfg!(target_os = "macos") {
-            "/bin/zsh".to_owned()
-        } else {
-            "/bin/sh".to_owned()
-        }
-    });
-    let mut command = child_process::background_command(&shell);
-    command.args(["-l", "-c", script]);
+    // Unix: the login shell resolves the CLI the way the user's terminal
+    // would (the app process lacks that PATH). Windows has no SHELL in GUI
+    // sessions; cmd.exe resolves npm-global CLIs from the user PATH.
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = child_process::background_command("cmd.exe");
+        command.args(["/C", script]);
+        command
+    };
+    #[cfg(not(target_os = "windows"))]
+    let mut command = {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| {
+            if cfg!(target_os = "macos") {
+                "/bin/zsh".to_owned()
+            } else {
+                "/bin/sh".to_owned()
+            }
+        });
+        let mut command = child_process::background_command(&shell);
+        command.args(["-l", "-c", script]);
+        command
+    };
     let output = tokio::task::spawn_blocking(move || {
         child_process::output_with_timeout(&mut command, KICKSTART_TIMEOUT)
     })
@@ -362,16 +397,20 @@ async fn send_prompt(script: &str) -> Result<(), String> {
     .map_err(|error| format!("kickstart task failed: {error}"))?
     .map_err(|error| format!("could not run the kickstart command: {error}"))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let detail = stderr.lines().next().unwrap_or_default();
+        // A custom command may embed secrets in its output; the redaction
+        // layer cannot know arbitrary token shapes, so only the exit status
+        // reaches the persistent log.
+        crate::app_debug!(
+            "kickstart",
+            "kickstart command stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .next()
+                .unwrap_or_default()
+        );
         return Err(format!(
-            "the kickstart command exited with status {}{}",
-            output.status,
-            if detail.is_empty() {
-                String::new()
-            } else {
-                format!(": {detail}")
-            }
+            "the kickstart command exited with status {}",
+            output.status
         ));
     }
     Ok(())
@@ -381,7 +420,7 @@ async fn send_prompt(script: &str) -> Result<(), String> {
 mod tests {
     use chrono::Utc;
 
-    use super::{session_source_ids, session_window_active, LAST_ATTEMPTS};
+    use super::{is_session_capable, session_window_active, LAST_ATTEMPTS};
     use crate::models::{
         MetricDefinition, MetricSection, MetricSource, ProviderDefinition, ProviderSnapshot,
         QuotaWindow, UsageHistory,
@@ -445,29 +484,25 @@ mod tests {
         definition.fallback_enabled = true;
         let registry =
             crate::providers::ProviderRegistry::from_definitions(vec![definition]).unwrap();
-        let ids = session_source_ids(&registry, "claude");
-        assert!(ids.contains("session"));
+        assert!(is_session_capable(&registry, "claude"));
 
         let future = Utc::now() + chrono::Duration::hours(2);
-        assert!(session_window_active(
-            &snapshot_with_session_reset(Some(future)),
-            &ids
-        ));
+        assert!(session_window_active(&snapshot_with_session_reset(Some(
+            future
+        ))));
 
         let past = Utc::now() - chrono::Duration::hours(1);
-        assert!(!session_window_active(
-            &snapshot_with_session_reset(Some(past)),
-            &ids
-        ));
-        assert!(!session_window_active(
-            &snapshot_with_session_reset(None),
-            &ids
-        ));
+        assert!(!session_window_active(&snapshot_with_session_reset(Some(
+            past
+        ))));
+        assert!(!session_window_active(&snapshot_with_session_reset(None)));
         // A weekly window resetting in the future does not make the session active.
         let mut snapshot = snapshot_with_session_reset(None);
         snapshot.quotas[0].id = "weekly".into();
         snapshot.quotas[0].resets_at = Some(future);
-        assert!(!session_window_active(&snapshot, &ids));
+        assert!(!session_window_active(&snapshot));
+        // A differently-named provider without a "session" metric is not capable.
+        assert!(!is_session_capable(&registry, "codex"));
     }
 
     #[test]

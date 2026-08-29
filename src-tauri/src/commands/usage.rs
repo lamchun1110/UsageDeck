@@ -70,7 +70,7 @@ pub(crate) async fn refresh_with_events(
     emit_settings_if_account_changed(app, settings, &observed_account_revision);
     let _ = app.emit("usage-state", &state);
     finish_refresh(app, &state, settings, notifications);
-    crate::kickstart::evaluate(
+    let kicked = crate::kickstart::evaluate(
         app,
         &state,
         settings,
@@ -80,7 +80,14 @@ pub(crate) async fn refresh_with_events(
         notifications,
     )
     .await;
-    state
+    // A kickstart's follow-up refresh emits fresher usage-state events than
+    // the snapshot captured above; returning the pre-kick state would let the
+    // caller overwrite the just-started window on screen until the next tick.
+    if kicked {
+        service.state()
+    } else {
+        state
+    }
 }
 
 /// One forced refresh across all enabled providers. Shared by the UI command

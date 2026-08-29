@@ -483,6 +483,7 @@
               type="checkbox"
               checked={settings.kickstartProviderIds.includes(provider.id)}
               disabled={!provider.hasBuiltin && !settings.kickstartCommands[provider.id]}
+              aria-label={t('settings.kickstart.toggleAria', { provider: provider.name })}
               onchange={(event) => toggleKickstart(provider.id, event.currentTarget.checked)}
             /></label
           >
@@ -490,6 +491,7 @@
             <span>{t('settings.kickstart.customLabel')}</span>
             <input
               type="text"
+              maxlength="500"
               value={commandValue(provider.id)}
               placeholder={provider.hasBuiltin
                 ? t('settings.kickstart.customBuiltinPlaceholder')

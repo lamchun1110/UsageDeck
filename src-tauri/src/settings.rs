@@ -911,19 +911,22 @@ fn normalize_with_persisted_accounts(
         !name.is_empty()
     });
     normalize_provider_options(&catalog, settings);
-    settings.kickstart_provider_ids.retain(|provider_id| {
-        registry
-            .runtime(provider_id)
-            .is_some_and(|runtime| runtime.session_kickstart().is_some())
-    });
     // Custom kickstart commands are user-authored shell: trim, bound the
-    // length, and keep only providers whose catalog metrics have session
-    // windows — the trigger the evaluator fires on.
+    // length, and keep only providers with a "session" window — the trigger
+    // the evaluator fires on. Process commands first so id eligibility below
+    // can include custom-command-only providers.
     settings.kickstart_commands.retain(|provider_id, command| {
         *command = command.trim().to_owned();
         session_capable(registry, provider_id)
             && !command.is_empty()
             && command.chars().count() <= MAX_KICKSTART_COMMAND_CHARS
+    });
+    settings.kickstart_provider_ids.retain(|provider_id| {
+        session_capable(registry, provider_id)
+            && (registry
+                .runtime(provider_id)
+                .is_some_and(|runtime| runtime.session_kickstart().is_some())
+                || settings.kickstart_commands.contains_key(provider_id))
     });
 
     if settings.known_provider_ids.is_empty() {
@@ -1007,10 +1010,13 @@ const MAX_KICKSTART_COMMAND_CHARS: usize = 500;
 
 fn session_capable(registry: &ProviderRegistry, provider_id: &str) -> bool {
     registry.definition(provider_id).is_some_and(|definition| {
-        definition
-            .metrics
-            .iter()
-            .any(|metric| metric.source.session_window())
+        definition.metrics.iter().any(|metric| {
+            matches!(
+                metric.source,
+                crate::models::MetricSource::Quota { .. }
+                    | crate::models::MetricSource::QuotaOrValue { .. }
+            ) && metric.source.source_id() == Some("session")
+        })
     })
 }
 
