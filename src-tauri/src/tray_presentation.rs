@@ -83,6 +83,37 @@ pub fn update(
     if !app.state::<DesktopIntegration>().tray_available() {
         return;
     }
+    #[cfg(target_os = "linux")]
+    {
+        // GTK and Xlib are not thread-safe, and refresh tails run on async
+        // runtime workers. Calling set_tooltip / set_menu from there races the
+        // GTK main loop and aborts inside libxcb ("multi-threaded client and
+        // XInitThreads has not been called"), taking the whole process down —
+        // reproduced under gdb and the cause of the flaky Linux release smokes.
+        // The process main thread (where GTK pumps its loop) is named "main"
+        // on Linux; anything else marshals over and lets the loop do the work.
+        if !std::thread::current()
+            .name()
+            .is_some_and(|name| name == "main")
+        {
+            // The registry is managed as an Arc in app state — the same
+            // instance every caller passes — so it can be re-cloned here
+            // without changing the borrowed signature.
+            let Some(registry) = app.try_state::<std::sync::Arc<ProviderRegistry>>() else {
+                return;
+            };
+            let app = app.clone();
+            let state = state.clone();
+            let settings = settings.clone();
+            let registry = registry.inner().clone();
+            // A dispatch failure means the app is tearing down; the next
+            // refresh retries anyway.
+            let _ = app.clone().run_on_main_thread(move || {
+                update(&app, &state, &settings, &registry);
+            });
+            return;
+        }
+    }
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
