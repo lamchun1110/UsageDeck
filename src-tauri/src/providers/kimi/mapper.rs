@@ -77,9 +77,15 @@ fn weekly_quota(body: &Value) -> Result<QuotaWindow, KimiError> {
     let limit = number(usage.get("limit"))
         .filter(|value| *value >= 0.0)
         .ok_or(KimiError::InvalidResponse)?;
-    let used = number(usage.get("used"))
-        .filter(|value| *value >= 0.0)
-        .ok_or(KimiError::InvalidResponse)?;
+    // The API reports the weekly window as `remaining` (the same shape as the
+    // per-window `limits[].detail`); older responses carried `used` instead.
+    // Prefer `remaining` and keep `used` as the fallback so both shapes map.
+    let used = match number(usage.get("remaining")).filter(|value| *value >= 0.0) {
+        Some(remaining) => (limit - remaining).max(0.0),
+        None => number(usage.get("used"))
+            .filter(|value| *value >= 0.0)
+            .ok_or(KimiError::InvalidResponse)?,
+    };
     let used_percent = if limit > 0.0 {
         (used / limit * 100.0).clamp(0.0, 100.0)
     } else {
