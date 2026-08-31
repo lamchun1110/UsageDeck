@@ -267,6 +267,10 @@ export const en = {
   'settings.kickstart.builtinBadge': 'Built-in',
   'settings.kickstart.needsCommandBadge': 'Needs a command',
   'settings.kickstart.toggleAria': 'Keep {provider} session active',
+  'settings.kickstart.scopeLabel': 'Window to restart',
+  'settings.kickstart.scope.session': 'Session only',
+  'settings.kickstart.scope.weekly': 'Weekly only',
+  'settings.kickstart.scope.both': 'Session and weekly',
   'settings.migration.keyTransferFailed':
     'Some saved keys from OpenQuota could not be transferred: {providers}. Re-add them in Customize.',
   'settings.customize.accountHint':

@@ -97,6 +97,7 @@ fn build_snapshot(
     let mut api_key_provider_ids = Vec::new();
     let mut kickstart_provider_ids = Vec::new();
     let mut kickstart_default_commands = BTreeMap::new();
+    let mut kickstart_rolling_windows = BTreeMap::new();
 
     for provider in providers.iter() {
         let mut definition = provider.definition();
@@ -128,6 +129,10 @@ fn build_snapshot(
             );
             kickstart_provider_ids.push(definition.id.clone());
         }
+        let rolling = provider.rolling_windows();
+        if rolling.len() > 1 {
+            kickstart_rolling_windows.insert(definition.id.clone(), rolling);
+        }
         runtimes.insert(definition.id.clone(), provider.clone());
         definitions.push(definition);
     }
@@ -145,6 +150,7 @@ fn build_snapshot(
             api_key_provider_ids,
             kickstart_provider_ids,
             kickstart_default_commands,
+            kickstart_rolling_windows,
         }),
         definition_indices,
         metric_indices,
@@ -560,6 +566,45 @@ mod tests {
         .unwrap();
 
         assert_eq!(registry.catalog().kickstart_provider_ids, ["kickable"]);
+        // Session-only providers do not advertise rolling windows.
+        assert!(registry.catalog().kickstart_rolling_windows.is_empty());
+    }
+
+    struct MultiWindowStubProvider(ProviderDefinition);
+
+    impl UsageProvider for MultiWindowStubProvider {
+        fn definition(&self) -> ProviderDefinition {
+            self.0.clone()
+        }
+
+        fn has_local_credentials(&self) -> bool {
+            false
+        }
+
+        fn rolling_windows(&self) -> Vec<String> {
+            vec!["session".to_owned(), "weekly".to_owned()]
+        }
+
+        fn refresh(&self) -> Result<ProviderSnapshot, ProviderError> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn registry_collects_rolling_windows_for_multi_window_providers() {
+        let registry = ProviderRegistry::new(vec![
+            runtime(definition("local")),
+            Arc::new(MultiWindowStubProvider(definition("kimi-like"))),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            registry.catalog().kickstart_rolling_windows,
+            std::collections::BTreeMap::from([(
+                "kimi-like".to_owned(),
+                vec!["session".to_owned(), "weekly".to_owned()]
+            )])
+        );
     }
 
     #[test]

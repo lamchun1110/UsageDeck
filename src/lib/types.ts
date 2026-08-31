@@ -204,6 +204,7 @@ export interface ProviderCatalog {
   apiKeyProviderIds?: string[];
   kickstartProviderIds?: string[];
   kickstartDefaultCommands?: Record<string, string>;
+  kickstartRollingWindows?: Record<string, string[]>;
 }
 
 export interface MetricLayout {
@@ -254,6 +255,7 @@ export interface AppSettings {
   detectionNoticeDismissed: boolean;
   kickstartProviderIds: string[];
   kickstartCommands: Record<string, string>;
+  kickstartWindowScopes?: Record<string, string>;
 }
 
 export interface UpdateStatus {

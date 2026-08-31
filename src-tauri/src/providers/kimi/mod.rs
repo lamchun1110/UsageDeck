@@ -182,6 +182,13 @@ impl UsageProvider for KimiProvider {
         self.identity.definition(definition())
     }
 
+    /// Both Kimi windows are first-message rolling: the 5-hour session and
+    /// the 7-day weekly, which stays dead after expiry until a new message
+    /// re-anchors it. A kickstart prompt can renew either.
+    fn rolling_windows(&self) -> Vec<String> {
+        vec!["session".to_owned(), "weekly".to_owned()]
+    }
+
     fn has_local_credentials(&self) -> bool {
         self.auth.has_local_credentials()
     }
@@ -291,6 +298,24 @@ mod tests {
         "limits":[{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},
         "detail":{"limit":"100","remaining":"80","resetTime":"2026-08-07T06:17:43.139020Z"}}]}"#;
 
+    // The live API now reports the weekly window as `remaining`, matching the
+    // per-window detail shape; `used` no longer appears at the top level.
+    const REMAINING_QUOTA_BODY: &str = r#"{"user":{"membership":{"level":"LEVEL_BASIC"}},
+        "usage":{"limit":"100","remaining":"40","resetTime":"2026-09-07T02:17:43.139020Z"},
+        "limits":[{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},
+        "detail":{"limit":"100","remaining":"90","resetTime":"2026-08-31T15:17:43.139020Z"}}]}"#;
+
+    #[test]
+    fn both_windows_are_first_message_rolling() {
+        let provider = KimiProvider::new().unwrap();
+        assert_eq!(
+            provider.rolling_windows(),
+            vec!["session".to_owned(), "weekly".to_owned()]
+        );
+        let account = KimiProvider::new_for_account("kimi@1a2b3c4d", "Work").unwrap();
+        assert_eq!(account.rolling_windows(), provider.rolling_windows());
+    }
+
     #[test]
     fn refresh_maps_usage_and_window() {
         let url = test_http::serve_once(200, &[], QUOTA_BODY);
@@ -309,6 +334,30 @@ mod tests {
                 .map(|quota| quota.id.as_str())
                 .collect::<Vec<_>>(),
             ["session", "weekly"]
+        );
+        // The legacy `used` shape still maps: 25 of 100.
+        assert_eq!(snapshot.quotas[1].used_percent, 25.0);
+    }
+
+    #[test]
+    fn weekly_maps_from_remaining_when_used_is_absent() {
+        let url = test_http::serve_once(200, &[], REMAINING_QUOTA_BODY);
+        let provider = KimiProvider::with_dependencies(
+            auth(Some("secret")),
+            KimiClient::for_test(&url, Duration::from_secs(1)),
+        );
+
+        let snapshot = provider.refresh().unwrap();
+        let weekly = snapshot
+            .quotas
+            .iter()
+            .find(|quota| quota.id == "weekly")
+            .expect("weekly must not be dropped when the API reports remaining");
+        // 100 limit with 40 remaining is 60% used, and the scheduled reset maps.
+        assert_eq!(weekly.used_percent, 60.0);
+        assert_eq!(
+            weekly.resets_at.map(|reset| reset.to_rfc3339()),
+            Some("2026-09-07T02:17:43.139020+00:00".to_owned())
         );
     }
 

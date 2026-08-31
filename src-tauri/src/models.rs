@@ -632,6 +632,10 @@ pub struct ProviderCatalog {
     /// show exactly what runs when no custom command is set.
     #[serde(default)]
     pub kickstart_default_commands: std::collections::BTreeMap<String, String>,
+    /// Rolling window ids for every kickstart-capable provider with more than
+    /// the session window, so the UI can offer a kickstart window scope.
+    #[serde(default)]
+    pub kickstart_rolling_windows: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -829,6 +833,11 @@ pub struct AppSettings {
     /// session windows are eligible.
     #[serde(default)]
     pub kickstart_commands: std::collections::BTreeMap<String, String>,
+    /// Which rolling windows the kickstart renews per provider: "session"
+    /// (the default, not stored), "weekly", or "both". Only providers with
+    /// multiple rolling windows use it.
+    #[serde(default)]
+    pub kickstart_window_scopes: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for AppSettings {
@@ -860,6 +869,7 @@ impl Default for AppSettings {
             detection_notice_dismissed: false,
             kickstart_provider_ids: Vec::new(),
             kickstart_commands: std::collections::BTreeMap::new(),
+            kickstart_window_scopes: std::collections::BTreeMap::new(),
         }
     }
 }

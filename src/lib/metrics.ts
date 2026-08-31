@@ -12,6 +12,7 @@ export class ProviderCatalogIndex {
   readonly #apiKeyProviderIds: Set<string>;
   readonly #kickstartProviderIds: Set<string>;
   readonly #kickstartDefaultCommands: Record<string, string>;
+  readonly #kickstartRollingWindows: Record<string, string[]>;
 
   constructor(catalog: ProviderCatalog) {
     this.providers = catalog.providers;
@@ -20,6 +21,7 @@ export class ProviderCatalogIndex {
     this.#apiKeyProviderIds = new Set(catalog.apiKeyProviderIds ?? []);
     this.#kickstartProviderIds = new Set(catalog.kickstartProviderIds ?? []);
     this.#kickstartDefaultCommands = catalog.kickstartDefaultCommands ?? {};
+    this.#kickstartRollingWindows = catalog.kickstartRollingWindows ?? {};
 
     for (const provider of catalog.providers) {
       if (this.#providersById.has(provider.id)) {
@@ -67,6 +69,16 @@ export class ProviderCatalogIndex {
 
   defaultKickstartCommand(id: string) {
     return this.#kickstartDefaultCommands[id] ?? '';
+  }
+
+  // Rolling windows beyond the session that a first message also restarts
+  // (Kimi's weekly). Providers without an entry roll only the session.
+  kickstartRollingWindows(id: string) {
+    return this.#kickstartRollingWindows[id] ?? ['session'];
+  }
+
+  hasKickstartWindowScope(id: string) {
+    return this.kickstartRollingWindows(id).length > 1;
   }
 
   // Every provider with a first-message rolling session publishes it as the

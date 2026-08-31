@@ -75,6 +75,7 @@ enum ResolvedCommand {
 /// How long the login-shell PATH probe may take before it is abandoned. A
 /// profile that needs longer (heavy nvm setups) would also delay every
 /// kickstart spawn, so the bound doubles as a health check.
+#[cfg(not(target_os = "windows"))]
 const PROGRAM_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Resolved built-in programs, remembered for the session so the probe and the
@@ -189,7 +190,7 @@ fn resolve_command(
     kickstart_commands: &std::collections::BTreeMap<String, String>,
     registry: &ProviderRegistry,
 ) -> Option<ResolvedCommand> {
-    if !is_session_capable(registry, provider_id) {
+    if !is_kickstart_capable(registry, provider_id) {
         return None;
     }
     if let Some(custom) = kickstart_commands.get(provider_id) {
@@ -209,9 +210,17 @@ fn resolve_command(
 
 /// Every provider with a first-message rolling session publishes it as the
 /// quota window with source id "session" (claude, codex, zai, kimi, minimax,
-/// opencode, commandcode). Matching by that convention keeps the kickstart
-/// trigger independent of the `sessionWindow` UI flag, which only claude sets.
-fn is_session_capable(registry: &ProviderRegistry, provider_id: &str) -> bool {
+/// opencode, commandcode); Kimi additionally rolls its weekly window on the
+/// first message. Matching by the runtime's declared rolling windows keeps
+/// the kickstart trigger independent of the `sessionWindow` UI flag, which
+/// only claude sets.
+fn is_kickstart_capable(registry: &ProviderRegistry, provider_id: &str) -> bool {
+    let Some(rolling) = registry
+        .runtime(provider_id)
+        .map(|runtime| runtime.rolling_windows())
+    else {
+        return false;
+    };
     registry.definition(provider_id).is_some_and(|definition| {
         definition.metrics.iter().any(|metric| {
             matches!(
@@ -223,14 +232,37 @@ fn is_session_capable(registry: &ProviderRegistry, provider_id: &str) -> bool {
                     source_id: _,
                     session_window: _,
                 }
-            ) && metric.source.source_id() == Some("session")
+            ) && metric
+                .source
+                .source_id()
+                .is_some_and(|source_id| rolling.iter().any(|window| window == source_id))
         })
     })
 }
 
-/// A session window is active while its reset time is still in the future;
-/// once every session window is missing or past its reset, the session has
-/// rolled over and a kickstart would begin a fresh one.
+/// The windows a kickstart renews for one provider under its stored scope:
+/// the session by default, the non-session rolling windows for "weekly", and
+/// everything for "both". Empty means the scope names nothing this provider
+/// rolls and the provider is skipped.
+fn scoped_windows(scope: Option<&str>, rolling: &[String]) -> Vec<String> {
+    match scope {
+        Some("weekly") => rolling
+            .iter()
+            .filter(|window| window.as_str() != "session")
+            .cloned()
+            .collect(),
+        Some("both") => rolling.to_vec(),
+        _ => rolling
+            .iter()
+            .filter(|window| window.as_str() == "session")
+            .cloned()
+            .collect(),
+    }
+}
+
+/// A window is active while its reset time is still in the future; once a
+/// scoped window is missing or past its reset, the window has rolled over
+/// and a kickstart prompt would begin a fresh one.
 #[cfg(test)]
 fn session_window_active(snapshot: &crate::models::ProviderSnapshot) -> bool {
     let now = Utc::now();
@@ -240,15 +272,31 @@ fn session_window_active(snapshot: &crate::models::ProviderSnapshot) -> bool {
         .any(|window| window.id == "session" && window.resets_at.is_some_and(|reset| reset > now))
 }
 
-fn active_session_reset(snapshot: &crate::models::ProviderSnapshot) -> Option<DateTime<Utc>> {
+/// The earliest upcoming reset among the scoped windows, or `None` when any
+/// scoped window has rolled over — the state a kickstart renews.
+fn next_scoped_reset(
+    snapshot: &crate::models::ProviderSnapshot,
+    scoped: &[String],
+) -> Option<DateTime<Utc>> {
     let now = Utc::now();
-    snapshot
-        .quotas
+    scoped
         .iter()
-        .filter(|window| window.id == "session")
-        .filter_map(|window| window.resets_at)
-        .filter(|reset| *reset > now)
-        .min()
+        .map(|window_id| {
+            snapshot
+                .quotas
+                .iter()
+                .filter(|window| window.id == *window_id)
+                .filter_map(|window| window.resets_at)
+                .filter(|reset| *reset > now)
+                .min()
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|resets| {
+            resets
+                .into_iter()
+                .min()
+                .expect("scoped windows are non-empty")
+        })
 }
 
 /// Decides and schedules session kickstarts after a refresh batch. Two tiers:
@@ -318,8 +366,23 @@ pub fn evaluate(
         let Some(snapshot) = fresh_snapshot(provider_state) else {
             continue;
         };
-        if let Some(reset_at) = active_session_reset(snapshot) {
-            // Still inside a live window: aim the timer at its reset.
+        let rolling = registry
+            .runtime(&provider_id)
+            .map(|runtime| runtime.rolling_windows())
+            .unwrap_or_default();
+        let scoped = scoped_windows(
+            current_settings
+                .kickstart_window_scopes
+                .get(&provider_id)
+                .map(String::as_str),
+            &rolling,
+        );
+        if scoped.is_empty() {
+            continue;
+        }
+        if let Some(reset_at) = next_scoped_reset(snapshot, &scoped) {
+            // Every scoped window is still live: aim the timer at the earliest
+            // reset among them.
             schedule_at_reset(
                 provider_id.clone(),
                 reset_at,
@@ -331,8 +394,8 @@ pub fn evaluate(
             continue;
         }
 
-        // The session has rolled over: a scheduled timer is obsolete — kick
-        // now if the cooldown allows.
+        // A scoped window has rolled over: a scheduled timer is obsolete —
+        // kick now if the cooldown allows.
         cancel_scheduled(&provider_id);
         if !record_attempt(&provider_id) {
             continue;
@@ -358,12 +421,15 @@ fn spawn_prompt(
     notifications: Arc<NotificationEvaluator>,
 ) {
     tauri::async_runtime::spawn(async move {
-        crate::app_info!("kickstart", "session rolled over; starting a fresh window");
+        crate::app_info!(
+            "kickstart",
+            "{provider_id} window rolled over; starting a fresh one"
+        );
         if let Err(error) = send_prompt(&command).await {
             crate::app_warn!("kickstart", "{provider_id} kickstart failed: {error}");
             return;
         }
-        crate::app_info!("kickstart", "{provider_id} session window restarted");
+        crate::app_info!("kickstart", "{provider_id} window restarted");
 
         // Publish the brand-new window after the prompt completes. The nested
         // refresh tail sees an active live session and only rearms its timer.
@@ -523,7 +589,10 @@ async fn send_prompt(resolved: &ResolvedCommand) -> Result<(), String> {
 mod tests {
     use chrono::Utc;
 
-    use super::{fresh_snapshot, is_session_capable, session_window_active, LAST_ATTEMPTS};
+    use super::{
+        fresh_snapshot, is_kickstart_capable, next_scoped_reset, scoped_windows,
+        session_window_active, LAST_ATTEMPTS,
+    };
     use crate::models::{
         MetricDefinition, MetricSection, MetricSource, ProviderDefinition, ProviderSnapshot,
         ProviderViewState, QuotaWindow, SnapshotSource, UsageHistory,
@@ -587,7 +656,7 @@ mod tests {
         definition.fallback_enabled = true;
         let registry =
             crate::providers::ProviderRegistry::from_definitions(vec![definition]).unwrap();
-        assert!(is_session_capable(&registry, "claude"));
+        assert!(is_kickstart_capable(&registry, "claude"));
 
         let future = Utc::now() + chrono::Duration::hours(2);
         assert!(session_window_active(&snapshot_with_session_reset(Some(
@@ -605,7 +674,7 @@ mod tests {
         snapshot.quotas[0].resets_at = Some(future);
         assert!(!session_window_active(&snapshot));
         // A differently-named provider without a "session" metric is not capable.
-        assert!(!is_session_capable(&registry, "codex"));
+        assert!(!is_kickstart_capable(&registry, "codex"));
     }
 
     #[test]
@@ -639,6 +708,87 @@ mod tests {
         assert!(super::record_attempt("claude"));
         assert!(!super::record_attempt("claude"));
         assert!(super::record_attempt("codex"));
+    }
+
+    #[test]
+    fn scoped_windows_follow_the_stored_scope() {
+        let rolling = vec!["session".to_owned(), "weekly".to_owned()];
+        assert_eq!(scoped_windows(None, &rolling), ["session"]);
+        assert_eq!(scoped_windows(Some("session"), &rolling), ["session"]);
+        assert_eq!(scoped_windows(Some("weekly"), &rolling), ["weekly"]);
+        assert_eq!(
+            scoped_windows(Some("both"), &rolling),
+            ["session", "weekly"]
+        );
+        // A weekly-only provider stays eligible under the weekly scope and is
+        // skipped entirely under the session default.
+        assert_eq!(
+            scoped_windows(Some("weekly"), &["weekly".to_owned()]),
+            ["weekly"]
+        );
+        assert!(scoped_windows(None, &["weekly".to_owned()]).is_empty());
+    }
+
+    fn weekly_window(reset: Option<chrono::DateTime<Utc>>) -> QuotaWindow {
+        QuotaWindow {
+            id: "weekly".into(),
+            label: "Weekly".into(),
+            used_percent: 0.0,
+            resets_at: reset,
+            period_seconds: 7 * 24 * 3600,
+            format: Default::default(),
+            used_value: None,
+            limit_value: None,
+            unit: None,
+            estimated: false,
+            source_note: None,
+        }
+    }
+
+    #[test]
+    fn next_reset_requires_every_scoped_window_to_be_live() {
+        let soon = Utc::now() + chrono::Duration::hours(1);
+        let later = Utc::now() + chrono::Duration::hours(3);
+        let past = Utc::now() - chrono::Duration::hours(1);
+
+        // Both live: the earliest upcoming reset among them wins.
+        let mut snapshot = snapshot_with_session_reset(Some(later));
+        snapshot.quotas.push(weekly_window(Some(soon)));
+        assert_eq!(
+            next_scoped_reset(&snapshot, &["session".to_owned(), "weekly".to_owned()]),
+            Some(soon)
+        );
+
+        // A missing scoped window has rolled over and demands a kick.
+        let session_only = snapshot_with_session_reset(Some(later));
+        assert_eq!(
+            next_scoped_reset(&session_only, &["session".to_owned(), "weekly".to_owned()]),
+            None
+        );
+
+        // A past reset on a scoped window demands a kick even though the
+        // session itself is live.
+        let mut expired_weekly = snapshot_with_session_reset(Some(later));
+        expired_weekly.quotas.push(weekly_window(Some(past)));
+        assert_eq!(
+            next_scoped_reset(
+                &expired_weekly,
+                &["session".to_owned(), "weekly".to_owned()]
+            ),
+            None
+        );
+
+        // A weekly-only scope ignores the dead session entirely.
+        assert_eq!(
+            next_scoped_reset(&expired_weekly, &["weekly".to_owned()]),
+            None
+        );
+        let mut live_weekly = snapshot_with_session_reset(None);
+        live_weekly.quotas.push(weekly_window(Some(soon)));
+        assert_eq!(
+            next_scoped_reset(&live_weekly, &["weekly".to_owned()]),
+            Some(soon)
+        );
     }
 
     #[test]

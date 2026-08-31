@@ -629,6 +629,7 @@ impl SettingsService {
         next.providers.retain(|layout| layout.id != provider_id);
         next.provider_names.remove(provider_id);
         next.kickstart_commands.remove(provider_id);
+        next.kickstart_window_scopes.remove(provider_id);
         next.kickstart_provider_ids.retain(|id| id != provider_id);
         if let Ok(mut settings) = self.settings.write() {
             *settings = std::sync::Arc::new(next.clone());
@@ -957,6 +958,17 @@ fn normalize_with_persisted_accounts(
                 .is_some_and(|runtime| runtime.session_kickstart().is_some())
                 || settings.kickstart_commands.contains_key(provider_id))
     });
+    // Window scopes only apply to providers with more than the session
+    // window, and only the non-default choices are worth persisting.
+    settings
+        .kickstart_window_scopes
+        .retain(|provider_id, scope| {
+            *scope = scope.trim().to_owned();
+            let multi_window = registry
+                .runtime(provider_id)
+                .is_some_and(|runtime| runtime.rolling_windows().len() > 1);
+            multi_window && matches!(scope.as_str(), "weekly" | "both")
+        });
 
     if settings.known_provider_ids.is_empty() {
         settings.known_provider_ids = settings
@@ -1270,6 +1282,103 @@ mod tests {
             Some("claude -p hi --model haiku")
         );
         assert!(!normalized.kickstart_commands.contains_key("cursor"));
+    }
+
+    #[test]
+    fn kickstart_window_scopes_normalize_to_multi_window_providers() {
+        use crate::models::{MetricDefinition, MetricSource};
+
+        struct MultiWindowProvider(ProviderDefinition);
+        impl UsageProvider for MultiWindowProvider {
+            fn definition(&self) -> ProviderDefinition {
+                self.0.clone()
+            }
+            fn has_local_credentials(&self) -> bool {
+                false
+            }
+            fn rolling_windows(&self) -> Vec<String> {
+                vec!["session".to_owned(), "weekly".to_owned()]
+            }
+            fn refresh(&self) -> Result<ProviderSnapshot, ProviderError> {
+                unreachable!()
+            }
+        }
+
+        fn provider(id: &str) -> Arc<dyn UsageProvider> {
+            Arc::new(MultiWindowProvider(ProviderDefinition {
+                id: id.into(),
+                display_name: id.into(),
+                short_name: "P".into(),
+                fallback_enabled: true,
+                local_usage_source_note: None,
+                links: vec![],
+                options: Vec::new(),
+                metrics: vec![MetricDefinition::new(
+                    format!("{id}.session"),
+                    "Session",
+                    MetricSource::Quota {
+                        source_id: "session".into(),
+                        session_window: true,
+                    },
+                    true,
+                    true,
+                    MetricSection::AlwaysVisible,
+                    true,
+                    Some("S"),
+                    None,
+                )],
+            }))
+        }
+
+        let registry = ProviderRegistry::new(vec![
+            provider("kimi"),
+            provider("kimi-two"),
+            provider("claude"),
+        ])
+        .unwrap();
+
+        let mut settings = AppSettings::default();
+        settings
+            .kickstart_window_scopes
+            .insert("kimi".into(), " weekly ".into());
+        settings
+            .kickstart_window_scopes
+            .insert("kimi-two".into(), "both".into());
+        settings
+            .kickstart_window_scopes
+            .insert("kimi-three".into(), "weekly".into());
+        settings
+            .kickstart_window_scopes
+            .insert("claude".into(), "nonsense".into());
+
+        let mut normalized = settings.clone();
+        super::normalize_with_persisted_accounts(
+            &registry,
+            &mut normalized,
+            &HashSet::new(),
+            &HashSet::new(),
+        );
+
+        // Scopes trim and survive for multi-window providers; unknown
+        // providers and invalid values are dropped.
+        assert_eq!(
+            normalized
+                .kickstart_window_scopes
+                .get("kimi")
+                .map(String::as_str),
+            Some("weekly")
+        );
+        assert_eq!(
+            normalized
+                .kickstart_window_scopes
+                .get("kimi-two")
+                .map(String::as_str),
+            Some("both")
+        );
+        assert!(!normalized
+            .kickstart_window_scopes
+            .contains_key("kimi-three"));
+        assert!(!normalized.kickstart_window_scopes.contains_key("claude"));
     }
 
     use super::{

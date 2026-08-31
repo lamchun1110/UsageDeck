@@ -266,6 +266,10 @@ export const ja = {
   'settings.kickstart.builtinBadge': '組み込み',
   'settings.kickstart.needsCommandBadge': 'コマンドが必要',
   'settings.kickstart.toggleAria': '{provider} のセッションを有効に保つ',
+  'settings.kickstart.scopeLabel': '再開するウィンドウ',
+  'settings.kickstart.scope.session': 'セッションのみ',
+  'settings.kickstart.scope.weekly': '週次のみ',
+  'settings.kickstart.scope.both': 'セッションと週次',
   'settings.migration.keyTransferFailed':
     'OpenQuota から一部の保存済みキーを移行できませんでした：{providers}。カスタマイズで再追加してください。',
   'settings.customize.accountHint': 'API アカウントは独立したカードとして表示されます。',

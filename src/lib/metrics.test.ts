@@ -55,6 +55,21 @@ describe('provider catalog index', () => {
     expect(catalog.isApiKeyAccount('openrouter@deadbeef')).toBe(false);
   });
 
+  it('exposes rolling windows and gates the scope selector on multi-window providers', () => {
+    const catalog = new ProviderCatalogIndex({
+      ...structuredClone(providerCatalog),
+      kickstartRollingWindows: {
+        kimi: ['session', 'weekly'],
+      },
+    });
+
+    expect(catalog.kickstartRollingWindows('kimi')).toEqual(['session', 'weekly']);
+    expect(catalog.hasKickstartWindowScope('kimi')).toBe(true);
+    // Every other provider rolls only the session and offers no scope choice.
+    expect(catalog.kickstartRollingWindows('claude')).toEqual(['session']);
+    expect(catalog.hasKickstartWindowScope('claude')).toBe(false);
+  });
+
   it('prefers the snapshot usage source when an additional local source contributed', () => {
     const catalog = new ProviderCatalogIndex(providerCatalog);
     const snapshot = structuredClone(codexState.snapshot!);

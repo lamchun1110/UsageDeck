@@ -129,6 +129,22 @@
     onChange({ ...settings, kickstartProviderIds: ids.sort() });
   }
 
+  // Which rolling windows the kickstart renews; only providers with more
+  // than the session window offer the choice. The session-only default is
+  // not stored, matching the backend's normalization.
+  const scopeSelectable = $derived(catalog.hasKickstartWindowScope(providerId));
+
+  function scopeValue() {
+    return settings.kickstartWindowScopes?.[providerId] ?? 'session';
+  }
+
+  function changeScope(scope: string) {
+    const next = { ...(settings.kickstartWindowScopes ?? {}) };
+    if (scope === 'session') delete next[providerId];
+    else next[providerId] = scope;
+    onChange({ ...settings, kickstartWindowScopes: next });
+  }
+
   function showMessage(text: string, kind: 'success' | 'denied') {
     message = text;
     messageKind = kind;
@@ -310,6 +326,20 @@
               if (event.key === 'Enter') event.currentTarget.blur();
             }}
           />
+          {#if scopeSelectable}
+            <label class="kickstart-scope">
+              <span>{t('settings.kickstart.scopeLabel')}</span>
+              <select
+                value={scopeValue()}
+                aria-label={t('settings.kickstart.scopeLabel')}
+                onchange={(event) => changeScope(event.currentTarget.value)}
+              >
+                <option value="session">{t('settings.kickstart.scope.session')}</option>
+                <option value="weekly">{t('settings.kickstart.scope.weekly')}</option>
+                <option value="both">{t('settings.kickstart.scope.both')}</option>
+              </select>
+            </label>
+          {/if}
         </div>
       </div>
     {/if}
@@ -499,6 +529,33 @@
     }
 
     .kickstart-command:focus {
+      box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--meter-fill) 55%, transparent);
+    }
+
+    .kickstart-scope {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 12px;
+      border-top: 1px solid var(--separator);
+      font-size: 10px;
+      color: var(--secondary);
+    }
+
+    .kickstart-scope select {
+      flex: 0 1 auto;
+      max-width: 60%;
+      padding: 4px 8px;
+      border: 1px solid var(--separator);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--card) 75%, var(--tray));
+      color: var(--text);
+      font-size: 10px;
+      outline: none;
+    }
+
+    .kickstart-scope select:focus {
       box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--meter-fill) 55%, transparent);
     }
 

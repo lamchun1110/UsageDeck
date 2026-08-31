@@ -181,6 +181,14 @@ pub trait UsageProvider: Send + Sync {
         None
     }
 
+    /// Quota window ids that a first message (re)starts for this provider and
+    /// that a kickstart prompt can therefore renew. Every session-capable
+    /// provider reports the 5-hour session; Kimi's weekly window is also
+    /// first-message rolling, so it reports both.
+    fn rolling_windows(&self) -> Vec<String> {
+        vec!["session".to_owned()]
+    }
+
     /// A minimal command that starts a fresh rolling session window for this
     /// provider (opt-in per provider in Settings). `None` when the provider
     /// has no local CLI capable of one — API-key providers cannot be
