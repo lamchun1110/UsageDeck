@@ -60,6 +60,7 @@
   let viewState = $state<UsageViewState>(emptyView);
   let catalog = $state<ProviderCatalogIndex>(emptyProviderCatalog);
   let lastAccountRevision = $state(0);
+  let accountResyncSequence = 0;
   let screen = $state<Screen>('dashboard');
   let now = $state(Date.now());
   let settingsError = $state<string | null>(null);
@@ -535,12 +536,15 @@
   // the matching catalog definitions. If the screen showing the removed
   // account is open, fall back to Customize.
   async function resyncAfterAccountChange() {
+    const sequence = ++accountResyncSequence;
     let state: BootstrapState;
     try {
       state = await getBootstrapState();
     } catch {
       return;
     }
+    if (sequence !== accountResyncSequence || state.settings.accountRevision < lastAccountRevision)
+      return;
     catalog = new ProviderCatalogIndex(state.catalog);
     // acceptExternalState, not setState: it parks the fetched snapshot while a
     // settings mutation is in flight instead of reverting the optimistic edit.
@@ -582,7 +586,7 @@
     };
     const mutationObserver = new MutationObserver(observePanelParts);
     if (popover) {
-      mutationObserver.observe(popover, { childList: true, subtree: true, characterData: true });
+      mutationObserver.observe(popover, { childList: true, subtree: true });
     }
     observePanelParts();
     const keyboard = new AppKeyboardController({

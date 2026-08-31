@@ -136,7 +136,7 @@
     </p>{/if}
 
   {#if settingsView.platformSummary}<div class="settings-section">
-      <h2>Linux</h2>
+      <h2>{t('settings.section.linux')}</h2>
       <div class="setting-row">
         <span
           ><b>{t('settings.row.desktopIntegration')}</b><small>{settingsView.platformSummary}</small

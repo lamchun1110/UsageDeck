@@ -1,10 +1,48 @@
+<script module lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
+  import { quotaHistory as fetchQuotaHistory } from './backend';
+  import type { QuotaHistoryByProvider } from './types';
+
+  let cachedHistoryMarker: string | null = null;
+  let cachedHistory: QuotaHistoryByProvider | null = null;
+  let cachedHistoryAt = 0;
+  let latestHistoryMarker: string | null = null;
+  const historyRequests = new SvelteMap<string, Promise<QuotaHistoryByProvider>>();
+  const HISTORY_CACHE_MS = 60_000;
+
+  function loadQuotaHistory(marker: string) {
+    if (
+      cachedHistoryMarker === marker &&
+      cachedHistory !== null &&
+      Date.now() - cachedHistoryAt < HISTORY_CACHE_MS
+    ) {
+      return Promise.resolve(cachedHistory);
+    }
+    const pending = historyRequests.get(marker);
+    if (pending) return pending;
+    latestHistoryMarker = marker;
+    const request = fetchQuotaHistory()
+      .then((history) => {
+        const normalized = history ?? {};
+        if (latestHistoryMarker === marker) {
+          cachedHistoryMarker = marker;
+          cachedHistory = normalized;
+          cachedHistoryAt = Date.now();
+        }
+        return normalized;
+      })
+      .finally(() => historyRequests.delete(marker));
+    historyRequests.set(marker, request);
+    return request;
+  }
+</script>
+
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
   import { flip } from 'svelte/animate';
   import { scale, slide } from 'svelte/transition';
   import { reorderFlip, springMotion } from './motion';
   import { pointerReorder } from './pointerReorder';
-  import { quotaHistory as fetchQuotaHistory } from './backend';
   import ProviderIcon from './ProviderIcon.svelte';
   import ProviderLinks from './ProviderLinks.svelte';
   import ProviderNoticeRow from './ProviderNoticeRow.svelte';
@@ -24,7 +62,6 @@
     MetricLayout,
     ProviderLayout,
     ProviderSnapshot,
-    QuotaHistoryByProvider,
     UpdateProgress,
     UpdateFailure,
     UsageHistory,
@@ -87,16 +124,22 @@
   // Sparkline samples load once per completed refresh cycle, not per progressive state event.
   let quotaHistory = $state<QuotaHistoryByProvider>({});
   let historyLoadedFor: string | null = null;
+  let historyRequestSequence = 0;
   $effect(() => {
     const marker = viewState.lastFullRefreshAt ?? 'none';
     if (historyLoadedFor === marker) return;
     historyLoadedFor = marker;
-    fetchQuotaHistory()
+    const sequence = ++historyRequestSequence;
+    loadQuotaHistory(marker)
       .then((history) => {
-        quotaHistory = history ?? {};
+        if (sequence === historyRequestSequence && historyLoadedFor === marker) {
+          quotaHistory = history;
+        }
       })
       .catch(() => {
-        quotaHistory = {};
+        if (sequence === historyRequestSequence && historyLoadedFor === marker) {
+          quotaHistory = {};
+        }
       });
   });
   const emptyUsage: UsageHistory = {

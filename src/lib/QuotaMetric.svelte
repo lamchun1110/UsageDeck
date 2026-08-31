@@ -52,7 +52,7 @@
     if (quota.format === 'count' && quota.usedValue !== null && quota.limitValue !== null) {
       const value =
         usageDisplay === 'left' ? Math.max(0, quota.limitValue - quota.usedValue) : quota.usedValue;
-      return `${value.toFixed(0)} ${countUnit} ${usageDisplay === 'used' ? usedWord : leftWord}`;
+      return `${formatMetricNumber(value, 'count', 'row')} ${countUnit} ${usageDisplay === 'used' ? usedWord : leftWord}`;
     }
     if (quota.format === 'dollars' && quota.usedValue !== null) {
       if (usageDisplay === 'left' && quota.limitValue !== null) {
@@ -68,7 +68,7 @@
     if (quota.format === 'count' && quota.usedValue !== null && quota.limitValue !== null) {
       const opposite =
         usageDisplay === 'left' ? quota.usedValue : Math.max(0, quota.limitValue - quota.usedValue);
-      return `${opposite.toFixed(0)} ${countUnit} ${usageDisplay === 'left' ? usedWord : leftWord}`;
+      return `${formatMetricNumber(opposite, 'count', 'full')} ${countUnit} ${usageDisplay === 'left' ? usedWord : leftWord}`;
     }
     if (quota.format === 'dollars' && quota.usedValue !== null) {
       if (usageDisplay === 'left')

@@ -217,9 +217,12 @@ function formatDuration(milliseconds: number) {
   const days = Math.floor(minutes / 1_440);
   const hours = Math.floor((minutes % 1_440) / 60);
   const remainder = minutes % 60;
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return remainder > 0 ? `${hours}h ${remainder}m` : `${hours}h`;
-  return `${remainder}m`;
+  if (days > 0) return t('duration.daysHours', { days, hours });
+  if (hours > 0)
+    return remainder > 0
+      ? t('duration.hoursMinutes', { hours, minutes: remainder })
+      : t('duration.hours', { hours });
+  return t('duration.minutes', { minutes: remainder });
 }
 
 function level(): PaceProjection {

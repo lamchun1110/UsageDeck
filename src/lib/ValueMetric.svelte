@@ -138,7 +138,7 @@
         <span
           class="value-estimate"
           data-tooltip={t('value.estimatedLocally')}
-          aria-label="Estimated value"
+          aria-label={t('value.estimatedAria')}
           role="img"><Icon name="about" size={11} strokeWidth={1.9} /></span
         >
       {/if}
@@ -150,7 +150,7 @@
         <span
           class="value-estimate"
           data-tooltip={t('value.estimatedLocally')}
-          aria-label="Estimated value"
+          aria-label={t('value.estimatedAria')}
           role="img"><Icon name="about" size={11} strokeWidth={1.9} /></span
         >
       {/if}
