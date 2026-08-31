@@ -183,8 +183,14 @@ pub trait UsageProvider: Send + Sync {
 
     /// Quota window ids that a first message (re)starts for this provider and
     /// that a kickstart prompt can therefore renew. Every session-capable
-    /// provider reports the 5-hour session; Kimi's weekly window is also
-    /// first-message rolling, so it reports both.
+    /// provider reports the 5-hour session; Kimi's and Codex's weekly windows
+    /// are also first-message rolling, so they report both.
+    ///
+    /// Declare only windows the provider's API actually reports once active:
+    /// a missing window reads as rolled over, so declaring a window a plan
+    /// never returns would kick on every cooldown forever. Calendar-reset
+    /// windows (weekly resetting Monday midnight) are never dead and must
+    /// not be declared — a prompt cannot restart them.
     fn rolling_windows(&self) -> Vec<String> {
         vec!["session".to_owned()]
     }

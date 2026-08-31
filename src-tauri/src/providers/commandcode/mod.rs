@@ -121,6 +121,22 @@ impl UsageProvider for CommandCodeProvider {
         definition()
     }
 
+    /// Both windows are first-message rolling — observed live: a single
+    /// `cmd -p` prompt started the session and the weekly anchored to the
+    /// same millisecond.
+    fn rolling_windows(&self) -> Vec<String> {
+        vec!["session".to_owned(), "weekly".to_owned()]
+    }
+
+    /// Print mode sends one prompt and exits; `--no-session` keeps the
+    /// throwaway kick out of the user's conversation history.
+    fn session_kickstart(&self) -> Option<crate::providers::SessionKickstart> {
+        Some(crate::providers::SessionKickstart::new(
+            "cmd",
+            &["-p", "Hi", "--no-session"],
+        ))
+    }
+
     fn has_local_credentials(&self) -> bool {
         self.auth.has_local_credentials()
     }
@@ -295,5 +311,30 @@ mod transport_tests {
         let error = provider.refresh().unwrap_err();
         assert_eq!(error.kind(), ProviderErrorKind::Network);
         assert!(!error.to_string().contains("secret-key"));
+    }
+}
+
+#[cfg(test)]
+mod rolling_window_tests {
+    use super::CommandCodeProvider;
+    use crate::providers::UsageProvider;
+
+    #[test]
+    fn both_windows_roll_and_the_built_in_prompt_is_noninteractive() {
+        let provider = CommandCodeProvider::new().unwrap();
+
+        assert_eq!(
+            provider.rolling_windows(),
+            vec!["session".to_owned(), "weekly".to_owned()]
+        );
+        assert_eq!(
+            provider
+                .session_kickstart()
+                .map(|kickstart| (kickstart.program, kickstart.args)),
+            Some((
+                "cmd".to_owned(),
+                vec!["-p".to_owned(), "Hi".to_owned(), "--no-session".to_owned()]
+            ))
+        );
     }
 }

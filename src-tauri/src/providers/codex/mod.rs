@@ -384,6 +384,14 @@ impl crate::providers::UsageProvider for CodexProvider {
         ))
     }
 
+    /// The weekly window re-anchors to the first message of the window —
+    /// observed live: the weekly start tracks the session start to the
+    /// second — so a dead weekly stays dead until the next message and a
+    /// kickstart prompt renews it.
+    fn rolling_windows(&self) -> Vec<String> {
+        vec!["session".to_owned(), "weekly".to_owned()]
+    }
+
     fn definition(&self) -> ProviderDefinition {
         definition()
     }
@@ -483,6 +491,30 @@ mod account_tests {
         assert_eq!(
             UsageProvider::cache_identity(&unresolved),
             CacheIdentity::Unresolved
+        );
+    }
+}
+
+#[cfg(test)]
+mod rolling_window_tests {
+    use std::sync::Arc;
+
+    use crate::pricing::PricingStore;
+    use crate::providers::UsageProvider;
+    use crate::storage::Storage;
+
+    #[test]
+    fn both_windows_are_first_message_rolling() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+        let pricing = Arc::new(
+            PricingStore::new_without_refresh_for_test(directory.path().join("pricing")).unwrap(),
+        );
+        let provider = super::CodexProvider::new(storage, pricing).unwrap();
+
+        assert_eq!(
+            provider.rolling_windows(),
+            vec!["session".to_owned(), "weekly".to_owned()]
         );
     }
 }

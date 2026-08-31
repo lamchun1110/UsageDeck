@@ -200,6 +200,14 @@ impl UsageProvider for ZaiProvider {
         self.identity.definition(definition())
     }
 
+    /// Both GLM Coding Plan windows are first-message rolling. Legacy plans
+    /// (for example Coding Lite) do not report the weekly at all: the scope
+    /// stays "session" there, and selecting a weekly scope on such a plan
+    /// would kick on every cooldown because a missing window reads as dead.
+    fn rolling_windows(&self) -> Vec<String> {
+        vec!["session".to_owned(), "weekly".to_owned()]
+    }
+
     fn has_local_credentials(&self) -> bool {
         self.auth.has_local_credentials()
     }
@@ -351,6 +359,15 @@ mod tests {
         assert_eq!(snapshot.quotas[2].unit.as_deref(), Some("searches"));
         assert!(snapshot.status_metrics.is_empty());
         assert!(snapshot.warnings.is_empty());
+    }
+
+    #[test]
+    fn both_windows_are_first_message_rolling() {
+        let provider = ZaiProvider::new().unwrap();
+        assert_eq!(
+            provider.rolling_windows(),
+            vec!["session".to_owned(), "weekly".to_owned()]
+        );
     }
 
     #[test]
