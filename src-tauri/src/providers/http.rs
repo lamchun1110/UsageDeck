@@ -96,10 +96,12 @@ fn record_rate_limit(provider: &str, api_key: &str, retry_after: Option<Duration
     let cooldown = retry_after
         .unwrap_or(RATE_LIMIT_DEFAULT_COOLDOWN)
         .min(RATE_LIMIT_MAX_COOLDOWN);
-    cooldowns()
+    let now = Instant::now();
+    let mut cooldowns = cooldowns()
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(cooldown_key(provider, api_key), Instant::now() + cooldown);
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cooldowns.retain(|_, until| *until > now);
+    cooldowns.insert(cooldown_key(provider, api_key), now + cooldown);
     cooldown
 }
 

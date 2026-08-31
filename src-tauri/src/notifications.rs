@@ -115,8 +115,8 @@ fn show_notification(app: &AppHandle, title: &str, body: &str) -> Result<(), Str
             })
             .map_err(|_| "The notification could not be delivered.".to_owned())?;
         receiver
-            .recv()
-            .unwrap_or_else(|_| Err("The notification could not be delivered.".to_owned()))
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap_or_else(|_| Err("The notification could not be delivered in time.".to_owned()))
     }
     #[cfg(not(target_os = "macos"))]
     {

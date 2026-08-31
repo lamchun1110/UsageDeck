@@ -1,11 +1,101 @@
 #[cfg(target_os = "macos")]
 const MACOS_ITEM_NOT_FOUND: i32 = -25_300;
 
+/// Per-service probe bookkeeping: completed answers are cached for the session
+/// (keychain service existence is stable), and one in-flight probe per service
+/// makes overlapping callers wait for that answer instead of failing. A probe
+/// that exceeds its deadline is simply retried by the next caller, so a single
+/// wedged search can no longer poison every later probe.
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct ServiceProbeState {
+    results: std::collections::HashMap<String, bool>,
+    in_flight: std::collections::HashSet<String>,
+}
+
+#[cfg(target_os = "macos")]
+static SERVICE_PROBES: std::sync::LazyLock<(
+    std::sync::Mutex<ServiceProbeState>,
+    std::sync::Condvar,
+)> = std::sync::LazyLock::new(|| {
+    (
+        std::sync::Mutex::new(ServiceProbeState::default()),
+        std::sync::Condvar::new(),
+    )
+});
+
 #[cfg(target_os = "macos")]
 pub fn generic_password_service_exists(
     service: &str,
-    _timeout: std::time::Duration,
+    timeout: std::time::Duration,
 ) -> Option<bool> {
+    use std::time::Instant;
+
+    if timeout.is_zero() {
+        return None;
+    }
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .unwrap_or_else(|| Instant::now() + std::time::Duration::from_secs(60));
+    let (probe_lock, probe_done) = &*SERVICE_PROBES;
+    let mut probes = probe_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    loop {
+        if let Some(exists) = probes.results.get(service) {
+            return Some(*exists);
+        }
+        if probes.in_flight.insert(service.to_owned()) {
+            break;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        let (guard, _) = probe_done
+            .wait_timeout(probes, remaining)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        probes = guard;
+    }
+    drop(probes);
+
+    let service = service.to_owned();
+    let probe_service = service.clone();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    if std::thread::Builder::new()
+        .name("usagedeck-keychain-probe".into())
+        .spawn(move || {
+            let _ = sender.send(generic_password_service_exists_blocking(&probe_service));
+        })
+        .is_err()
+    {
+        release_probe(service, None);
+        return None;
+    }
+    let answer = receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()
+        .flatten();
+    release_probe(service, answer);
+    answer
+}
+
+#[cfg(target_os = "macos")]
+fn release_probe(service: String, answer: Option<bool>) {
+    let (probe_lock, probe_done) = &*SERVICE_PROBES;
+    let mut probes = probe_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    probes.in_flight.remove(&service);
+    if let Some(exists) = answer {
+        probes.results.insert(service, exists);
+    }
+    drop(probes);
+    probe_done.notify_all();
+}
+
+#[cfg(target_os = "macos")]
+fn generic_password_service_exists_blocking(service: &str) -> Option<bool> {
     use security_framework::item::{ItemClass, ItemSearchOptions};
 
     match ItemSearchOptions::new()
@@ -203,22 +293,93 @@ pub fn delete_owned_password(service: &str, account: &str) -> Result<(), String>
 #[cfg(target_os = "linux")]
 const SECRET_SERVICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Bound potentially wedged Secret Service calls while still allowing the
+/// startup detector to probe several providers concurrently. Calls above the
+/// limit wait for a worker slot within their own deadline instead of spawning
+/// another thread.
+#[cfg(target_os = "linux")]
+const SECRET_SERVICE_MAX_WORKERS: usize = 4;
+
+#[cfg(target_os = "linux")]
+static SECRET_SERVICE_ACTIVE_WORKERS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(target_os = "linux")]
+struct SecretServiceWorkerGuard;
+
+#[cfg(target_os = "linux")]
+impl Drop for SecretServiceWorkerGuard {
+    fn drop(&mut self) {
+        SECRET_SERVICE_ACTIVE_WORKERS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn acquire_secret_service_worker(
+    timeout: std::time::Duration,
+) -> Result<SecretServiceWorkerGuard, String> {
+    let started = std::time::Instant::now();
+    loop {
+        let active = SECRET_SERVICE_ACTIVE_WORKERS.load(std::sync::atomic::Ordering::Acquire);
+        if active < SECRET_SERVICE_MAX_WORKERS
+            && SECRET_SERVICE_ACTIVE_WORKERS
+                .compare_exchange_weak(
+                    active,
+                    active + 1,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Acquire,
+                )
+                .is_ok()
+        {
+            return Ok(SecretServiceWorkerGuard);
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(linux_secret_service_operation_pending());
+        }
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(5)));
+    }
+}
+
 /// Runs a Secret Service operation with a deadline. A keyring D-Bus call with no daemon can
 /// block forever, which would wedge the provider refresh worker; the bounded wait keeps the
-/// failure reportable instead (the wedged thread is abandoned, at most one per call).
+/// failure reportable and the worker limiter caps abandoned threads process-wide.
 #[cfg(target_os = "linux")]
 fn with_secret_service_timeout<T, F>(operation: F) -> Result<T, String>
 where
     F: FnOnce() -> Result<T, String> + Send + 'static,
     T: Send + 'static,
 {
+    with_secret_service_deadline(operation, SECRET_SERVICE_TIMEOUT)
+}
+
+#[cfg(target_os = "linux")]
+fn with_secret_service_deadline<T, F>(
+    operation: F,
+    timeout: std::time::Duration,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
     use std::sync::mpsc;
+    let started = std::time::Instant::now();
+    let guard = acquire_secret_service_worker(timeout)?;
     let (sender, receiver) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let _ = sender.send(operation());
-    });
+    if std::thread::Builder::new()
+        .name("usagedeck-secret-service".into())
+        .spawn(move || {
+            let result = operation();
+            drop(guard);
+            let _ = sender.send(result);
+        })
+        .is_err()
+    {
+        return Err("Linux Secret Service worker could not be started.".into());
+    }
+    let remaining = timeout.saturating_sub(started.elapsed());
     receiver
-        .recv_timeout(SECRET_SERVICE_TIMEOUT)
+        .recv_timeout(remaining)
         .unwrap_or_else(|_| Err(linux_secret_service_timed_out()))
 }
 
@@ -262,24 +423,25 @@ pub fn generic_password_service_exists(
 ) -> Option<bool> {
     use secret_service::{blocking::SecretService, EncryptionType};
     use std::collections::HashMap;
-    use std::sync::mpsc;
-
     if timeout.is_zero() {
         return None;
     }
     let service = service.to_owned();
-    let (sender, receiver) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let result = (|| {
-            let secret_service = SecretService::connect(EncryptionType::Dh).ok()?;
-            let matches = secret_service
-                .search_items(HashMap::from([("service", service.as_str())]))
-                .ok()?;
-            Some(!matches.unlocked.is_empty() || !matches.locked.is_empty())
-        })();
-        let _ = sender.send(result);
-    });
-    receiver.recv_timeout(timeout).ok().flatten()
+    with_secret_service_deadline(
+        move || {
+            let result = (|| {
+                let secret_service = SecretService::connect(EncryptionType::Dh).ok()?;
+                let matches = secret_service
+                    .search_items(HashMap::from([("service", service.as_str())]))
+                    .ok()?;
+                Some(!matches.unlocked.is_empty() || !matches.locked.is_empty())
+            })();
+            Ok(result)
+        },
+        timeout,
+    )
+    .ok()
+    .flatten()
 }
 
 #[cfg(target_os = "linux")]
@@ -324,7 +486,7 @@ fn write_generic_password_blocking(
 pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
     let service = service.to_owned();
     let account = account.to_owned();
-    let value = value.to_vec();
+    let value = zeroize::Zeroizing::new(value.to_vec());
     with_secret_service_timeout(move || write_owned_password_blocking(&service, &account, &value))
 }
 
@@ -400,6 +562,12 @@ fn linux_secret_service_unavailable() -> String {
 #[cfg(target_os = "linux")]
 fn linux_secret_service_timed_out() -> String {
     "Linux Secret Service did not respond in time. Check that a Secret Service-compatible keyring, such as GNOME Keyring or KWallet, is running and unlocked."
+        .into()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_secret_service_operation_pending() -> String {
+    "A previous Linux Secret Service request is still pending. Check that the keyring is running and unlocked before trying again."
         .into()
 }
 

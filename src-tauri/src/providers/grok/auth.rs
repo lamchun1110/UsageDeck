@@ -42,7 +42,7 @@ fn read_auth_file(path: &Path) -> Option<String> {
 const DEFAULT_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const REFRESH_BUFFER_MINUTES: i64 = 5;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct GrokAuthEntry {
     pub key: Option<String>,
@@ -57,6 +57,16 @@ pub struct GrokAuthEntry {
     #[serde(rename = "oidc_client_id")]
     pub oidc_client_id: Option<String>,
 }
+
+crate::redacted_debug!(GrokAuthEntry {
+    key,
+    refresh_token,
+    refresh,
+    id_token,
+    expires_at,
+    expires,
+    oidc_client_id
+});
 
 #[derive(Clone)]
 pub struct GrokAuthState {
