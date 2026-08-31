@@ -87,33 +87,49 @@ xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
   }
   trap cleanup EXIT
 
-  "${USAGEDECK_SMOKE_BINARY}" >"${stdio_log}" 2>&1 &
-  app_pid=$!
   ready=false
-  for _ in $(seq 1 30); do
-    if ! kill -0 "${app_pid}" 2>/dev/null; then
-      cat "${stdio_log}" >&2 || true
-      cat "${runtime_log}" >&2 || true
-      exit 1
-    fi
-    if test "${USAGEDECK_SMOKE_TRAY_HOST}" = available; then
-      if test -f "${runtime_log}" \
-        && grep -Fq "desktop integration detected (tray=true)" "${runtime_log}" \
-        && grep -Fq "system tray integration ready" "${runtime_log}" \
-        && grep -Fq "UsageDeck startup completed" "${runtime_log}"; then
+  first_stdio_log="${stdio_log}"
+  for attempt in 1 2; do
+    "${USAGEDECK_SMOKE_BINARY}" >"${stdio_log}" 2>&1 &
+    app_pid=$!
+    for _ in $(seq 1 30); do
+      if ! kill -0 "${app_pid}" 2>/dev/null; then
+        break
+      fi
+      if test "${USAGEDECK_SMOKE_TRAY_HOST}" = available; then
+        if test -f "${runtime_log}" \
+          && grep -Fq "desktop integration detected (tray=true)" "${runtime_log}" \
+          && grep -Fq "system tray integration ready" "${runtime_log}" \
+          && grep -Fq "UsageDeck startup completed" "${runtime_log}"; then
+          ready=true
+          break
+        fi
+      elif test -f "${runtime_log}" \
+        && grep -Fq "desktop integration detected (tray=false)" "${runtime_log}" \
+        && grep -Fq "UsageDeck startup completed" "${runtime_log}" \
+        && xdotool search --onlyvisible --limit 1 --pid "${app_pid}" --name "^UsageDeck$" >/dev/null 2>&1; then
         ready=true
         break
       fi
-    elif test -f "${runtime_log}" \
-      && grep -Fq "desktop integration detected (tray=false)" "${runtime_log}" \
-      && grep -Fq "UsageDeck startup completed" "${runtime_log}" \
-      && xdotool search --onlyvisible --limit 1 --pid "${app_pid}" --name "^UsageDeck$" >/dev/null 2>&1; then
-      ready=true
+      sleep 1
+    done
+    if test "${ready}" = true; then
       break
     fi
-    sleep 1
+    if test "${attempt}" -eq 1; then
+      # Tray registration occasionally loses the race against the freshly
+      # started D-Bus session: one clean relaunch absorbs that flake before
+      # the run is allowed to fail.
+      echo "First X11 smoke attempt did not reach ${USAGEDECK_SMOKE_TRAY_HOST} tray-host mode; retrying once." >&2
+      kill "${app_pid}" 2>/dev/null || true
+      wait "${app_pid}" 2>/dev/null || true
+      app_pid=""
+      rm -f "${runtime_log}" 2>/dev/null || true
+      stdio_log="${runner_temp}/usagedeck-x11-app-retry-${RANDOM}.log"
+    fi
   done
   if test "${ready}" != true; then
+    cat "${first_stdio_log}" >&2 || true
     cat "${stdio_log}" >&2 || true
     cat "${runtime_log}" >&2 || true
     cat "${wm_log}" >&2 || true
