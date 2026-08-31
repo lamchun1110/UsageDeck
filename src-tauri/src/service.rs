@@ -43,7 +43,7 @@ pub struct ProviderService {
     registry: Arc<ProviderRegistry>,
     storage: Arc<Storage>,
     states: RwLock<BTreeMap<String, ProviderViewState>>,
-    refresh_flights: HashMap<String, Arc<RefreshFlight>>,
+    refresh_flights: RwLock<HashMap<String, Arc<RefreshFlight>>>,
     last_live_refresh: Mutex<HashMap<String, Instant>>,
     last_failed_refresh: Mutex<HashMap<String, Instant>>,
     last_full_refresh_at: RwLock<Option<chrono::DateTime<Utc>>>,
@@ -150,7 +150,7 @@ impl ProviderService {
             registry,
             storage,
             states: RwLock::new(states),
-            refresh_flights,
+            refresh_flights: RwLock::new(refresh_flights),
             last_live_refresh: Mutex::new(HashMap::new()),
             last_failed_refresh: Mutex::new(HashMap::new()),
             last_full_refresh_at: RwLock::new(None),
@@ -180,6 +180,59 @@ impl ProviderService {
         }
     }
 
+    /// Adds the refresh coordination and initial cached state for a provider
+    /// that was registered after startup (currently a named API-key account).
+    /// Registry mutation happens first, so the provider definition and cache
+    /// identity are already authoritative when this method runs.
+    pub fn register_provider(&self, provider_id: &str) -> Result<(), String> {
+        let snapshot = self.registry.snapshot();
+        if snapshot.definition(provider_id).is_none() {
+            return Err("Unknown provider.".to_owned());
+        }
+        let state = match self
+            .storage
+            .load_snapshot_for_identity(provider_id, snapshot.cache_identity(provider_id))
+        {
+            Ok(Some(snapshot)) => ProviderViewState::from_cache(snapshot),
+            Ok(None) => ProviderViewState::default(),
+            Err(error) => {
+                crate::app_warn!(
+                    "cache",
+                    "cached snapshot for {provider_id} could not be loaded: {error}"
+                );
+                ProviderViewState::default()
+            }
+        };
+        self.states
+            .write()
+            .map_err(|_| "Provider state is temporarily unavailable.".to_owned())?
+            .insert(provider_id.to_owned(), state);
+        self.refresh_flights
+            .write()
+            .map_err(|_| "Provider refresh coordination is temporarily unavailable.".to_owned())?
+            .entry(provider_id.to_owned())
+            .or_insert_with(|| Arc::new(RefreshFlight::new()));
+        Ok(())
+    }
+
+    /// Drops all in-memory state for a provider removed from the live registry.
+    /// A blocking refresh that was already running may still finish, but
+    /// `update_state` only mutates existing entries and cannot recreate this one.
+    pub fn unregister_provider(&self, provider_id: &str) {
+        if let Ok(mut states) = self.states.write() {
+            states.remove(provider_id);
+        }
+        if let Ok(mut flights) = self.refresh_flights.write() {
+            flights.remove(provider_id);
+        }
+        if let Ok(mut refreshes) = self.last_live_refresh.lock() {
+            refreshes.remove(provider_id);
+        }
+        if let Ok(mut failures) = self.last_failed_refresh.lock() {
+            failures.remove(provider_id);
+        }
+    }
+
     pub async fn refresh(self: &Arc<Self>, provider_id: &str, force: bool) -> ProviderViewState {
         if self.registry.runtime(provider_id).is_none() {
             crate::app_error!(
@@ -204,7 +257,11 @@ impl ProviderService {
             );
             return self.provider_state(provider_id);
         }
-        let Some(flight) = self.refresh_flights.get(provider_id).cloned() else {
+        let Some(flight) = self.refresh_flight(provider_id) else {
+            crate::app_error!(
+                "refresh",
+                "refresh coordination missing for registered provider {provider_id}"
+            );
             return self.provider_state(provider_id);
         };
         let mut completed = flight.completed_tx.subscribe();
@@ -278,6 +335,20 @@ impl ProviderService {
         initial_force: bool,
     ) {
         let Some(provider) = self.registry.runtime(&provider_id) else {
+            // The provider was unregistered between `refresh()`'s registry check
+            // and this spawn. Settle the flight so waiters release instead of
+            // blocking forever on a generation that can no longer complete; the
+            // waiter's own flight handle keeps the watch channel alive, so an
+            // unsent completion would hang the calling command.
+            if let Ok(mut flight_state) = flight.state.lock() {
+                let completed = flight_state
+                    .requested_generation
+                    .max(flight_state.completed_generation);
+                flight_state.completed_generation = completed;
+                flight_state.attempt_generation = None;
+                flight_state.runner_active = false;
+                let _ = flight.completed_tx.send_replace(completed);
+            }
             return;
         };
         let mut force = initial_force;
@@ -342,25 +413,34 @@ impl ProviderService {
             let state = self
                 .apply_refresh_result(&provider_id, refresh_result)
                 .await;
-            if state.error.is_none() {
+            // A concurrent `unregister_provider` may have dropped the state
+            // entry while this worker ran; do not re-pollute the freshness
+            // bookkeeping for an id nothing will read again.
+            let still_tracked = self
+                .states
+                .read()
+                .map(|states| states.contains_key(&provider_id))
+                .unwrap_or(false);
+            if still_tracked && state.error.is_none() {
                 if let Ok(mut last) = self.last_live_refresh.lock() {
                     last.insert(provider_id.clone(), Instant::now());
                 }
                 if let Ok(mut failures) = self.last_failed_refresh.lock() {
                     failures.remove(&provider_id);
                 }
-            } else if let Ok(mut failures) = self.last_failed_refresh.lock() {
-                failures.insert(provider_id.clone(), Instant::now());
+            } else if still_tracked {
+                if let Ok(mut failures) = self.last_failed_refresh.lock() {
+                    failures.insert(provider_id.clone(), Instant::now());
+                }
             }
 
             let run_follow_up = if let Some(worker) = late_worker {
                 let (completed_generation, drain_grace) =
                     if let Ok(mut flight_state) = flight.state.lock() {
-                        let completed = flight_state.requested_generation.max(generation);
-                        flight_state.completed_generation = completed;
+                        flight_state.completed_generation = generation;
                         flight_state.attempt_generation = None;
                         let grace = self.worker_drain_grace(flight_state.consecutive_abandons);
-                        (completed, grace)
+                        (generation, grace)
                     } else {
                         (generation.saturating_add(1), self.drain_grace_base)
                     };
@@ -386,21 +466,25 @@ impl ProviderService {
                             drain_grace.as_millis()
                         );
                         if let Ok(mut flight_state) = flight.state.lock() {
+                            let completed = flight_state.requested_generation.max(generation);
+                            flight_state.completed_generation = completed;
                             flight_state.consecutive_abandons =
                                 flight_state.consecutive_abandons.saturating_add(1);
                             flight_state.runner_active = false;
-                            flight_state.requested_generation = flight_state.completed_generation;
+                            flight_state.attempt_generation = None;
+                            flight_state.requested_generation = completed;
+                            flight.completed_tx.send_replace(completed);
                         }
                         return;
                     }
                 }
 
                 if let Ok(mut flight_state) = flight.state.lock() {
-                    flight_state.runner_active = false;
-                    flight_state.requested_generation = flight_state.completed_generation;
                     flight_state.consecutive_abandons = 0;
+                    settle_completed_generation(&mut flight_state, generation)
+                } else {
+                    false
                 }
-                false
             } else {
                 let run_follow_up = if let Ok(mut flight_state) = flight.state.lock() {
                     settle_completed_generation(&mut flight_state, generation)
@@ -520,6 +604,13 @@ impl ProviderService {
         state
     }
 
+    fn refresh_flight(&self, provider_id: &str) -> Option<Arc<RefreshFlight>> {
+        self.refresh_flights
+            .read()
+            .ok()
+            .and_then(|flights| flights.get(provider_id).cloned())
+    }
+
     fn worker_drain_grace(&self, consecutive_abandons: u32) -> Duration {
         let multiplier = 2_u32.saturating_pow(consecutive_abandons.min(DRAIN_BACKOFF_STEPS));
         self.drain_grace_base.saturating_mul(multiplier)
@@ -611,7 +702,9 @@ impl ProviderService {
 
     fn update_state(&self, provider_id: &str, update: impl FnOnce(&mut ProviderViewState)) {
         if let Ok(mut states) = self.states.write() {
-            update(states.entry(provider_id.to_owned()).or_default());
+            if let Some(state) = states.get_mut(provider_id) {
+                update(state);
+            }
         }
     }
 }
@@ -801,7 +894,8 @@ mod tests {
         },
         policy::{FAILURE_RETRY_BACKOFF, STALE_AFTER},
         providers::{
-            AccountRefresh, ProviderError, ProviderRefresh, ProviderRegistry, UsageProvider,
+            api_key_account::ApiKeyIdentity, AccountRefresh, ProviderError, ProviderRefresh,
+            ProviderRegistry, UsageProvider,
         },
         settings::SettingsService,
         storage::Storage,
@@ -814,12 +908,177 @@ mod tests {
         assert!(PROVIDER_REFRESH_TIMEOUT >= Duration::from_secs(110));
     }
 
+    #[test]
+    fn live_registered_provider_gains_refresh_state_without_restart() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+        let base_calls = Arc::new(AtomicUsize::new(0));
+        let base = Arc::new(SlowProvider {
+            id: "base",
+            calls: base_calls,
+            active: Arc::new(AtomicUsize::new(0)),
+            maximum: Arc::new(AtomicUsize::new(0)),
+            delay: Duration::ZERO,
+        }) as Arc<dyn UsageProvider>;
+        let registry = Arc::new(ProviderRegistry::new(vec![base]).unwrap());
+        let service = Arc::new(ProviderService::new(registry.clone(), storage));
+        let account_calls = Arc::new(AtomicUsize::new(0));
+        let account = Arc::new(ApiKeyAccountProvider {
+            identity: ApiKeyIdentity::account("openrouter@1a2b3c4d", "Work", "OpenRouter"),
+            calls: account_calls.clone(),
+        }) as Arc<dyn UsageProvider>;
+
+        registry.register_provider(account).unwrap();
+        service.register_provider("openrouter@1a2b3c4d").unwrap();
+        let refreshed = refresh_with_test_timeout(&service, "openrouter@1a2b3c4d", true);
+
+        assert_eq!(account_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            refreshed.snapshot.unwrap().provider_id,
+            "openrouter@1a2b3c4d"
+        );
+        assert!(service
+            .state()
+            .providers
+            .contains_key("openrouter@1a2b3c4d"));
+
+        registry.unregister_provider("openrouter@1a2b3c4d");
+        service.unregister_provider("openrouter@1a2b3c4d");
+        assert!(!service
+            .state()
+            .providers
+            .contains_key("openrouter@1a2b3c4d"));
+        assert!(service.refresh_flight("openrouter@1a2b3c4d").is_none());
+    }
+
+    #[test]
+    fn late_refresh_update_cannot_recreate_unregistered_state() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+        let provider = Arc::new(SlowProvider {
+            id: "base",
+            calls: Arc::new(AtomicUsize::new(0)),
+            active: Arc::new(AtomicUsize::new(0)),
+            maximum: Arc::new(AtomicUsize::new(0)),
+            delay: Duration::ZERO,
+        }) as Arc<dyn UsageProvider>;
+        let registry = Arc::new(ProviderRegistry::new(vec![provider]).unwrap());
+        let service = ProviderService::new(registry, storage);
+
+        // Keep the runtime registered to model an update that already passed
+        // its registry lookup immediately before account removal won the race.
+        service.unregister_provider("base");
+        service.update_state("base", |state| state.refreshing = true);
+
+        assert!(!service.state().providers.contains_key("base"));
+    }
+
+    #[test]
+    fn runner_without_a_runtime_releases_waiters_instead_of_hanging() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+        let provider = Arc::new(SlowProvider {
+            id: "base",
+            calls: Arc::new(AtomicUsize::new(0)),
+            active: Arc::new(AtomicUsize::new(0)),
+            maximum: Arc::new(AtomicUsize::new(0)),
+            delay: Duration::ZERO,
+        }) as Arc<dyn UsageProvider>;
+        let registry = Arc::new(ProviderRegistry::new(vec![provider]).unwrap());
+        let service = Arc::new(ProviderService::new(registry.clone(), storage));
+
+        // Model the race: `refresh()` found the runtime and primed the flight,
+        // then the provider was unregistered before the runner spawned.
+        let flight = service.refresh_flight("base").unwrap();
+        {
+            let mut flight_state = flight.state.lock().unwrap();
+            flight_state.runner_active = true;
+            flight_state.attempt_generation = Some(1);
+            flight_state.requested_generation = 1;
+        }
+        let mut completed = flight.completed_tx.subscribe();
+        registry.unregister_provider("base");
+
+        tauri::async_runtime::block_on(async {
+            tokio::time::timeout(
+                TEST_WAIT_TIMEOUT,
+                service
+                    .clone()
+                    .run_refresh_flight("base".to_owned(), flight.clone(), true),
+            )
+            .await
+            .expect("runner must settle instead of hanging")
+        });
+
+        assert!(*completed.borrow_and_update() >= 1);
+        assert!(!flight.state.lock().unwrap().runner_active);
+        assert!(flight.state.lock().unwrap().attempt_generation.is_none());
+    }
+
+    #[test]
+    fn unregister_during_refresh_drops_the_late_result() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+        let base = Arc::new(SlowProvider {
+            id: "base",
+            calls: Arc::new(AtomicUsize::new(0)),
+            active: Arc::new(AtomicUsize::new(0)),
+            maximum: Arc::new(AtomicUsize::new(0)),
+            delay: Duration::ZERO,
+        }) as Arc<dyn UsageProvider>;
+        let active = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let account = Arc::new(GatedProvider {
+            id: "account",
+            calls: Arc::new(AtomicUsize::new(0)),
+            active: active.clone(),
+            maximum: Arc::new(AtomicUsize::new(0)),
+            gate: gate.clone(),
+        }) as Arc<dyn UsageProvider>;
+        let registry = Arc::new(ProviderRegistry::new(vec![base, account]).unwrap());
+        let service = Arc::new(ProviderService::new(registry.clone(), storage));
+
+        let refreshed = tauri::async_runtime::block_on(async {
+            let refresh_service = service.clone();
+            let refresh = tauri::async_runtime::spawn(async move {
+                refresh_service.refresh("account", true).await
+            });
+            tokio::time::timeout(TEST_WAIT_TIMEOUT, async {
+                while active.load(Ordering::SeqCst) == 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("refresh should start");
+
+            registry.unregister_provider("account");
+            service.unregister_provider("account");
+            let (released, signal) = &*gate;
+            *released.lock().unwrap() = true;
+            signal.notify_all();
+
+            tokio::time::timeout(TEST_WAIT_TIMEOUT, refresh)
+                .await
+                .expect("removed refresh should finish")
+                .unwrap()
+        });
+
+        assert!(refreshed.snapshot.is_none());
+        assert!(!service.state().providers.contains_key("account"));
+        assert!(registry.runtime("account").is_none());
+    }
+
     struct SlowProvider {
         id: &'static str,
         calls: Arc<AtomicUsize>,
         active: Arc<AtomicUsize>,
         maximum: Arc<AtomicUsize>,
         delay: Duration,
+    }
+
+    struct ApiKeyAccountProvider {
+        identity: ApiKeyIdentity,
+        calls: Arc<AtomicUsize>,
     }
 
     struct GatedProvider {
@@ -865,6 +1124,21 @@ mod tests {
             thread::sleep(self.delay);
             self.active.fetch_sub(1, Ordering::SeqCst);
             Ok(test_snapshot(self.id))
+        }
+    }
+
+    impl UsageProvider for ApiKeyAccountProvider {
+        fn definition(&self) -> ProviderDefinition {
+            self.identity.definition(test_definition("openrouter"))
+        }
+
+        fn has_local_credentials(&self) -> bool {
+            true
+        }
+
+        fn refresh(&self) -> Result<ProviderSnapshot, ProviderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(test_snapshot(&self.identity.provider_id))
         }
     }
 
@@ -1029,10 +1303,8 @@ mod tests {
 
     fn refresh_runner_is_idle(service: &ProviderService, provider_id: &str) -> bool {
         service
-            .refresh_flights
-            .get(provider_id)
-            .and_then(|flight| flight.state.lock().ok())
-            .is_some_and(|state| !state.runner_active)
+            .refresh_flight(provider_id)
+            .is_some_and(|flight| flight.state.lock().is_ok_and(|state| !state.runner_active))
     }
 
     #[test]
@@ -1309,64 +1581,48 @@ mod tests {
             Duration::from_millis(250),
         ));
 
-        let (timed_out, queued) =
-            tauri::async_runtime::block_on(async {
-                let first_service = service.clone();
-                let first = tauri::async_runtime::spawn(async move {
-                    first_service.refresh("slow", true).await
-                });
-                tokio::time::timeout(TEST_WAIT_TIMEOUT, async {
-                    while active.load(Ordering::SeqCst) == 0 {
-                        tokio::task::yield_now().await;
-                    }
-                })
-                .await
-                .expect("first refresh should start");
-                let queued_service = service.clone();
-                let queued = tauri::async_runtime::spawn(async move {
-                    queued_service.refresh("slow", true).await
-                });
-                tokio::time::timeout(TEST_WAIT_TIMEOUT, async {
-                    loop {
-                        let queued = service
-                            .refresh_flights
-                            .get("slow")
-                            .and_then(|flight| flight.state.lock().ok())
-                            .is_some_and(|state| state.requested_generation >= 2);
-                        if queued && active.load(Ordering::SeqCst) == 1 {
-                            break;
-                        }
-                        tokio::task::yield_now().await;
-                    }
-                })
-                .await
-                .expect("forced follow-up should be queued before timeout");
+        let timed_out = tauri::async_runtime::block_on(async {
+            let first_service = service.clone();
+            let first =
+                tauri::async_runtime::spawn(
+                    async move { first_service.refresh("slow", true).await },
+                );
+            tokio::time::timeout(TEST_WAIT_TIMEOUT, async {
+                while active.load(Ordering::SeqCst) == 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("first refresh should start");
 
-                tokio::time::timeout(Duration::from_secs(1), async {
-                    (first.await.unwrap(), queued.await.unwrap())
-                })
+            tokio::time::timeout(Duration::from_secs(1), async { first.await.unwrap() })
                 .await
-                .expect("timeout should release active and queued waiters")
-            });
+                .expect("timeout should release the active waiter")
+        });
 
-        for state in [&timed_out, &queued] {
-            assert_eq!(state.error.as_deref(), Some("Provider refresh timed out."));
-            assert_eq!(state.error_kind, Some(ProviderErrorKind::Network));
-            assert!(!state.stale);
-            assert_eq!(
-                state
-                    .snapshot
-                    .as_ref()
-                    .and_then(|snapshot| snapshot.plan.as_deref()),
-                Some("cached")
-            );
-        }
+        // A forced refresh queued behind a timed-out worker is released only
+        // when the worker drains or is abandoned; that interplay is covered by
+        // `forced_follow_up_runs_after_a_timed_out_worker_drains` below.
+        assert_eq!(
+            timed_out.error.as_deref(),
+            Some("Provider refresh timed out.")
+        );
+        assert_eq!(timed_out.error_kind, Some(ProviderErrorKind::Network));
+        assert!(!timed_out.stale);
+        assert_eq!(
+            timed_out
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.plan.as_deref()),
+            Some("cached")
+        );
         {
-            let flight_state = service.refresh_flights["slow"].state.lock().unwrap();
+            let flight = service.refresh_flight("slow").unwrap();
+            let flight_state = flight.state.lock().unwrap();
             assert!(flight_state.runner_active);
             assert_eq!(flight_state.attempt_generation, None);
-            assert_eq!(flight_state.completed_generation, 2);
-            assert_eq!(flight_state.requested_generation, 2);
+            assert_eq!(flight_state.completed_generation, 1);
+            assert_eq!(flight_state.requested_generation, 1);
         }
 
         let quarantined = tauri::async_runtime::block_on(async {
@@ -1430,6 +1686,88 @@ mod tests {
                 .as_ref()
                 .and_then(|snapshot| snapshot.plan.as_deref()),
             Some("live-2")
+        );
+    }
+
+    #[test]
+    fn forced_follow_up_runs_after_a_timed_out_worker_drains() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let provider = Arc::new(GatedProvider {
+            id: "slow",
+            calls: calls.clone(),
+            active: active.clone(),
+            maximum: maximum.clone(),
+            gate: gate.clone(),
+        }) as Arc<dyn UsageProvider>;
+        let registry = Arc::new(ProviderRegistry::new(vec![provider]).unwrap());
+        let service = Arc::new(ProviderService::with_refresh_timeouts(
+            registry,
+            storage,
+            Duration::from_millis(40),
+            Duration::from_millis(300),
+        ));
+
+        let (timed_out, followed_up) =
+            tauri::async_runtime::block_on(async {
+                let first_service = service.clone();
+                let first = tauri::async_runtime::spawn(async move {
+                    first_service.refresh("slow", true).await
+                });
+                tokio::time::timeout(TEST_WAIT_TIMEOUT, async {
+                    while active.load(Ordering::SeqCst) == 0 {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("first refresh should start");
+                let queued_service = service.clone();
+                let queued = tauri::async_runtime::spawn(async move {
+                    queued_service.refresh("slow", true).await
+                });
+                tokio::time::timeout(TEST_WAIT_TIMEOUT, async {
+                    loop {
+                        let requested = service.refresh_flight("slow").is_some_and(|flight| {
+                            flight
+                                .state
+                                .lock()
+                                .is_ok_and(|state| state.requested_generation >= 2)
+                        });
+                        if requested {
+                            break;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("forced follow-up should be queued");
+
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                let (released, signal) = &*gate;
+                *released.lock().unwrap() = true;
+                signal.notify_all();
+
+                tokio::time::timeout(TEST_WAIT_TIMEOUT, async {
+                    (first.await.unwrap(), queued.await.unwrap())
+                })
+                .await
+                .expect("drained worker should allow the queued refresh to run")
+            });
+
+        assert_eq!(
+            timed_out.error.as_deref(),
+            Some("Provider refresh timed out.")
+        );
+        assert!(followed_up.error.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(maximum.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            followed_up.snapshot.and_then(|snapshot| snapshot.plan),
+            Some("live-2".into())
         );
     }
 
