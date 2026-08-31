@@ -148,6 +148,25 @@ impl ZaiProvider {
         }
     }
 
+    #[cfg(test)]
+    fn with_account_dependencies(
+        provider_id: &str,
+        account_name: &str,
+        auth: ZaiAuthStore,
+        client: ZaiClient,
+    ) -> Self {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::account(
+            provider_id,
+            account_name,
+            "Z.ai",
+        );
+        Self {
+            auth,
+            client: Arc::new(client),
+            identity,
+        }
+    }
+
     fn refresh_snapshot(&self, api_key: &str) -> Result<ProviderSnapshot, ProviderError> {
         let quota = required_response(self.client.fetch_quota(api_key))?;
         if is_no_coding_plan(&quota.body) {
@@ -163,7 +182,7 @@ impl ZaiProvider {
             subscription.as_ref().map(|response| &response.body),
         )?;
         Ok(ProviderSnapshot {
-            provider_id: "zai".into(),
+            provider_id: self.identity.provider_id.clone(),
             plan: mapped.plan,
             quotas: mapped.quotas,
             value_metrics: Vec::new(),
@@ -332,6 +351,26 @@ mod tests {
         assert_eq!(snapshot.quotas[2].unit.as_deref(), Some("searches"));
         assert!(snapshot.status_metrics.is_empty());
         assert!(snapshot.warnings.is_empty());
+    }
+
+    #[test]
+    fn account_refresh_reports_the_account_provider_id() {
+        let quota_url = test_http::serve_once(200, &[], include_str!("fixtures/quota.json"));
+        let subscription_url =
+            test_http::serve_once(200, &[], include_str!("fixtures/subscription.json"));
+        let provider = ZaiProvider::with_account_dependencies(
+            "zai@1a2b3c4d",
+            "Work",
+            auth(Some("secret")),
+            ZaiClient::for_test(&subscription_url, &quota_url, Duration::from_secs(1)),
+        );
+        let snapshot = provider.refresh().unwrap();
+
+        assert_eq!(provider.definition().id, "zai@1a2b3c4d");
+        assert_eq!(snapshot.provider_id, "zai@1a2b3c4d");
+        // Source ids stay in the family namespace: the account definition rewrites
+        // metric ids, never source ids.
+        assert_eq!(snapshot.quotas[0].id, "session");
     }
 
     #[test]

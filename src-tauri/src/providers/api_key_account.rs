@@ -186,7 +186,7 @@ pub fn account_name_from_payload(payload: &str) -> Option<String> {
         .as_str()?
         .trim()
         .to_owned();
-    (name.len() <= 48 && !name.is_empty()).then_some(name)
+    (name.chars().count() <= 48 && !name.is_empty()).then_some(name)
 }
 
 #[cfg(test)]
@@ -256,5 +256,15 @@ mod tests {
         );
         assert_eq!(account_name_from_payload("{}"), None);
         assert_eq!(account_name_from_payload("not json"), None);
+        let unicode_name = "工作帳戶".repeat(12);
+        assert_eq!(unicode_name.chars().count(), 48);
+        let payload = serde_json::json!({"customName": unicode_name.clone()}).to_string();
+        assert_eq!(
+            account_name_from_payload(&payload).as_deref(),
+            Some(unicode_name.as_str())
+        );
+        let too_long = "帳".repeat(49);
+        let payload = serde_json::json!({"customName": too_long}).to_string();
+        assert_eq!(account_name_from_payload(&payload), None);
     }
 }

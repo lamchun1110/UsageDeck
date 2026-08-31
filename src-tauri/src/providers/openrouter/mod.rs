@@ -179,6 +179,24 @@ impl OpenRouterProvider {
         }
     }
 
+    #[cfg(test)]
+    fn with_account_dependencies(
+        provider_id: &str,
+        account_name: &str,
+        auth: ApiKeyStore,
+        client: OpenRouterClient,
+    ) -> Self {
+        Self {
+            auth,
+            client: Arc::new(client),
+            identity: crate::providers::api_key_account::ApiKeyIdentity::account(
+                provider_id,
+                account_name,
+                "OpenRouter",
+            ),
+        }
+    }
+
     fn refresh_snapshot(&self, api_key: &str) -> Result<ProviderSnapshot, ProviderError> {
         let (credits, key) = std::thread::scope(|scope| {
             let credits = scope.spawn(|| self.client.fetch_credits(api_key));
@@ -209,7 +227,7 @@ impl OpenRouterProvider {
         }
         if !quotas.is_empty() || !values.is_empty() {
             return Ok(ProviderSnapshot {
-                provider_id: "openrouter".into(),
+                provider_id: self.identity.provider_id.clone(),
                 plan,
                 quotas,
                 value_metrics: values,
@@ -405,6 +423,23 @@ mod tests {
         )
     }
 
+    fn account_provider(
+        key: Option<&str>,
+        credits_status: u16,
+        credits_body: &str,
+        key_status: u16,
+        key_body: &str,
+    ) -> OpenRouterProvider {
+        let credits = test_http::serve_once(credits_status, &[], credits_body);
+        let key_url = test_http::serve_once(key_status, &[], key_body);
+        OpenRouterProvider::with_account_dependencies(
+            "openrouter@1a2b3c4d",
+            "Work",
+            auth(key),
+            OpenRouterClient::for_test(&credits, &key_url, Duration::from_secs(1)),
+        )
+    }
+
     #[test]
     fn maps_both_endpoints_and_preserves_measured_zero() {
         let snapshot = provider(
@@ -428,6 +463,24 @@ mod tests {
                 .number,
             0.0
         );
+    }
+
+    #[test]
+    fn account_refresh_reports_the_account_provider_id() {
+        let provider = account_provider(
+            Some("secret"),
+            200,
+            include_str!("fixtures/credits.json"),
+            200,
+            include_str!("fixtures/key.json"),
+        );
+        let snapshot = provider.refresh().unwrap();
+
+        assert_eq!(provider.definition().id, "openrouter@1a2b3c4d");
+        assert_eq!(snapshot.provider_id, "openrouter@1a2b3c4d");
+        // Source ids stay in the family namespace: the account definition rewrites
+        // metric ids, never source ids.
+        assert!(snapshot.quotas.iter().any(|quota| quota.id == "credits"));
     }
 
     #[test]

@@ -609,6 +609,35 @@ impl SettingsService {
         })
     }
 
+    /// In-memory-only cleanup after a named API-key account was removed from
+    /// the registry and the database but the full reconciliation failed (for
+    /// example a storage error). Strips the account's layout and per-provider
+    /// entries so an emitted settings snapshot cannot resurrect a ghost card,
+    /// and bumps the revisions so watchers and the frontend catalog re-sync.
+    /// The persisted settings catch up on the next successful reconcile or on
+    /// the next launch, both of which re-run the normalization.
+    pub fn drop_account_layout(&self, provider_id: &str) -> AppSettings {
+        let _commit = self
+            .commit
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut next = self
+            .settings
+            .read()
+            .map(|settings| settings.as_ref().clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().as_ref().clone());
+        next.providers.retain(|layout| layout.id != provider_id);
+        next.provider_names.remove(provider_id);
+        next.kickstart_commands.remove(provider_id);
+        next.kickstart_provider_ids.retain(|id| id != provider_id);
+        if let Ok(mut settings) = self.settings.write() {
+            *settings = std::sync::Arc::new(next.clone());
+        }
+        self.settings_revision.fetch_add(1, Ordering::SeqCst);
+        self.account_revision.fetch_add(1, Ordering::SeqCst);
+        next
+    }
+
     /// Reconciles stored layouts with the registry after a named API-key
     /// account was registered or unregistered live. A newly registered
     /// account gains a disabled default layout that activates once its saved
@@ -1548,6 +1577,85 @@ mod tests {
             .providers
             .iter()
             .all(|provider| !provider.detected));
+    }
+
+    #[test]
+    fn drop_account_layout_strips_only_that_account_and_bumps_revisions() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+        storage
+            .save_provider_account_record(
+                "openrouter",
+                "openrouter:Work#1a2b3c4d",
+                "openrouter@1a2b3c4d",
+                r#"{"customName":"Work"}"#,
+            )
+            .unwrap();
+        let registry = catalog();
+        let detected = HashSet::new();
+        let mut seeded = default_settings(&registry, &detected);
+        let mut account_layout = seeded
+            .providers
+            .iter()
+            .find(|layout| layout.id == "openrouter")
+            .unwrap()
+            .clone();
+        account_layout.id = "openrouter@1a2b3c4d".into();
+        seeded.providers.push(account_layout);
+        seeded
+            .provider_names
+            .insert("openrouter@1a2b3c4d".into(), "Work".into());
+        storage.save_settings(&seeded).unwrap();
+        let service = SettingsService::new_for_test(storage, registry, &detected).unwrap();
+
+        // Sanity: normalization kept the persisted account's layout and name.
+        assert!(service
+            .get()
+            .providers
+            .iter()
+            .any(|layout| layout.id == "openrouter@1a2b3c4d"));
+        assert_eq!(
+            service.get().provider_names.get("openrouter@1a2b3c4d"),
+            Some(&"Work".to_owned())
+        );
+
+        let account_before = service.account_revision.load(Ordering::SeqCst);
+        let settings_before = service.settings_revision.load(Ordering::SeqCst);
+        let dropped = service.drop_account_layout("openrouter@1a2b3c4d");
+
+        assert!(dropped
+            .providers
+            .iter()
+            .all(|layout| layout.id != "openrouter@1a2b3c4d"));
+        assert!(service
+            .get()
+            .providers
+            .iter()
+            .all(|layout| layout.id != "openrouter@1a2b3c4d"));
+        assert!(!service
+            .get()
+            .provider_names
+            .contains_key("openrouter@1a2b3c4d"));
+        assert!(!service
+            .get()
+            .kickstart_commands
+            .contains_key("openrouter@1a2b3c4d"));
+        assert!(!service
+            .get()
+            .kickstart_provider_ids
+            .contains(&"openrouter@1a2b3c4d".to_owned()));
+        // The base provider and its layout are untouched.
+        assert!(service
+            .get()
+            .providers
+            .iter()
+            .any(|layout| layout.id == "openrouter"));
+        assert_eq!(
+            service.get().provider_names.get("openrouter"),
+            seeded.provider_names.get("openrouter")
+        );
+        assert!(service.account_revision.load(Ordering::SeqCst) > account_before);
+        assert!(service.settings_revision.load(Ordering::SeqCst) > settings_before);
     }
 
     #[test]

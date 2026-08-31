@@ -137,11 +137,30 @@ impl MiniMaxProvider {
         }
     }
 
+    #[cfg(test)]
+    fn with_account_dependencies(
+        provider_id: &str,
+        account_name: &str,
+        auth: MiniMaxAuthStore,
+        client: MiniMaxClient,
+    ) -> Self {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::account(
+            provider_id,
+            account_name,
+            "MiniMax",
+        );
+        Self {
+            auth,
+            client: Arc::new(client),
+            identity,
+        }
+    }
+
     fn refresh_snapshot(&self, api_key: &str) -> Result<ProviderSnapshot, ProviderError> {
         let response = required_response(self.client.fetch(api_key))?;
         let mapped = map_usage(&response.body)?;
         Ok(ProviderSnapshot {
-            provider_id: "minimax".into(),
+            provider_id: self.identity.provider_id.clone(),
             plan: mapped.plan,
             quotas: mapped.quotas,
             value_metrics: Vec::new(),
@@ -295,6 +314,24 @@ mod tests {
             ["session", "weekly"]
         );
         assert_eq!(snapshot.quotas[1].label, "Weekly (Unlimited)");
+    }
+
+    #[test]
+    fn account_refresh_reports_the_account_provider_id() {
+        let url = test_http::serve_once(200, &[], REMAINS_BODY);
+        let provider = MiniMaxProvider::with_account_dependencies(
+            "minimax@1a2b3c4d",
+            "Work",
+            auth(Some("secret")),
+            MiniMaxClient::for_test(&url, Duration::from_secs(1)),
+        );
+        let snapshot = provider.refresh().unwrap();
+
+        assert_eq!(provider.definition().id, "minimax@1a2b3c4d");
+        assert_eq!(snapshot.provider_id, "minimax@1a2b3c4d");
+        // Source ids stay in the family namespace: the account definition rewrites
+        // metric ids, never source ids.
+        assert_eq!(snapshot.quotas[0].id, "session");
     }
 
     #[test]

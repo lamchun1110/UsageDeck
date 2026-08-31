@@ -686,20 +686,39 @@ impl Storage {
                 "Provider account name must be 1 to 48 characters.".to_owned(),
             ));
         }
-        let mut identity_suffix = {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            account_name.to_ascii_lowercase().hash(&mut hasher);
-            provider_family.hash(&mut hasher);
-            format!("{:08x}", hasher.finish() & 0xffff_ffff)
-        };
+        // Account ids are persisted and must survive Rust toolchain upgrades. `DefaultHasher`
+        // deliberately does not promise a stable algorithm, so use the application's stable
+        // SHA-256 helper and retain only the eight hex characters exposed in provider ids.
+        let base_identity_suffix = crate::hashing::sha256_hex(
+            format!("{provider_family}:{}", account_name.to_ascii_lowercase()).as_bytes(),
+        )[..8]
+            .to_owned();
+        let mut identity_suffix = base_identity_suffix;
         let mut attempts: u32 = 0;
         let raw_identity = format!("{provider_family}:{account_name}");
         loop {
             let identity_key = format!("{raw_identity}#{identity_suffix}");
             let mut connection = self.connection()?;
             let transaction = connection.transaction()?;
+            // Older releases used `DefaultHasher` for the suffix. Resolve the logical identity
+            // by its stored prefix before considering a new stable suffix so existing accounts
+            // remain idempotent across upgrades (and after any future suffix-algorithm change).
+            let identity_prefix = format!("{raw_identity}#");
+            let existing_for_identity: Option<String> = transaction
+                .query_row(
+                    "SELECT provider_id FROM provider_account_records
+                     WHERE provider_family = ?1
+                       AND substr(identity_key, 1, length(?2)) = ?2
+                       AND length(identity_key) = length(?2) + 8
+                     ORDER BY provider_id
+                     LIMIT 1",
+                    params![provider_family, identity_prefix],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(provider_id) = existing_for_identity {
+                return Ok(provider_id);
+            }
             let exists: Option<(String, String)> = transaction
                 .query_row(
                     "SELECT provider_id, payload FROM provider_account_records WHERE provider_family = ?1 AND identity_key = ?2",
@@ -751,13 +770,10 @@ impl Storage {
                     params![provider_family, identity_key, provider_id, payload],
                 )?;
             if inserted == 0 {
-                // Another process won the race; retry from a fresh read of the table.
+                // Another process won the race. Retry the same candidate from a fresh read:
+                // if it inserted this identity, the prefix lookup above returns its id; if it
+                // occupied only the provider id, the occupied-id branch chooses a fallback.
                 transaction.commit()?;
-                attempts = attempts.saturating_add(1);
-                if attempts >= 32 {
-                    return Err(StorageError::Poisoned);
-                }
-                identity_suffix = format!("{:08x}", attempts.wrapping_mul(0x9e37_79b9));
                 continue;
             }
             transaction.commit()?;
@@ -1095,6 +1111,64 @@ mod tests {
         assert_eq!(
             storage.load_observed_account_provider_ids().unwrap(),
             ["claude@12345678"]
+        );
+    }
+
+    #[test]
+    fn api_key_account_allocation_uses_a_stable_suffix_and_is_idempotent() {
+        let directory = tempdir().unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
+
+        let provider_id = storage.allocate_api_key_account("kimi", "Work").unwrap();
+
+        assert_eq!(provider_id, "kimi@f9e0819d");
+        assert_eq!(
+            storage.allocate_api_key_account("kimi", "Work").unwrap(),
+            provider_id
+        );
+        assert_eq!(
+            storage.load_provider_account_records("kimi").unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn api_key_account_allocation_recognizes_a_legacy_suffix() {
+        let directory = tempdir().unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
+        storage
+            .save_provider_account_record(
+                "kimi",
+                "kimi:Work#12345678",
+                "kimi@12345678",
+                r#"{"customName":"Work"}"#,
+            )
+            .unwrap();
+
+        assert_eq!(
+            storage.allocate_api_key_account("kimi", "Work").unwrap(),
+            "kimi@12345678"
+        );
+        assert_eq!(
+            storage.load_provider_account_records("kimi").unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn api_key_account_legacy_lookup_does_not_prefix_match_another_name() {
+        let directory = tempdir().unwrap();
+        let storage = Storage::open(&directory.path().join("usagedeck.db")).unwrap();
+        let longer = storage
+            .allocate_api_key_account("kimi", "Work#Personal")
+            .unwrap();
+
+        let shorter = storage.allocate_api_key_account("kimi", "Work").unwrap();
+
+        assert_ne!(shorter, longer);
+        assert_eq!(
+            storage.load_provider_account_records("kimi").unwrap().len(),
+            2
         );
     }
 

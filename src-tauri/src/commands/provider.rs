@@ -128,15 +128,25 @@ fn mutate_api_key(
     })
 }
 
-fn reconcile_provider_credential_state(
+async fn reconcile_provider_credential_state(
     app: &AppHandle,
-    service: &ProviderService,
-    settings: &SettingsService,
+    service: &Arc<ProviderService>,
+    settings: &Arc<SettingsService>,
     provider_id: &str,
     detected: bool,
     enable: bool,
 ) -> Result<(), String> {
-    let updated = settings.reconcile_provider_credential_state(provider_id, detected, enable)?;
+    let settings_for_reconcile = settings.clone();
+    let provider_id_for_reconcile = provider_id.to_owned();
+    let updated = tauri::async_runtime::spawn_blocking(move || {
+        settings_for_reconcile.reconcile_provider_credential_state(
+            &provider_id_for_reconcile,
+            detected,
+            enable,
+        )
+    })
+    .await
+    .map_err(|_| "Provider settings could not be reconciled.".to_owned())??;
     tray_presentation::update(app, &service.state(), &updated, settings.registry());
     let _ = app.emit("settings-state", settings_view_state(app, settings));
     Ok(())
@@ -186,12 +196,14 @@ pub async fn save_provider_api_key(
     let command_guard = settings.lock_command_mutation().await;
     let settings_reconciled = match reconcile_provider_credential_state(
         &app,
-        &service,
-        &settings,
+        service.inner(),
+        settings.inner(),
         &provider_id,
         true,
         true,
-    ) {
+    )
+    .await
+    {
         Ok(()) => true,
         Err(error) => {
             crate::app_warn!(
@@ -250,12 +262,14 @@ pub async fn delete_provider_api_key(
     let detected = applied.state.status != ApiKeyStatus::NotSet;
     let settings_reconciled = match reconcile_provider_credential_state(
         &app,
-        &service,
-        &settings,
+        service.inner(),
+        settings.inner(),
         &provider_id,
         detected,
         false,
-    ) {
+    )
+    .await
+    {
         Ok(()) => true,
         Err(error) => {
             crate::app_warn!(
@@ -293,8 +307,8 @@ pub async fn delete_provider_api_key(
 }
 
 /// Creates and persists a named API-key account under `family` (e.g. `kimi`) with its own
-/// credential-store entry. The dashboard card appears after restart, when the runtime can
-/// register the new `family@suffix` provider id.
+/// credential-store entry. The registry, refresh service, and settings layout are reconciled
+/// before the command returns so the account is usable without restarting.
 #[tauri::command]
 pub async fn add_api_key_account(
     app: AppHandle,
@@ -330,6 +344,13 @@ pub async fn add_api_key_account(
     // Materialize the runtime and its settings layout now so the new card
     // appears immediately; it stays inactive until a key is saved and detected.
     let command_guard = settings.lock_command_mutation().await;
+    // Allocation is idempotent. A repeated invoke (for example a retried IPC
+    // response) should be idempotent too instead of reporting the already-live
+    // runtime as a duplicate provider.
+    if registry.runtime(&provider_id).is_some() {
+        drop(command_guard);
+        return Ok(provider_id);
+    }
     let runtime = crate::providers::api_key_account::api_key_account_provider(
         &family,
         &provider_id,
@@ -340,7 +361,27 @@ pub async fn add_api_key_account(
     registry
         .register_provider(runtime)
         .map_err(|error| error.to_string())?;
-    match settings.reconcile_registry_change() {
+    let service_for_registration = service.inner().clone();
+    let provider_id_for_registration = provider_id.clone();
+    let registration = tauri::async_runtime::spawn_blocking(move || {
+        service_for_registration.register_provider(&provider_id_for_registration)
+    })
+    .await
+    .map_err(|_| "Provider state could not be registered.".to_owned())
+    .and_then(|result| result);
+    if let Err(error) = registration {
+        service.unregister_provider(&provider_id);
+        registry.unregister_provider(&provider_id);
+        return Err(error);
+    }
+    let settings_for_reconcile = settings.inner().clone();
+    let reconciliation = tauri::async_runtime::spawn_blocking(move || {
+        settings_for_reconcile.reconcile_registry_change()
+    })
+    .await
+    .map_err(|_| "Provider settings could not be reconciled.".to_owned())
+    .and_then(|result| result);
+    match reconciliation {
         Ok(updated) => {
             tray_presentation::update(&app, &service.state(), &updated, settings.registry());
             let _ = app.emit("settings-state", settings_view_state(&app, &settings));
@@ -349,6 +390,7 @@ pub async fn add_api_key_account(
             // Roll the runtime back out so a retry with the same name does not
             // hit a "duplicate provider id" error against the stale entry; the
             // database record stays, and its id is reused on retry.
+            service.unregister_provider(&provider_id);
             registry.unregister_provider(&provider_id);
             crate::app_warn!(
                 "auth",
@@ -413,20 +455,22 @@ pub async fn remove_api_key_account(
         // The credential-store entry is tied to the derived provider id (e.g. `kimi@1a2b3c4d`);
         // deleting the raw ApiKeyStore entry is sufficient: every family ultimately delegates to it,
         // so calling it directly avoids depending on per-family ZaiAuthStore/KimiAuthStore privacy.
-        // Missing entries are not errors: the database record is the source of truth and a keyring
-        // miss simply means the secret was already absent — but a live keyring failure is worth a
-        // log line so a wedged delete stays diagnosable.
+        // Missing entries are not errors, but a live keyring failure must keep the account record
+        // intact so the user can retry. Otherwise the secret would be orphaned with no remaining
+        // UI path capable of deleting it.
         let store = crate::providers::api_key::ApiKeyStore::new_with_sources(
             &provider_id_for_removal,
             &[],
             &[],
         );
-        if let Err(error) = store.delete() {
+        store.delete().map_err(|error| {
             crate::app_warn!(
                 "auth",
                 "credential entry for {provider_id_for_removal} could not be deleted: {error}"
             );
-        }
+            "The account credential could not be removed. Unlock the system credential store and try again."
+                .to_owned()
+        })?;
         storage
             .delete_provider_account_by_identity(&family, &identity_key)
             .map_err(|error| error.to_string())?;
@@ -439,7 +483,15 @@ pub async fn remove_api_key_account(
     // immediately instead of lingering until the next launch.
     let command_guard = settings.lock_command_mutation().await;
     registry.unregister_provider(&provider_id);
-    match settings.reconcile_registry_change() {
+    service.unregister_provider(&provider_id);
+    let settings_for_reconcile = settings.inner().clone();
+    let reconciliation = tauri::async_runtime::spawn_blocking(move || {
+        settings_for_reconcile.reconcile_registry_change()
+    })
+    .await
+    .map_err(|_| "Provider settings could not be reconciled.".to_owned())
+    .and_then(|result| result);
+    match reconciliation {
         Ok(updated) => {
             tray_presentation::update(&app, &service.state(), &updated, settings.registry());
             let _ = app.emit("settings-state", settings_view_state(&app, &settings));
@@ -449,9 +501,17 @@ pub async fn remove_api_key_account(
                 "auth",
                 "account {provider_id} removed but settings reconciliation failed: {error}"
             );
-            // The account is already gone from the registry and the database;
-            // push state anyway so the frontend drops the card instead of
-            // keeping a ghost that can never be removed again this session.
+            // The account is already gone from the registry and the database.
+            // Strip its in-memory layout so the emitted settings cannot
+            // resurrect a ghost card — the revision bump makes the frontend
+            // re-sync its catalog too. Persisted settings catch up on the
+            // next successful reconcile or launch.
+            let settings_for_cleanup = settings.inner().clone();
+            let cleanup_provider_id = provider_id.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                settings_for_cleanup.drop_account_layout(&cleanup_provider_id)
+            })
+            .await;
             tray_presentation::update(&app, &service.state(), &settings.get(), settings.registry());
             let _ = app.emit("settings-state", settings_view_state(&app, &settings));
             return Err(error);

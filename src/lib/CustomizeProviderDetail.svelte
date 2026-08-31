@@ -48,11 +48,7 @@
     if (messageTimer) clearTimeout(messageTimer);
   });
   const provider = $derived(settings.providers.find((item) => item.id === providerId));
-  const isApiKeyAccount = $derived(
-    /^[^@]+@[0-9a-f]{8}$/.test(providerId) &&
-      catalog.provider(providerId) === undefined &&
-      catalog.supportsApiKeyConfiguration(providerId.split('@')[0]!),
-  );
+  const isApiKeyAccount = $derived(catalog.isApiKeyAccount(providerId));
 
   async function removeAccount() {
     if (!isApiKeyAccount) return;

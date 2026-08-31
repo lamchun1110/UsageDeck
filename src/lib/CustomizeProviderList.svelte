@@ -31,9 +31,14 @@
     reducedMotion,
   }: Props = $props();
   const providerDisplayName = (id: string) => catalog.displayName(id, settings.providerNames);
+  // Families only: existing accounts (e.g. `kimi@1a2b3c4d`) also support API-key
+  // configuration but must not be offered as families for creating new accounts.
   const apiKeyFamilies = $derived(
     catalog.providers
-      .filter((provider) => catalog.supportsApiKeyConfiguration(provider.id))
+      .filter(
+        (provider) =>
+          catalog.supportsApiKeyConfiguration(provider.id) && !catalog.isApiKeyAccount(provider.id),
+      )
       .map((provider) => provider.id),
   );
   let newAccountName = $state('');

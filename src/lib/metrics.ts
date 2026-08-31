@@ -53,6 +53,14 @@ export class ProviderCatalogIndex {
     return this.#apiKeyProviderIds.has(id);
   }
 
+  isApiKeyAccount(id: string) {
+    return (
+      /^[^@]+@[0-9a-f]{8}$/.test(id) &&
+      this.provider(id) !== undefined &&
+      this.supportsApiKeyConfiguration(id)
+    );
+  }
+
   supportsSessionKickstart(id: string) {
     return this.#kickstartProviderIds.has(id);
   }

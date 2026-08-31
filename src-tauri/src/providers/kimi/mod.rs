@@ -133,6 +133,25 @@ impl KimiProvider {
         }
     }
 
+    #[cfg(test)]
+    fn with_account_dependencies(
+        provider_id: &str,
+        account_name: &str,
+        auth: KimiAuthStore,
+        client: KimiClient,
+    ) -> Self {
+        let identity = crate::providers::api_key_account::ApiKeyIdentity::account(
+            provider_id,
+            account_name,
+            "Kimi",
+        );
+        Self {
+            auth,
+            client: Arc::new(client),
+            identity,
+        }
+    }
+
     /// The usages URL for the endpoint the user selected, or the option's default when nothing
     /// is stored yet.
     fn usages_url(&self) -> &'static str {
@@ -145,7 +164,7 @@ impl KimiProvider {
         let response = required_response(self.client.fetch(self.usages_url(), api_key))?;
         let mapped = map_usage(&response.body)?;
         Ok(ProviderSnapshot {
-            provider_id: "kimi".into(),
+            provider_id: self.identity.provider_id.clone(),
             plan: mapped.plan,
             quotas: mapped.quotas,
             value_metrics: Vec::new(),
@@ -291,6 +310,24 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["session", "weekly"]
         );
+    }
+
+    #[test]
+    fn account_refresh_reports_the_account_provider_id() {
+        let url = test_http::serve_once(200, &[], QUOTA_BODY);
+        let provider = KimiProvider::with_account_dependencies(
+            "kimi@1a2b3c4d",
+            "Work",
+            auth(Some("secret")),
+            KimiClient::for_test(&url, Duration::from_secs(1)),
+        );
+        let snapshot = provider.refresh().unwrap();
+
+        assert_eq!(provider.definition().id, "kimi@1a2b3c4d");
+        assert_eq!(snapshot.provider_id, "kimi@1a2b3c4d");
+        // Source ids stay in the family namespace: the account definition rewrites
+        // metric ids, never source ids.
+        assert_eq!(snapshot.quotas[0].id, "session");
     }
 
     #[test]

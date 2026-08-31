@@ -35,6 +35,26 @@ describe('provider catalog index', () => {
     );
   });
 
+  it('recognizes only registered API-key account providers as removable accounts', () => {
+    const account = structuredClone(
+      providerCatalog.providers.find(({ id }) => id === 'openrouter')!,
+    );
+    account.id = 'openrouter@1a2b3c4d';
+    account.displayName = 'OpenRouter — Work';
+    account.metrics = account.metrics.map((metric) => ({
+      ...metric,
+      id: metric.id.replace('openrouter.', 'openrouter@1a2b3c4d.'),
+    }));
+    const catalog = new ProviderCatalogIndex({
+      providers: [...providerCatalog.providers, account],
+      apiKeyProviderIds: ['openrouter', account.id],
+    });
+
+    expect(catalog.isApiKeyAccount(account.id)).toBe(true);
+    expect(catalog.isApiKeyAccount('openrouter')).toBe(false);
+    expect(catalog.isApiKeyAccount('openrouter@deadbeef')).toBe(false);
+  });
+
   it('prefers the snapshot usage source when an additional local source contributed', () => {
     const catalog = new ProviderCatalogIndex(providerCatalog);
     const snapshot = structuredClone(codexState.snapshot!);
