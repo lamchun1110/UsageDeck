@@ -66,24 +66,145 @@ fn cancel_scheduled(provider_id: &str) {
 /// when set, otherwise the provider's built-in CLI invocation. Returns `None`
 /// for providers without session windows — the expiry the evaluator fires on —
 /// or without any usable command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResolvedCommand {
+    Custom(String),
+    BuiltIn { program: String, args: Vec<String> },
+}
+
+/// How long the login-shell PATH probe may take before it is abandoned. A
+/// profile that needs longer (heavy nvm setups) would also delay every
+/// kickstart spawn, so the bound doubles as a health check.
+const PROGRAM_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Resolved built-in programs, remembered for the session so the probe and the
+/// root scans run at most once per CLI per launch.
+static RESOLVED_PROGRAMS: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Built-in CLIs are resolved in tiers before falling back to the bare program
+/// name, because a GUI app's login-shell PATH covers fewer locations than an
+/// interactive terminal: (1) ask the same login shell that will run the
+/// kickstart — whatever `command -v` finds there is exactly what the kick can
+/// execute, covering every install method the user's own profile exposes;
+/// (2) well-known user-local install roots, covering PATH edits that live in
+/// interactive-only rc files (the native `claude` installer edits `.zshrc`,
+/// which `zsh -l -c` never loads); (3) the bare name, resolved by the shell at
+/// kick time. Custom commands are untouched — the user's shell performs its
+/// own resolution.
+fn resolve_builtin_program(program: &str) -> String {
+    if program.contains('/') {
+        return program.to_owned();
+    }
+    let mut resolved_cache = RESOLVED_PROGRAMS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(resolved) = resolved_cache.get(program) {
+        return resolved.clone();
+    }
+    let resolved = resolve_builtin_program_with(
+        program,
+        Some(crate::providers::home_directory().as_path()),
+        probe_login_path,
+    );
+    resolved_cache.insert(program.to_owned(), resolved.clone());
+    resolved
+}
+
+fn resolve_builtin_program_with(
+    program: &str,
+    home: Option<&std::path::Path>,
+    probe: impl Fn(&str) -> Option<String>,
+) -> String {
+    if let Some(found) = probe(program) {
+        // A shell builtin or alias name is not a path; only an absolute hit is
+        // usable as the kickstart program.
+        if found.starts_with('/') {
+            return found;
+        }
+    }
+    resolve_builtin_program_in(program, home)
+}
+
+fn resolve_builtin_program_in(program: &str, home: Option<&std::path::Path>) -> String {
+    if program.contains('/') {
+        return program.to_owned();
+    }
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(home) = home {
+        candidates.push(home.join(".local").join("bin").join(program));
+    }
+    candidates.push(std::path::PathBuf::from("/opt/homebrew/bin").join(program));
+    candidates.push(std::path::PathBuf::from("/usr/local/bin").join(program));
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| candidate.display().to_string())
+        .unwrap_or_else(|| program.to_owned())
+}
+
+/// The shell every kickstart invocation and PATH probe runs through: the app
+/// process does not inherit the login environment where the CLIs live.
+#[cfg(not(target_os = "windows"))]
+fn login_shell() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| {
+        if cfg!(target_os = "macos") {
+            "/bin/zsh".to_owned()
+        } else {
+            "/bin/sh".to_owned()
+        }
+    })
+}
+
+/// Asks the login shell to resolve `program` exactly as the kickstart spawn
+/// will, with a deadline so a wedged profile cannot stall the refresh tail.
+/// Only definitive answers count: a timeout or a non-absolute hit leaves
+/// resolution to the static tiers, and an unanswered probe is not cached.
+#[cfg(not(target_os = "windows"))]
+fn probe_login_path(program: &str) -> Option<String> {
+    let script = format!("command -v {program}");
+    let mut command = child_process::background_command(&login_shell());
+    command.args(["-l", "-c", &script]);
+    let output = child_process::output_with_timeout(&mut command, PROGRAM_PROBE_TIMEOUT).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let found = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .to_owned();
+    (found.starts_with('/') && std::path::Path::new(&found).is_file()).then_some(found)
+}
+
+#[cfg(target_os = "windows")]
+fn probe_login_path(_program: &str) -> Option<String> {
+    // Windows kickstarts resolve through cmd.exe with the full user PATH that
+    // GUI processes inherit, so a login-shell probe has nothing to add.
+    None
+}
+
 fn resolve_command(
     provider_id: &str,
     kickstart_commands: &std::collections::BTreeMap<String, String>,
     registry: &ProviderRegistry,
-) -> Option<String> {
+) -> Option<ResolvedCommand> {
     if !is_session_capable(registry, provider_id) {
         return None;
     }
     if let Some(custom) = kickstart_commands.get(provider_id) {
         let trimmed = custom.trim();
         if !trimmed.is_empty() {
-            return Some(trimmed.to_owned());
+            return Some(ResolvedCommand::Custom(trimmed.to_owned()));
         }
     }
     registry
         .runtime(provider_id)
         .and_then(|runtime| runtime.session_kickstart())
-        .map(|kickstart| format!("{} {}", kickstart.program, kickstart.args.join(" ")))
+        .map(|kickstart| ResolvedCommand::BuiltIn {
+            program: resolve_builtin_program(&kickstart.program),
+            args: kickstart.args,
+        })
 }
 
 /// Every provider with a first-message rolling session publishes it as the
@@ -110,6 +231,7 @@ fn is_session_capable(registry: &ProviderRegistry, provider_id: &str) -> bool {
 /// A session window is active while its reset time is still in the future;
 /// once every session window is missing or past its reset, the session has
 /// rolled over and a kickstart would begin a fresh one.
+#[cfg(test)]
 fn session_window_active(snapshot: &crate::models::ProviderSnapshot) -> bool {
     let now = Utc::now();
     snapshot
@@ -129,7 +251,7 @@ fn active_session_reset(snapshot: &crate::models::ProviderSnapshot) -> Option<Da
         .min()
 }
 
-/// Decides and runs session kickstarts after a refresh batch. Two tiers:
+/// Decides and schedules session kickstarts after a refresh batch. Two tiers:
 ///
 /// - Session still active: arm (or reuse) a timer at its reset time plus a
 ///   short grace, so the next window starts right when the current one
@@ -139,20 +261,19 @@ fn active_session_reset(snapshot: &crate::models::ProviderSnapshot) -> Option<Da
 ///
 /// The refresh-tail path stays as the safety net either way: system sleep can
 /// skew timers, and any later refresh re-evaluates from fresh data.
-/// Returns whether a kickstart ran a follow-up refresh, so the caller can
-/// return the fresher service state instead of its stale pre-tail snapshot.
-pub async fn evaluate(
+/// Prompt execution is detached from the refresh tail: a slow CLI must not
+/// hold a manual or background refresh open for up to `KICKSTART_TIMEOUT`.
+pub fn evaluate(
     app: &AppHandle,
     state: &UsageViewState,
     settings: &Arc<SettingsService>,
     registry: &Arc<ProviderRegistry>,
     service: &Arc<ProviderService>,
     notifications: &Arc<NotificationEvaluator>,
-) -> bool {
-    let mut refreshed = false;
+) {
     let current_settings = settings.get();
     if current_settings.kickstart_provider_ids.is_empty() {
-        return false;
+        return;
     }
     let targets = current_settings
         .providers
@@ -191,17 +312,12 @@ pub async fn evaluate(
         let Some(provider_state) = state.providers.get(&provider_id) else {
             continue;
         };
-        // Without a successful snapshot we do not know the window state; also
-        // never prompt a provider whose credentials are broken.
-        let Some(snapshot) = provider_state.snapshot.as_ref() else {
+        // Without a successful live snapshot we do not know the window state.
+        // Retained cache data after any refresh failure must never trigger an
+        // automated prompt.
+        let Some(snapshot) = fresh_snapshot(provider_state) else {
             continue;
         };
-        if matches!(
-            provider_state.error_kind,
-            Some(crate::models::ProviderErrorKind::Authentication)
-        ) {
-            continue;
-        }
         if let Some(reset_at) = active_session_reset(snapshot) {
             // Still inside a live window: aim the timer at its reset.
             schedule_at_reset(
@@ -210,7 +326,6 @@ pub async fn evaluate(
                 app.clone(),
                 service.clone(),
                 settings.clone(),
-                registry.clone(),
                 notifications.clone(),
             );
             continue;
@@ -223,32 +338,46 @@ pub async fn evaluate(
             continue;
         }
 
+        spawn_prompt(
+            provider_id,
+            kickstart_command,
+            app.clone(),
+            service.clone(),
+            settings.clone(),
+            notifications.clone(),
+        );
+    }
+}
+
+fn spawn_prompt(
+    provider_id: String,
+    command: ResolvedCommand,
+    app: AppHandle,
+    service: Arc<ProviderService>,
+    settings: Arc<SettingsService>,
+    notifications: Arc<NotificationEvaluator>,
+) {
+    tauri::async_runtime::spawn(async move {
         crate::app_info!("kickstart", "session rolled over; starting a fresh window");
-        if let Err(error) = send_prompt(&kickstart_command).await {
+        if let Err(error) = send_prompt(&command).await {
             crate::app_warn!("kickstart", "{provider_id} kickstart failed: {error}");
-            continue;
+            return;
         }
         crate::app_info!("kickstart", "{provider_id} session window restarted");
 
-        // Show the brand-new window right away instead of waiting for the
-        // next scheduled batch. The nested evaluation is a no-op: the window
-        // is now active.
-        // Boxed: kickstart -> refresh -> kickstart recursion is finite (the
-        // fresh window suppresses the nested evaluation) but async recursion
-        // still needs boxing for the compiler.
-        Box::pin(refresh_with_events(
-            app,
-            service,
-            settings,
-            notifications,
+        // Publish the brand-new window after the prompt completes. The nested
+        // refresh tail sees an active live session and only rearms its timer.
+        refresh_with_events(
+            &app,
+            &service,
+            &settings,
+            &notifications,
             std::slice::from_ref(&provider_id),
             true,
             false,
-        ))
+        )
         .await;
-        refreshed = true;
-    }
-    refreshed
+    });
 }
 
 /// Arms the reset-time timer for one provider, replacing any timer that aims
@@ -260,7 +389,6 @@ fn schedule_at_reset(
     app: AppHandle,
     service: Arc<ProviderService>,
     settings: Arc<SettingsService>,
-    registry: Arc<ProviderRegistry>,
     notifications: Arc<NotificationEvaluator>,
 ) {
     let mut scheduled = SCHEDULED
@@ -282,15 +410,7 @@ fn schedule_at_reset(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&task_provider_id);
-        run_scheduled_kick(
-            task_provider_id,
-            app,
-            service,
-            settings,
-            registry,
-            notifications,
-        )
-        .await;
+        run_scheduled_kick(task_provider_id, app, service, settings, notifications).await;
     });
     scheduled.insert(provider_id, (task, target));
 }
@@ -303,7 +423,6 @@ async fn run_scheduled_kick(
     app: AppHandle,
     service: Arc<ProviderService>,
     settings: Arc<SettingsService>,
-    registry: Arc<ProviderRegistry>,
     notifications: Arc<NotificationEvaluator>,
 ) {
     let current_settings = settings.get();
@@ -317,41 +436,10 @@ async fn run_scheduled_kick(
     if !opted_in {
         return;
     }
-    let Some(kickstart_command) = resolve_command(
-        &provider_id,
-        &current_settings.kickstart_commands,
-        &registry,
-    ) else {
-        return;
-    };
-    let state = service.state();
-    let Some(provider_state) = state.providers.get(&provider_id) else {
-        return;
-    };
-    let Some(snapshot) = provider_state.snapshot.as_ref() else {
-        return;
-    };
-    if matches!(
-        provider_state.error_kind,
-        Some(crate::models::ProviderErrorKind::Authentication)
-    ) {
-        return;
-    }
-    if session_window_active(snapshot) {
-        // The user already sent a real message; nothing to restart.
-        return;
-    }
-    if !record_attempt(&provider_id) {
-        return;
-    }
-
-    crate::app_info!("kickstart", "reset time reached; starting a fresh window");
-    if let Err(error) = send_prompt(&kickstart_command).await {
-        crate::app_warn!("kickstart", "{provider_id} kickstart failed: {error}");
-        return;
-    }
-    crate::app_info!("kickstart", "{provider_id} session window restarted");
-    Box::pin(refresh_with_events(
+    // Refresh first, then let the shared refresh tail evaluate the newly
+    // authoritative session window. This catches a real user message sent
+    // after the old reset and suppresses the synthetic prompt.
+    refresh_with_events(
         &app,
         &service,
         &settings,
@@ -359,58 +447,73 @@ async fn run_scheduled_kick(
         std::slice::from_ref(&provider_id),
         true,
         false,
-    ))
+    )
     .await;
 }
 
+fn fresh_snapshot(
+    state: &crate::models::ProviderViewState,
+) -> Option<&crate::models::ProviderSnapshot> {
+    // A provider mid-refresh keeps its previous Live snapshot with the error
+    // cleared, so a rolled-over-but-not-yet-refreshed session could otherwise
+    // look eligible for a synthetic prompt.
+    if state.refreshing
+        || state.error.is_some()
+        || state.source != crate::models::SnapshotSource::Live
+    {
+        return None;
+    }
+    state.snapshot.as_ref()
+}
+
 /// Runs the kickstart command through the user's login shell: the app process
-/// does not inherit the login PATH where `claude`/`codex` live. Built-in
-/// scripts join compile-time constants; custom commands are the user's own
-/// shell input, equivalent to running them in a terminal.
-async fn send_prompt(script: &str) -> Result<(), String> {
+/// does not inherit the login PATH where `claude`/`codex` live. Built-ins keep
+/// program and args separate; custom commands remain user-authored shell input.
+async fn send_prompt(resolved: &ResolvedCommand) -> Result<(), String> {
     // Unix: the login shell resolves the CLI the way the user's terminal
     // would (the app process lacks that PATH). Windows has no SHELL in GUI
     // sessions; cmd.exe resolves npm-global CLIs from the user PATH.
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut command = child_process::background_command("cmd.exe");
-        command.args(["/C", script]);
+        match resolved {
+            ResolvedCommand::Custom(script) => {
+                command.args(["/C", script]);
+            }
+            ResolvedCommand::BuiltIn { program, args } => {
+                command.arg("/C").arg(program).args(args);
+            }
+        }
         command
     };
     #[cfg(not(target_os = "windows"))]
     let mut command = {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| {
-            if cfg!(target_os = "macos") {
-                "/bin/zsh".to_owned()
-            } else {
-                "/bin/sh".to_owned()
+        let mut command = child_process::background_command(&login_shell());
+        match resolved {
+            ResolvedCommand::Custom(script) => {
+                command.args(["-l", "-c", script]);
             }
-        });
-        let mut command = child_process::background_command(&shell);
-        command.args(["-l", "-c", script]);
+            ResolvedCommand::BuiltIn { program, args } => {
+                // `$@` preserves argument boundaries while the login shell
+                // still supplies the user's CLI PATH.
+                command.args(["-l", "-c", "exec \"$@\"", "usagedeck-kickstart"]);
+                command.arg(program).args(args);
+            }
+        }
         command
     };
-    let output = tokio::task::spawn_blocking(move || {
-        child_process::output_with_timeout(&mut command, KICKSTART_TIMEOUT)
+    let status = tokio::task::spawn_blocking(move || {
+        child_process::status_with_timeout(&mut command, KICKSTART_TIMEOUT)
     })
     .await
     .map_err(|error| format!("kickstart task failed: {error}"))?
     .map_err(|error| format!("could not run the kickstart command: {error}"))?;
-    if !output.status.success() {
-        // A custom command may embed secrets in its output; the redaction
-        // layer cannot know arbitrary token shapes, so only the exit status
-        // reaches the persistent log.
-        crate::app_debug!(
-            "kickstart",
-            "kickstart command stderr: {}",
-            String::from_utf8_lossy(&output.stderr)
-                .lines()
-                .next()
-                .unwrap_or_default()
-        );
+    if !status.success() {
+        // A custom command may embed arbitrary secrets in stdout or stderr;
+        // neither stream may reach the persistent log.
         return Err(format!(
             "the kickstart command exited with status {}",
-            output.status
+            status
         ));
     }
     Ok(())
@@ -420,10 +523,10 @@ async fn send_prompt(script: &str) -> Result<(), String> {
 mod tests {
     use chrono::Utc;
 
-    use super::{is_session_capable, session_window_active, LAST_ATTEMPTS};
+    use super::{fresh_snapshot, is_session_capable, session_window_active, LAST_ATTEMPTS};
     use crate::models::{
         MetricDefinition, MetricSection, MetricSource, ProviderDefinition, ProviderSnapshot,
-        QuotaWindow, UsageHistory,
+        ProviderViewState, QuotaWindow, SnapshotSource, UsageHistory,
     };
 
     fn definition_with_session_metric(id: &str) -> ProviderDefinition {
@@ -506,6 +609,27 @@ mod tests {
     }
 
     #[test]
+    fn retained_snapshot_after_refresh_error_is_not_eligible_for_kickstart() {
+        let mut state = ProviderViewState {
+            snapshot: Some(snapshot_with_session_reset(None)),
+            source: SnapshotSource::Live,
+            ..ProviderViewState::default()
+        };
+        assert!(fresh_snapshot(&state).is_some());
+
+        state.error = Some("offline".into());
+        assert!(fresh_snapshot(&state).is_none());
+
+        state.error = None;
+        state.refreshing = true;
+        assert!(fresh_snapshot(&state).is_none());
+
+        state.refreshing = false;
+        state.source = SnapshotSource::Cache;
+        assert!(fresh_snapshot(&state).is_none());
+    }
+
+    #[test]
     fn attempts_respect_the_cooldown() {
         {
             let mut attempts = LAST_ATTEMPTS.lock().unwrap();
@@ -515,6 +639,75 @@ mod tests {
         assert!(super::record_attempt("claude"));
         assert!(!super::record_attempt("claude"));
         assert!(super::record_attempt("codex"));
+    }
+
+    #[test]
+    fn builtin_programs_resolve_from_user_local_install_roots() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_bin = directory.path().join(".local").join("bin");
+        std::fs::create_dir_all(&local_bin).unwrap();
+        let installed = local_bin.join("usagedeck-test-cli");
+        std::fs::write(&installed, b"#!/bin/sh\n").unwrap();
+
+        // A CLI under ~/.local/bin resolves to its absolute path even though a
+        // GUI app's login shell PATH never includes that directory.
+        assert_eq!(
+            super::resolve_builtin_program_in("usagedeck-test-cli", Some(directory.path())),
+            installed.display().to_string()
+        );
+        // Nothing installed anywhere: the bare name falls through to the shell.
+        assert_eq!(
+            super::resolve_builtin_program_in("usagedeck-test-cli", None),
+            "usagedeck-test-cli"
+        );
+        // Already-qualified programs are never rewritten.
+        assert_eq!(
+            super::resolve_builtin_program_in("/opt/other/cli", Some(directory.path())),
+            "/opt/other/cli"
+        );
+    }
+
+    #[test]
+    fn login_shell_hits_win_over_static_roots_and_only_when_absolute() {
+        let directory = tempfile::tempdir().unwrap();
+        let local_bin = directory.path().join(".local").join("bin");
+        std::fs::create_dir_all(&local_bin).unwrap();
+        let installed = local_bin.join("usagedeck-test-cli");
+        std::fs::write(&installed, b"#!/bin/sh\n").unwrap();
+
+        // The login shell's answer is exactly what the kickstart will execute,
+        // so it wins even when a static root also holds a copy.
+        assert_eq!(
+            super::resolve_builtin_program_with(
+                "usagedeck-test-cli",
+                Some(directory.path()),
+                |_| Some("/usr/custom/bin/usagedeck-test-cli".to_owned())
+            ),
+            "/usr/custom/bin/usagedeck-test-cli"
+        );
+        // A non-absolute probe result (shell built-in, alias) is not a path and
+        // must not shadow the static roots.
+        assert_eq!(
+            super::resolve_builtin_program_with(
+                "usagedeck-test-cli",
+                Some(directory.path()),
+                |_| Some("usagedeck-test-cli".to_owned())
+            ),
+            installed.display().to_string()
+        );
+        // Probe miss falls through to the roots, then the bare name.
+        assert_eq!(
+            super::resolve_builtin_program_with(
+                "usagedeck-test-cli",
+                Some(directory.path()),
+                |_| None
+            ),
+            installed.display().to_string()
+        );
+        assert_eq!(
+            super::resolve_builtin_program_with("usagedeck-test-cli", None, |_| None),
+            "usagedeck-test-cli"
+        );
     }
 
     struct BuiltinKickstartProvider(ProviderDefinition);
@@ -579,24 +772,31 @@ mod tests {
 
         // Custom command wins over the built-in.
         assert_eq!(
-            super::resolve_command("claude", &commands, &registry).as_deref(),
-            Some("claude -p hi --model haiku")
+            super::resolve_command("claude", &commands, &registry),
+            Some(super::ResolvedCommand::Custom(
+                "claude -p hi --model haiku".into()
+            ))
         );
-        // Empty custom falls back to the built-in.
+        // Empty custom falls back to the built-in, resolved against the
+        // well-known user-local install roots on this machine.
         assert_eq!(
             super::resolve_command(
                 "claude",
                 &std::collections::BTreeMap::from([("claude".to_owned(), "   ".to_owned())]),
                 &registry,
-            )
-            .map(|script| script.starts_with("claude ")),
-            Some(true)
+            ),
+            Some(super::ResolvedCommand::BuiltIn {
+                program: super::resolve_builtin_program("claude"),
+                args: vec!["-p".into(), "Hi".into()],
+            })
         );
         // Built-in when no custom entry exists.
         assert_eq!(
-            super::resolve_command("claude", &std::collections::BTreeMap::new(), &registry)
-                .map(|script| script.starts_with("claude ")),
-            Some(true)
+            super::resolve_command("claude", &std::collections::BTreeMap::new(), &registry),
+            Some(super::ResolvedCommand::BuiltIn {
+                program: super::resolve_builtin_program("claude"),
+                args: vec!["-p".into(), "Hi".into()],
+            })
         );
         // Providers without session windows are never kickstartable.
         assert_eq!(super::resolve_command("cursor", &commands, &registry), None);

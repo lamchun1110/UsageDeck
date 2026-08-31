@@ -1,6 +1,6 @@
 use std::{
     io::{self, Read},
-    process::{Command, Output, Stdio},
+    process::{Command, ExitStatus, Output, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -83,6 +83,47 @@ pub fn output_with_timeout(command: &mut Command, timeout: Duration) -> io::Resu
     })
 }
 
+/// Runs a background command with a deadline while discarding both output streams.
+/// Use this for commands whose output is neither consumed nor safe to retain: unlike
+/// `output_with_timeout`, it cannot grow an unbounded in-memory capture buffer.
+pub fn status_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<ExitStatus> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = command.spawn()?;
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "child timeout is too large"))?;
+    let mut poll_interval = Duration::from_millis(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(poll_interval),
+                );
+                poll_interval = (poll_interval * 2).min(Duration::from_millis(100));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "background command timed out",
+                ));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        }
+    }
+}
+
 fn read_all(mut reader: impl Read) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
@@ -159,12 +200,25 @@ mod tests {
 mod unix_tests {
     use std::time::{Duration, Instant};
 
-    use super::{background_command, output_with_timeout};
+    use super::{background_command, output_with_timeout, status_with_timeout};
 
     #[test]
     fn background_command_deadline_terminates_a_slow_process() {
         let started = Instant::now();
         let error = output_with_timeout(
+            background_command("sleep").arg("5"),
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn discarded_output_command_keeps_the_same_deadline() {
+        let started = Instant::now();
+        let error = status_with_timeout(
             background_command("sleep").arg("5"),
             Duration::from_millis(100),
         )

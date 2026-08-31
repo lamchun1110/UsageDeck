@@ -375,10 +375,12 @@ impl crate::providers::UsageProvider for CodexProvider {
     fn session_kickstart(&self) -> Option<crate::providers::SessionKickstart> {
         // Non-interactive exec sends one prompt and exits; the repo check is
         // skipped because the app's working directory is not a workspace, and
-        // gpt-5-mini keeps the restart prompt on the cheapest model.
+        // gpt-5.6-luna keeps the restart prompt on the cheapest ChatGPT-account
+        // tier. Pinned explicitly: the account default can be a premium model,
+        // and retired tiers (gpt-5-mini) fail with a 400 that kills the kick.
         Some(crate::providers::SessionKickstart::new(
             "codex",
-            &["exec", "--skip-git-repo-check", "-m", "gpt-5-mini", "Hi"],
+            &["exec", "--skip-git-repo-check", "-m", "gpt-5.6-luna", "Hi"],
         ))
     }
 

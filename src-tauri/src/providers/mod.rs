@@ -45,6 +45,8 @@ macro_rules! redacted_debug {
 pub use detection::{detect_local_credentials, CredentialProbeResults, CredentialProbeStatus};
 pub use registry::ProviderRegistry;
 
+pub(crate) use paths::home_directory;
+
 use crate::models::{ApiKeyStatus, ProviderDefinition, ProviderErrorKind, ProviderSnapshot};
 
 pub fn provider_family(provider_id: &str) -> &str {
