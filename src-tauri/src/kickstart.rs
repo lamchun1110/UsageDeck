@@ -82,6 +82,14 @@ impl KickOutcomes {
     fn record_kick(&mut self, provider_id: &str) {
         *self.failures.entry(provider_id.to_owned()).or_insert(0) += 1;
     }
+
+    /// Drops bookkeeping for providers that are no longer kickstart targets.
+    fn retain(&mut self, targets: &[String]) {
+        self.failures
+            .retain(|provider_id, _| targets.contains(provider_id));
+        self.suspension_logged
+            .retain(|provider_id| targets.contains(provider_id));
+    }
 }
 
 static KICK_OUTCOMES: LazyLock<Mutex<KickOutcomes>> =
@@ -387,6 +395,13 @@ pub fn evaluate(
         .map(|layout| layout.id.clone())
         .collect::<Vec<_>>();
 
+    // Outcome bookkeeping only lives for current targets; entries for
+    // removed accounts or vanished data directories would linger forever.
+    KICK_OUTCOMES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .retain(&targets);
+
     // A provider that left the target set (opted out, disabled, or lost
     // eligibility) must not keep an armed reset timer; the fired task would
     // no-op, but cancelling is cheaper and clearer.
@@ -603,6 +618,27 @@ fn fresh_snapshot(
     state.snapshot.as_ref()
 }
 
+/// The login-shell script for a built-in: exports the account-scoped
+/// environment inside the script (so profiles cannot override it) and then
+/// `exec`s the CLI with its arguments intact.
+fn login_script_with_envs(envs: &[(String, String)]) -> String {
+    if envs.is_empty() {
+        return "exec \"$@\"".to_owned();
+    }
+    let exports = envs
+        .iter()
+        .map(|(key, value)| format!("export {}={}", key, shell_word(value)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{exports}; exec \"$@\"")
+}
+
+/// Single-quotes a shell word; the standard `'\''` dance escapes embedded
+/// quotes.
+fn shell_word(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// Runs the kickstart command through the user's login shell: the app process
 /// does not inherit the login PATH where `claude`/`codex` live. Built-ins keep
 /// program, args, and environment separate; custom commands remain
@@ -643,11 +679,16 @@ async fn send_prompt(resolved: &ResolvedCommand) -> Result<(), String> {
             } => {
                 // `$@` preserves argument boundaries while the login shell
                 // still supplies the user's CLI PATH. The environment is
-                // applied after `-l` so account-scoped variables such as
-                // CLAUDE_CONFIG_DIR survive the login scripts.
-                command.args(["-l", "-c", "exec \"$@\"", "usagedeck-kickstart"]);
+                // exported inside the `-c` script: setting it on the spawned
+                // process would let login profiles override account-scoped
+                // variables such as CLAUDE_CONFIG_DIR before `exec` runs.
+                command.args([
+                    "-l",
+                    "-c",
+                    &login_script_with_envs(envs),
+                    "usagedeck-kickstart",
+                ]);
                 command.arg(program).args(args);
-                command.envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
             }
         }
         command
@@ -780,6 +821,24 @@ mod tests {
         state.refreshing = false;
         state.source = SnapshotSource::Cache;
         assert!(fresh_snapshot(&state).is_none());
+    }
+
+    #[test]
+    fn login_script_exports_envs_inside_the_c_script() {
+        use super::login_script_with_envs;
+        assert_eq!(login_script_with_envs(&[]), "exec \"$@\"");
+        assert_eq!(
+            login_script_with_envs(&[(
+                "CLAUDE_CONFIG_DIR".to_owned(),
+                "/Users/x/My Dir/.claude-work".to_owned()
+            )]),
+            "export CLAUDE_CONFIG_DIR='/Users/x/My Dir/.claude-work'; exec \"$@\""
+        );
+        // Embedded quotes escape rather than break out of the word.
+        assert!(
+            login_script_with_envs(&[("K".to_owned(), "a'b".to_owned())])
+                .contains("export K='a'\\''b'")
+        );
     }
 
     #[test]

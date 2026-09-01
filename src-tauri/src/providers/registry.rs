@@ -129,7 +129,9 @@ fn build_snapshot(
                 let prefix = kickstart
                     .envs
                     .iter()
-                    .map(|(key, value)| format!("{key}={value}"))
+                    // Quoted so a config-dir path with spaces stays a
+                    // pasteable, correct command.
+                    .map(|(key, value)| format!("{key}='{}'", value.replace('\'', "'\\''")))
                     .collect::<Vec<_>>()
                     .join(" ");
                 if prefix.is_empty() {
