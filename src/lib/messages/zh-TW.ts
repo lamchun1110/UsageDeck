@@ -263,8 +263,8 @@ export const zhTW = {
   'settings.kickstart.toggleAria': '保持 {provider} 工作階段啟用',
   'settings.kickstart.scopeLabel': '要重新啟動的窗口',
   'settings.kickstart.scope.session': '僅工作階段',
-  'settings.kickstart.scope.weekly': '僅每週',
-  'settings.kickstart.scope.both': '工作階段與每週',
+  'settings.kickstart.scope.weeklyName': '每週',
+  'settings.kickstart.scope.sessionName': '工作階段',
   'settings.migration.keyTransferFailed':
     '部分 OpenQuota 已儲存的金鑰無法轉移：{providers}。請在自訂中重新新增。',
   'settings.customize.accountHint': 'API 帳戶以獨立卡片顯示，可在此新增或移除。',

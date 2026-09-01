@@ -269,8 +269,8 @@ export const en = {
   'settings.kickstart.toggleAria': 'Keep {provider} session active',
   'settings.kickstart.scopeLabel': 'Window to restart',
   'settings.kickstart.scope.session': 'Session only',
-  'settings.kickstart.scope.weekly': 'Weekly only',
-  'settings.kickstart.scope.both': 'Session and weekly',
+  'settings.kickstart.scope.weeklyName': 'Weekly',
+  'settings.kickstart.scope.sessionName': 'Session',
   'settings.migration.keyTransferFailed':
     'Some saved keys from OpenQuota could not be transferred: {providers}. Re-add them in Customize.',
   'settings.customize.accountHint':

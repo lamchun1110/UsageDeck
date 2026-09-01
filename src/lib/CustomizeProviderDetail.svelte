@@ -133,6 +133,24 @@
   // than the session window offer the choice. The session-only default is
   // not stored, matching the backend's normalization.
   const scopeSelectable = $derived(catalog.hasKickstartWindowScope(providerId));
+  // Labels come from the catalog's real window list so they never disagree
+  // with what the scope renews; today every provider rolls exactly "weekly"
+  // beyond the session, and any other id falls back to its capitalized name.
+  const windowScopeLabels = $derived.by(() => {
+    const others = catalog.kickstartRollingWindows(providerId).filter((id) => id !== 'session');
+    const names = others.map((id) =>
+      id === 'weekly' ? t('settings.kickstart.scope.weeklyName') : capitalized(id),
+    );
+    const list = names.join(', ');
+    return {
+      windowOnly: `${list} only`,
+      both: `${t('settings.kickstart.scope.sessionName')} and ${list}`,
+    };
+  });
+
+  function capitalized(value: string) {
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }
 
   function scopeValue() {
     return settings.kickstartWindowScopes?.[providerId] ?? 'session';
@@ -335,8 +353,8 @@
                 onchange={(event) => changeScope(event.currentTarget.value)}
               >
                 <option value="session">{t('settings.kickstart.scope.session')}</option>
-                <option value="weekly">{t('settings.kickstart.scope.weekly')}</option>
-                <option value="both">{t('settings.kickstart.scope.both')}</option>
+                <option value="weekly">{windowScopeLabels.windowOnly}</option>
+                <option value="both">{windowScopeLabels.both}</option>
               </select>
             </label>
           {/if}

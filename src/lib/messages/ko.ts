@@ -265,8 +265,8 @@ export const ko = {
   'settings.kickstart.toggleAria': '{provider} 세션 활성 유지',
   'settings.kickstart.scopeLabel': '다시 시작할 창',
   'settings.kickstart.scope.session': '세션만',
-  'settings.kickstart.scope.weekly': '주간만',
-  'settings.kickstart.scope.both': '세션 및 주간',
+  'settings.kickstart.scope.weeklyName': '주간',
+  'settings.kickstart.scope.sessionName': '세션',
   'settings.migration.keyTransferFailed':
     'OpenQuota의 일부 저장된 키를 전송하지 못했습니다: {providers}. 사용자 지정에서 다시 추가하세요.',
   'settings.customize.accountHint': 'API 계정은 별도 카드로 표시됩니다.',
