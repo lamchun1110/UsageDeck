@@ -161,6 +161,11 @@ mod tests {
     }
 
     fn fetch_response(status: u16, body: &str) -> UsageResponse {
+        // The HTTP layer caches rate-limit cooldowns per provider and key;
+        // without the reset, a 429 case running in parallel poisons the
+        // shared test-key for its siblings and they unwrap a cached error
+        // instead of reaching their one-shot endpoint.
+        crate::providers::http::clear_rate_limits();
         let url = test_http::serve_once(status, &[], body);
         let client =
             super::super::client::OpenCodeClient::for_test(&url, std::time::Duration::from_secs(1));
