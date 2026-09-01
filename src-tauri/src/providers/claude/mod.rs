@@ -687,10 +687,18 @@ impl crate::providers::UsageProvider for ClaudeProvider {
         // session window without an interactive session. Sonnet is the
         // cheapest model that registers a session start — haiku runs on the
         // background track, which does not (user-verified).
-        Some(crate::providers::SessionKickstart::new(
-            "claude",
-            &["-p", "Hi", "--model", "sonnet"],
-        ))
+        //
+        // Scoped account runtimes get no built-in: without CLAUDE_CONFIG_DIR
+        // the prompt would renew the default login while the evaluator
+        // watches this card's windows, kicking the wrong account forever.
+        // Users with account-targeting commands can still set a custom one.
+        match self.credential_scope {
+            ClaudeCredentialScope::Standard => Some(crate::providers::SessionKickstart::new(
+                "claude",
+                &["-p", "Hi", "--model", "sonnet"],
+            )),
+            ClaudeCredentialScope::ConfigDir { .. } => None,
+        }
     }
 
     fn definition(&self) -> ProviderDefinition {
@@ -768,6 +776,7 @@ mod tests {
         definition, definition_for, rate_limit_notice, runtime_configs, ClaudeError,
         ClaudeProvider, ClaudeRuntimeConfig,
     };
+    use crate::providers::UsageProvider;
 
     fn credential_json(access: &str, refresh: &str, plan: &str) -> String {
         format!(
@@ -829,6 +838,59 @@ mod tests {
         ));
         assert!(!configs[0].include_standard_logs);
         assert!(!configs[0].include_pi);
+    }
+
+    #[test]
+    fn scoped_account_runtimes_offer_no_builtin_kickstart() {
+        // A built-in prompt carries no CLAUDE_CONFIG_DIR, so it would renew
+        // the default login while the evaluator watches the account card's
+        // windows — kicking the wrong account on every cooldown.
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+        let pricing = Arc::new(
+            PricingStore::new_without_refresh_for_test(directory.path().join("pricing")).unwrap(),
+        );
+        let client = ClaudeClient::new().unwrap();
+        let configs = runtime_configs(ClaudeAccountDiscovery {
+            default_account: Some(ClaudeAccount {
+                id: "claude".into(),
+                display_name: "Claude".into(),
+                label: None,
+                identity: "identity-default".into(),
+                credential_scope: ClaudeCredentialScope::Standard,
+                log_roots: Vec::new(),
+            }),
+            accounts: vec![ClaudeAccount {
+                id: "claude@1a2b3c4d".into(),
+                display_name: "Claude — Work".into(),
+                label: Some("Work".into()),
+                identity: "identity-work".into(),
+                credential_scope: ClaudeCredentialScope::ConfigDir {
+                    path: directory.path().join("claude-work"),
+                    keychain_literal: "claude-work".into(),
+                },
+                log_roots: Vec::new(),
+            }],
+        });
+        assert_eq!(configs.len(), 2);
+
+        for config in configs {
+            let provider = ClaudeProvider::new_scoped(
+                config,
+                storage.clone(),
+                pricing.clone(),
+                client.clone(),
+            );
+            let scoped = matches!(
+                provider.credential_scope,
+                ClaudeCredentialScope::ConfigDir { .. }
+            );
+            assert_eq!(
+                provider.session_kickstart().is_some(),
+                !scoped,
+                "built-in kickstart must only be offered for the standard login"
+            );
+        }
     }
 
     #[test]

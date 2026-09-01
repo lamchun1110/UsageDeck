@@ -129,8 +129,13 @@ impl UsageProvider for CommandCodeProvider {
     }
 
     /// Print mode sends one prompt and exits; `--no-session` keeps the
-    /// throwaway kick out of the user's conversation history.
+    /// throwaway kick out of the user's conversation history. Not offered on
+    /// Windows: the CLI's `cmd` binary name collides with cmd.exe, which the
+    /// kick shell would resolve to itself.
     fn session_kickstart(&self) -> Option<crate::providers::SessionKickstart> {
+        if cfg!(target_os = "windows") {
+            return None;
+        }
         Some(crate::providers::SessionKickstart::new(
             "cmd",
             &["-p", "Hi", "--no-session"],
@@ -327,14 +332,20 @@ mod rolling_window_tests {
             provider.rolling_windows(),
             vec!["session".to_owned(), "weekly".to_owned()]
         );
-        assert_eq!(
-            provider
-                .session_kickstart()
-                .map(|kickstart| (kickstart.program, kickstart.args)),
-            Some((
-                "cmd".to_owned(),
-                vec!["-p".to_owned(), "Hi".to_owned(), "--no-session".to_owned()]
-            ))
-        );
+        // On Windows the `cmd` binary name resolves to cmd.exe inside the
+        // kick shell, so no built-in is offered there.
+        if cfg!(target_os = "windows") {
+            assert_eq!(provider.session_kickstart(), None);
+        } else {
+            assert_eq!(
+                provider
+                    .session_kickstart()
+                    .map(|kickstart| (kickstart.program, kickstart.args)),
+                Some((
+                    "cmd".to_owned(),
+                    vec!["-p".to_owned(), "Hi".to_owned(), "--no-session".to_owned()]
+                ))
+            );
+        }
     }
 }
