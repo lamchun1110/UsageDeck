@@ -77,6 +77,11 @@ if (!runtimeBlock) {
 const runtimeOrder = [
   'ClaudeProvider',
   ...[...runtimeBlock.matchAll(/Arc::new\((\w+Provider)::new\b/g)].map(([, provider]) => provider),
+  // Providers with their own account discovery extend the registry after the
+  // single-runtime block; their construction order is just as canonical.
+  ...[...compositionRoot.matchAll(/providers\.extend\((\w+Provider)::runtimes\(/g)].map(
+    ([, provider]) => provider,
+  ),
 ];
 const expectedRuntimeOrder = [
   'ClaudeProvider',
@@ -87,11 +92,11 @@ const expectedRuntimeOrder = [
   'CopilotProvider',
   'DevinProvider',
   'GrokProvider',
-  'OpenCodeProvider',
   'OpenRouterProvider',
   'ZaiProvider',
   'KimiProvider',
   'MiniMaxProvider',
+  'OpenCodeProvider',
 ];
 if (runtimeOrder.join(',') !== expectedRuntimeOrder.join(',')) {
   throw new Error(

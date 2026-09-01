@@ -25,7 +25,6 @@ impl OpenCodePaths {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn for_data_directory(data_directory: PathBuf) -> Self {
         Self { data_directory }
     }
@@ -78,7 +77,10 @@ impl OpenCodePaths {
     }
 }
 
-fn data_directory(environment: impl Fn(&str) -> Option<String>, home_directory: &Path) -> PathBuf {
+pub(crate) fn data_directory(
+    environment: impl Fn(&str) -> Option<String>,
+    home_directory: &Path,
+) -> PathBuf {
     if let Some(configured) = environment("OPENCODE_DATA_DIR").and_then(non_empty) {
         return expand_home(&configured, home_directory);
     }

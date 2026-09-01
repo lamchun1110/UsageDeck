@@ -369,12 +369,12 @@ fn build_provider_registry(
         Arc::new(CopilotProvider::new()?) as Arc<dyn UsageProvider>,
         Arc::new(DevinProvider::new()?) as Arc<dyn UsageProvider>,
         Arc::new(GrokProvider::new(storage.clone(), pricing.clone())?) as Arc<dyn UsageProvider>,
-        Arc::new(OpenCodeProvider::new(pricing.clone())) as Arc<dyn UsageProvider>,
         Arc::new(OpenRouterProvider::new()?) as Arc<dyn UsageProvider>,
         Arc::new(ZaiProvider::new()?) as Arc<dyn UsageProvider>,
         Arc::new(KimiProvider::new()?) as Arc<dyn UsageProvider>,
         Arc::new(MiniMaxProvider::new()?) as Arc<dyn UsageProvider>,
     ]);
+    providers.extend(OpenCodeProvider::runtimes(pricing.clone()));
     providers.extend(crate::providers::api_key_account::api_key_account_providers(storage)?);
     Ok(Arc::new(ProviderRegistry::new(providers)?))
 }

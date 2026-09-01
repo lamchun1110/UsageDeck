@@ -1,3 +1,4 @@
+mod accounts;
 mod client;
 mod database;
 mod mapper;
@@ -137,7 +138,27 @@ impl From<OpenCodeError> for ProviderError {
     }
 }
 
+/// The account-adjusted definition: the account's provider id and display
+/// name, with metric ids re-prefixed so every card owns its own metric ids.
+/// Source ids stay in the family namespace — snapshots keep reporting
+/// "session"/"weekly"/"monthly" regardless of the card.
+pub(crate) fn definition_for(id: &str, display_name: &str) -> ProviderDefinition {
+    let base_prefix = "opencode.";
+    let account_prefix = format!("{id}.");
+    let mut account = definition();
+    account.id = id.to_owned();
+    account.display_name = format!("OpenCode — {display_name}");
+    for metric in &mut account.metrics {
+        metric.id = match metric.id.strip_prefix(base_prefix) {
+            Some(suffix) => format!("{account_prefix}{suffix}"),
+            None => metric.id.clone(),
+        };
+    }
+    account
+}
+
 pub struct OpenCodeProvider {
+    definition: ProviderDefinition,
     paths: OpenCodePaths,
     scanner: OpenCodeUsageScanner,
     client: Result<OpenCodeClient, OpenCodeError>,
@@ -149,6 +170,31 @@ impl OpenCodeProvider {
     pub fn new(pricing: Arc<PricingStore>) -> Self {
         let paths = OpenCodePaths::new();
         Self {
+            definition: definition(),
+            scanner: OpenCodeUsageScanner::new(paths.clone()),
+            paths,
+            client: OpenCodeClient::new(),
+            pricing,
+            now: Arc::new(Utc::now),
+        }
+    }
+
+    /// One runtime per discovered OpenCode login: the default data directory
+    /// plus every sibling `opencode-<name>` directory holding a subscribed
+    /// `opencode-go` login. Accounts keep their own usage databases and
+    /// credentials inside their directories; nothing is copied or stored.
+    pub fn runtimes(pricing: Arc<PricingStore>) -> Vec<Arc<dyn UsageProvider>> {
+        let mut runtimes: Vec<Arc<dyn UsageProvider>> = vec![Arc::new(Self::new(pricing.clone()))];
+        for account in accounts::discover() {
+            runtimes.push(Arc::new(Self::for_account(&account, pricing.clone())));
+        }
+        runtimes
+    }
+
+    fn for_account(account: &accounts::OpenCodeAccount, pricing: Arc<PricingStore>) -> Self {
+        let paths = OpenCodePaths::for_data_directory(account.data_directory.clone());
+        Self {
+            definition: definition_for(&account.id, &account.display_name),
             scanner: OpenCodeUsageScanner::new(paths.clone()),
             paths,
             client: OpenCodeClient::new(),
@@ -165,6 +211,7 @@ impl OpenCodeProvider {
         now: DateTime<Utc>,
     ) -> Self {
         Self {
+            definition: definition(),
             scanner: OpenCodeUsageScanner::new(paths.clone()),
             paths,
             client: Ok(client),
@@ -197,6 +244,7 @@ impl OpenCodeProvider {
             Err(error) => match go_usage {
                 Ok(Some(quotas)) => {
                     return Ok(snapshot(
+                        &self.definition.id,
                         Some("Go".into()),
                         quotas,
                         UsageHistory::default(),
@@ -211,6 +259,7 @@ impl OpenCodeProvider {
         let Some(scan) = scan else {
             return match go_usage {
                 Ok(Some(quotas)) => Ok(snapshot(
+                    &self.definition.id,
                     Some("Go".into()),
                     quotas,
                     UsageHistory::default(),
@@ -240,13 +289,28 @@ impl OpenCodeProvider {
             }
             Err(error) => return Err(error),
         };
-        Ok(snapshot(plan, quotas, scan.usage, warnings, now))
+        Ok(snapshot(
+            &self.definition.id,
+            plan,
+            quotas,
+            scan.usage,
+            warnings,
+            now,
+        ))
     }
 }
 
 impl UsageProvider for OpenCodeProvider {
     fn definition(&self) -> ProviderDefinition {
-        definition()
+        self.definition.clone()
+    }
+
+    fn cache_identity(&self) -> super::CacheIdentity<'_> {
+        if self.definition.id == "opencode" {
+            super::CacheIdentity::Unscoped
+        } else {
+            super::CacheIdentity::Resolved(&self.definition.id)
+        }
     }
 
     fn has_local_credentials(&self) -> bool {
@@ -262,6 +326,7 @@ impl UsageProvider for OpenCodeProvider {
 }
 
 fn snapshot(
+    provider_id: &str,
     plan: Option<String>,
     quotas: Vec<crate::models::QuotaWindow>,
     usage: UsageHistory,
@@ -269,7 +334,7 @@ fn snapshot(
     refreshed_at: DateTime<Utc>,
 ) -> ProviderSnapshot {
     ProviderSnapshot {
-        provider_id: "opencode".into(),
+        provider_id: provider_id.into(),
         plan,
         quotas,
         value_metrics: Vec::new(),
@@ -283,3 +348,57 @@ fn snapshot(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod account_tests {
+    use std::sync::Arc;
+
+    use super::{definition_for, OpenCodeProvider};
+    use crate::providers::UsageProvider;
+
+    #[test]
+    fn account_definitions_reprefix_metrics_and_keep_sources() {
+        let definition = definition_for("opencode@1a2b3c4d", "work");
+
+        assert_eq!(definition.id, "opencode@1a2b3c4d");
+        assert_eq!(definition.display_name, "OpenCode — work");
+        assert!(definition
+            .metrics
+            .iter()
+            .any(|metric| metric.id == "opencode@1a2b3c4d.session"));
+        // Source ids stay in the family namespace; snapshots report them
+        // regardless of the card.
+        assert!(definition
+            .metrics
+            .iter()
+            .any(|metric| metric.source.source_id() == Some("session")));
+    }
+
+    #[test]
+    fn base_card_stays_unscoped_and_accounts_resolve_their_cache_identity() {
+        let pricing = Arc::new(
+            crate::pricing::PricingStore::new_without_refresh_for_test(
+                std::env::temp_dir().join("usagedeck-opencode-account-test"),
+            )
+            .unwrap(),
+        );
+        let base = OpenCodeProvider::new(pricing.clone());
+        assert!(matches!(
+            base.cache_identity(),
+            crate::providers::CacheIdentity::Unscoped
+        ));
+        assert_eq!(base.definition().id, "opencode");
+
+        let account = super::accounts::OpenCodeAccount {
+            id: "opencode@1a2b3c4d".into(),
+            display_name: "work".into(),
+            data_directory: std::env::temp_dir().join("usagedeck-opencode-account-missing"),
+        };
+        let provider = OpenCodeProvider::for_account(&account, pricing);
+        assert!(matches!(
+            provider.cache_identity(),
+            crate::providers::CacheIdentity::Resolved(id) if id == "opencode@1a2b3c4d"
+        ));
+        assert_eq!(provider.definition().id, "opencode@1a2b3c4d");
+    }
+}
