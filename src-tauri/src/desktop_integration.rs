@@ -146,7 +146,16 @@ fn status_notifier_host_available() -> bool {
         Ok("unavailable") => return false,
         _ => {}
     }
-    probe_status_notifier_watcher_available()
+    // A watcher that is still acquiring its D-Bus name loses the race against
+    // app launch; probe once more before concluding the host is absent, so a
+    // slow session start does not silently disable the tray for the whole
+    // run. The retry is bounded so tray-less sessions delay launch by at most
+    // about three seconds, once.
+    if probe_status_notifier_watcher_with_timeout(std::time::Duration::from_secs(3)) {
+        return true;
+    }
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    probe_status_notifier_watcher_with_timeout(std::time::Duration::from_secs(2))
 }
 
 #[cfg(target_os = "linux")]
