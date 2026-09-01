@@ -1020,7 +1020,9 @@ fn normalize_with_persisted_accounts(
         let mut provider = default_provider(definition, is_detected);
         provider.enabled = !was_known && is_detected;
         settings.known_provider_ids.push(definition.id.clone());
-        if crate::providers::is_claude_account_provider_id(&provider.id) {
+        // Account-shaped ids (claude@…, opencode@…) sit next to their family
+        // card instead of appended past every unrelated provider.
+        if provider.id.contains('@') {
             let family = crate::providers::provider_family(&provider.id);
             let index = normalized
                 .iter()
@@ -1507,6 +1509,17 @@ mod tests {
             crate::provider_options::selection("kimi", "endpoint").as_deref(),
             Some("kimi.ai")
         );
+    }
+
+    fn opencode_account_definition() -> ProviderDefinition {
+        let mut definition = crate::providers::opencode::definition();
+        definition.id = "opencode@1234abcd".into();
+        definition.display_name = "OpenCode — work".into();
+        definition.fallback_enabled = false;
+        for metric in &mut definition.metrics {
+            metric.id = metric.id.replacen("opencode.", "opencode@1234abcd.", 1);
+        }
+        definition
     }
 
     fn claude_account_definition() -> ProviderDefinition {
@@ -2409,6 +2422,42 @@ mod tests {
                 .unwrap()
                 .enabled
         );
+    }
+
+    #[test]
+    fn new_opencode_account_is_inserted_after_its_provider_family() {
+        let _selections = crate::provider_options::selections_guard();
+        let base = catalog();
+        let mut settings = default_settings(&base, &HashSet::new());
+
+        let providers = [
+            claude::definition(),
+            codex::definition(),
+            cursor::definition(),
+            antigravity::definition(),
+            openrouter::definition(),
+            crate::providers::opencode::definition(),
+            opencode_account_definition(),
+        ]
+        .into_iter()
+        .map(|definition| Arc::new(CatalogProvider(definition)) as Arc<dyn UsageProvider>)
+        .collect();
+        let registry = Arc::new(ProviderRegistry::new(providers).unwrap());
+        normalize(
+            &registry,
+            &mut settings,
+            &HashSet::from(["opencode".to_owned(), "opencode@1234abcd".to_owned()]),
+        );
+
+        // The account card lands right after its base card on upgrade
+        // installs, not appended past every unrelated provider.
+        let ids: Vec<&str> = settings
+            .providers
+            .iter()
+            .map(|provider| provider.id.as_str())
+            .collect();
+        let base_index = ids.iter().position(|id| *id == "opencode").unwrap();
+        assert_eq!(ids[base_index + 1], "opencode@1234abcd");
     }
 
     #[test]
