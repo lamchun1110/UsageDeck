@@ -166,9 +166,15 @@ mod tests {
         // shared test-key for its siblings and they unwrap a cached error
         // instead of reaching their one-shot endpoint.
         crate::providers::http::clear_rate_limits();
+        // A unique key per call keeps the shared rate-limit cooldown from
+        // poisoning sibling tests that run in parallel: clearing is not
+        // atomic against another test recording a cooldown.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALL: AtomicUsize = AtomicUsize::new(0);
+        let key = format!("test-key-{}", CALL.fetch_add(1, Ordering::SeqCst));
         let url = test_http::serve_once(status, &[], body);
         let client =
             super::super::client::OpenCodeClient::for_test(&url, std::time::Duration::from_secs(1));
-        client.fetch_go_usage("test-key").unwrap()
+        client.fetch_go_usage(&key).unwrap()
     }
 }

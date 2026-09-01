@@ -621,6 +621,7 @@ fn fresh_snapshot(
 /// The login-shell script for a built-in: exports the account-scoped
 /// environment inside the script (so profiles cannot override it) and then
 /// `exec`s the CLI with its arguments intact.
+#[cfg(not(target_os = "windows"))]
 fn login_script_with_envs(envs: &[(String, String)]) -> String {
     if envs.is_empty() {
         return "exec \"$@\"".to_owned();
@@ -635,6 +636,7 @@ fn login_script_with_envs(envs: &[(String, String)]) -> String {
 
 /// Single-quotes a shell word; the standard `'\''` dance escapes embedded
 /// quotes.
+#[cfg(not(target_os = "windows"))]
 fn shell_word(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
