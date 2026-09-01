@@ -929,6 +929,9 @@ mod tests {
         assert!(should_probe_credential_store(false));
     }
 
+    // Symlink creation needs privileges on Windows; the discovery filter
+    // itself stays covered there by the rest of the suite.
+    #[cfg(unix)]
     #[test]
     fn candidate_directories_stay_within_the_claude_naming_convention() {
         let home = tempfile::tempdir().unwrap();
