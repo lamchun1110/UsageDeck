@@ -8,12 +8,13 @@
 //! credential ever passes through UsageDeck.
 
 use std::{
+    collections::HashSet,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
 use super::paths::{data_directory, OpenCodePaths};
-use crate::hashing::sha256_hex;
+use crate::{hashing::sha256_hex, storage::Storage};
 
 const DISCOVERY_BUDGET: Duration = Duration::from_millis(400);
 
@@ -23,12 +24,27 @@ pub(crate) struct OpenCodeAccount {
     pub(crate) data_directory: PathBuf,
 }
 
-pub(crate) fn discover() -> Vec<OpenCodeAccount> {
-    discover_with(
+pub(crate) fn discover(
+    storage: &Storage,
+) -> Result<Vec<OpenCodeAccount>, crate::storage::StorageError> {
+    let accounts = discover_with(
         |name| std::env::var(name).ok(),
         &crate::providers::home_directory(),
         Instant::now(),
-    )
+    );
+    // Persisting each account keeps its layout through launches where the
+    // directory is missing (an unmounted drive), exactly like Claude's
+    // account records; the identity is the canonical path, so re-appearing
+    // directories reuse their ids.
+    for account in &accounts {
+        storage.save_provider_account_record(
+            "opencode",
+            &format!("opencode:{}", account.data_directory.display()),
+            &account.id,
+            &format!(r#"{{"customName":"{}"}}"#, account.display_name),
+        )?;
+    }
+    Ok(accounts)
 }
 
 pub(crate) fn discover_with(
@@ -44,6 +60,11 @@ pub(crate) fn discover_with(
         Ok(entries) => entries,
         Err(_) => return Vec::new(),
     };
+    // Exclude the default directory by canonical path, not lexically: a
+    // symlinked default would otherwise be rediscovered as an account and
+    // its usage double-counted.
+    let default_canonical = std::fs::canonicalize(&default_directory).unwrap_or(default_directory);
+    let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut accounts = Vec::new();
     for entry in entries.flatten() {
         if started.elapsed() > DISCOVERY_BUDGET {
@@ -56,17 +77,22 @@ pub(crate) fn discover_with(
         let Some(label) = name.strip_prefix("opencode-") else {
             continue;
         };
-        if label.is_empty() || entry.path() == default_directory {
+        if label.is_empty() {
+            continue;
+        }
+        let canonical = std::fs::canonicalize(entry.path()).unwrap_or_else(|_| entry.path());
+        // Alias entries (a sibling symlinking another sibling) resolve to the
+        // same directory; duplicates would collide in the registry and abort
+        // startup.
+        if !seen.insert(canonical.clone()) || canonical == default_canonical {
             continue;
         }
         // Only a directory with a subscribed login is an account; a data
         // directory without an `opencode-go` key is just a data directory.
-        let paths = OpenCodePaths::for_data_directory(entry.path());
+        let paths = OpenCodePaths::for_data_directory(canonical.clone());
         if !matches!(paths.go_api_key(), Ok(Some(_))) {
             continue;
         }
-        let canonical =
-            std::fs::canonicalize(entry.path()).unwrap_or_else(|_| entry.path().clone());
         let display_name = label.trim();
         accounts.push(OpenCodeAccount {
             id: format!(
@@ -78,7 +104,7 @@ pub(crate) fn discover_with(
             } else {
                 display_name.to_owned()
             },
-            data_directory: entry.path(),
+            data_directory: canonical,
         });
     }
     accounts
@@ -128,7 +154,24 @@ mod tests {
         assert_eq!(accounts[0].display_name, "work");
         assert!(accounts[0].id.starts_with("opencode@"));
         assert_eq!(accounts[0].id.len(), "opencode@".len() + 8);
-        assert_eq!(accounts[0].data_directory, share.join("opencode-work"));
+    }
+
+    #[test]
+    fn aliased_and_default_target_directories_are_not_double_counted() {
+        let home = tempdir().unwrap();
+        let share = home.path().join(".local").join("share");
+        write_login(&share.join("opencode"), Some("default-key"));
+        write_login(&share.join("opencode-work"), Some("work-key"));
+        // An alias sibling pointing at the discovered account must not
+        // produce a second card with the same id (a registry collision that
+        // aborts startup), and a default directory that is itself a symlink
+        // to a sibling must not re-cover the same data as the base card.
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(share.join("opencode-work"), share.join("opencode-alias"))
+            .unwrap();
+
+        let accounts = discover_with(|_| None, home.path(), Instant::now());
+        assert_eq!(accounts.len(), 1);
     }
 
     #[test]

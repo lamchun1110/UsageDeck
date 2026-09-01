@@ -183,12 +183,15 @@ impl OpenCodeProvider {
     /// plus every sibling `opencode-<name>` directory holding a subscribed
     /// `opencode-go` login. Accounts keep their own usage databases and
     /// credentials inside their directories; nothing is copied or stored.
-    pub fn runtimes(pricing: Arc<PricingStore>) -> Vec<Arc<dyn UsageProvider>> {
+    pub fn runtimes(
+        pricing: Arc<PricingStore>,
+        storage: &crate::storage::Storage,
+    ) -> Result<Vec<Arc<dyn UsageProvider>>, crate::storage::StorageError> {
         let mut runtimes: Vec<Arc<dyn UsageProvider>> = vec![Arc::new(Self::new(pricing.clone()))];
-        for account in accounts::discover() {
+        for account in accounts::discover(storage)? {
             runtimes.push(Arc::new(Self::for_account(&account, pricing.clone())));
         }
-        runtimes
+        Ok(runtimes)
     }
 
     fn for_account(account: &accounts::OpenCodeAccount, pricing: Arc<PricingStore>) -> Self {
