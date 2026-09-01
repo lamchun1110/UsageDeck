@@ -135,11 +135,15 @@ impl ProviderError {
     }
 }
 
-/// One tiny CLI invocation that starts a fresh session window.
+/// One tiny CLI invocation that starts a fresh session window. `envs` carries
+/// the environment a multi-account runtime needs so the prompt renews the
+/// account the card tracks (for example `CLAUDE_CONFIG_DIR` for a scoped
+/// Claude login) instead of whatever the shell resolves by default.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionKickstart {
     pub program: String,
     pub args: Vec<String>,
+    pub envs: Vec<(String, String)>,
 }
 
 impl SessionKickstart {
@@ -147,6 +151,14 @@ impl SessionKickstart {
         Self {
             program: program.to_owned(),
             args: args.iter().map(|arg| arg.to_string()).collect(),
+            envs: Vec::new(),
+        }
+    }
+
+    pub fn with_envs(program: &str, args: &[&str], envs: Vec<(String, String)>) -> Self {
+        Self {
+            envs,
+            ..Self::new(program, args)
         }
     }
 }

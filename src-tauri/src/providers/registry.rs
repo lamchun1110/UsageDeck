@@ -123,10 +123,26 @@ fn build_snapshot(
             api_key_provider_ids.push(definition.id.clone());
         }
         if let Some(kickstart) = provider.session_kickstart() {
-            kickstart_default_commands.insert(
-                definition.id.clone(),
-                format!("{} {}", kickstart.program, kickstart.args.join(" ")),
-            );
+            // The placeholder shows the environment a multi-account built-in
+            // applies, so the card never hides which login a kick renews.
+            let invocation = {
+                let prefix = kickstart
+                    .envs
+                    .iter()
+                    .map(|(key, value)| format!("{key}={value}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if prefix.is_empty() {
+                    format!("{} {}", kickstart.program, kickstart.args.join(" "))
+                } else {
+                    format!(
+                        "{prefix} {} {}",
+                        kickstart.program,
+                        kickstart.args.join(" ")
+                    )
+                }
+            };
+            kickstart_default_commands.insert(definition.id.clone(), invocation);
             kickstart_provider_ids.push(definition.id.clone());
         }
         let rolling = provider.rolling_windows();

@@ -688,16 +688,21 @@ impl crate::providers::UsageProvider for ClaudeProvider {
         // cheapest model that registers a session start — haiku runs on the
         // background track, which does not (user-verified).
         //
-        // Scoped account runtimes get no built-in: without CLAUDE_CONFIG_DIR
-        // the prompt would renew the default login while the evaluator
-        // watches this card's windows, kicking the wrong account forever.
-        // Users with account-targeting commands can still set a custom one.
-        match self.credential_scope {
+        // Scoped account runtimes point the CLI at their own config dir so
+        // the prompt renews the account this card tracks — without the env
+        // it would silently renew the default login instead.
+        match &self.credential_scope {
             ClaudeCredentialScope::Standard => Some(crate::providers::SessionKickstart::new(
                 "claude",
                 &["-p", "Hi", "--model", "sonnet"],
             )),
-            ClaudeCredentialScope::ConfigDir { .. } => None,
+            ClaudeCredentialScope::ConfigDir { path, .. } => {
+                Some(crate::providers::SessionKickstart::with_envs(
+                    "claude",
+                    &["-p", "Hi", "--model", "sonnet"],
+                    vec![("CLAUDE_CONFIG_DIR".to_owned(), path.display().to_string())],
+                ))
+            }
         }
     }
 
@@ -841,16 +846,17 @@ mod tests {
     }
 
     #[test]
-    fn scoped_account_runtimes_offer_no_builtin_kickstart() {
-        // A built-in prompt carries no CLAUDE_CONFIG_DIR, so it would renew
-        // the default login while the evaluator watches the account card's
-        // windows — kicking the wrong account on every cooldown.
+    fn scoped_account_runtimes_target_their_own_config_dir() {
+        // Without CLAUDE_CONFIG_DIR a built-in prompt would renew the default
+        // login while the evaluator watches the account card's windows —
+        // kicking the wrong account on every cooldown.
         let directory = tempdir().unwrap();
         let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
         let pricing = Arc::new(
             PricingStore::new_without_refresh_for_test(directory.path().join("pricing")).unwrap(),
         );
         let client = ClaudeClient::new().unwrap();
+        let account_dir = directory.path().join("claude-work");
         let configs = runtime_configs(ClaudeAccountDiscovery {
             default_account: Some(ClaudeAccount {
                 id: "claude".into(),
@@ -866,7 +872,7 @@ mod tests {
                 label: Some("Work".into()),
                 identity: "identity-work".into(),
                 credential_scope: ClaudeCredentialScope::ConfigDir {
-                    path: directory.path().join("claude-work"),
+                    path: account_dir.clone(),
                     keychain_literal: "claude-work".into(),
                 },
                 log_roots: Vec::new(),
@@ -885,11 +891,24 @@ mod tests {
                 provider.credential_scope,
                 ClaudeCredentialScope::ConfigDir { .. }
             );
-            assert_eq!(
-                provider.session_kickstart().is_some(),
-                !scoped,
-                "built-in kickstart must only be offered for the standard login"
-            );
+            let kickstart = provider
+                .session_kickstart()
+                .expect("every runtime offers a built-in");
+            if scoped {
+                assert_eq!(
+                    kickstart.envs,
+                    vec![(
+                        "CLAUDE_CONFIG_DIR".to_owned(),
+                        account_dir.display().to_string()
+                    )],
+                    "scoped kicks must target the account's config dir"
+                );
+            } else {
+                assert!(
+                    kickstart.envs.is_empty(),
+                    "the standard login needs no environment"
+                );
+            }
         }
     }
 

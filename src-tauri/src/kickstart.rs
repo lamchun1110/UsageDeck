@@ -37,6 +37,56 @@ type ScheduledTask = (tauri::async_runtime::JoinHandle<()>, DateTime<Utc>);
 static SCHEDULED: LazyLock<Mutex<HashMap<String, ScheduledTask>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// After this many consecutive kicks that failed to produce the scoped
+/// windows, auto-kickstart suspends for that provider until a window is
+/// observed alive again — a circuit breaker against prompts that run
+/// cleanly but renew nothing: a custom command targeting the wrong
+/// account, a plan that never reports the window, or a CLI flag that
+/// stops opening one.
+const INEFFECTIVE_KICK_LIMIT: u32 = 2;
+
+/// Kick outcomes per provider: kicks charged as ineffective until a live
+/// window clears them, plus whether the suspension has been announced so it
+/// is logged once rather than on every refresh.
+#[derive(Default)]
+struct KickOutcomes {
+    failures: HashMap<String, u32>,
+    suspension_logged: std::collections::HashSet<String>,
+}
+
+impl KickOutcomes {
+    /// A live scoped window clears the streak: whatever produced it, kicking
+    /// is worth trying again.
+    fn observe_alive(&mut self, provider_id: &str) {
+        self.failures.remove(provider_id);
+        self.suspension_logged.remove(provider_id);
+    }
+
+    /// Whether auto-kickstart should refuse to fire. The first refusal is
+    /// announced so the operator can find the suspension in the log.
+    fn refuses(&mut self, provider_id: &str) -> bool {
+        let failures = self.failures.get(provider_id).copied().unwrap_or(0);
+        if failures < INEFFECTIVE_KICK_LIMIT {
+            return false;
+        }
+        if self.suspension_logged.insert(provider_id.to_owned()) {
+            crate::app_warn!(
+                "kickstart",
+                "{provider_id} auto-kickstart suspended: the last {failures} kicks did not start the window"
+            );
+        }
+        true
+    }
+
+    /// A kick is charged as ineffective until the next live window clears it.
+    fn record_kick(&mut self, provider_id: &str) {
+        *self.failures.entry(provider_id.to_owned()).or_insert(0) += 1;
+    }
+}
+
+static KICK_OUTCOMES: LazyLock<Mutex<KickOutcomes>> =
+    LazyLock::new(|| Mutex::new(KickOutcomes::default()));
+
 fn record_attempt(provider_id: &str) -> bool {
     let mut attempts = LAST_ATTEMPTS
         .lock()
@@ -69,7 +119,11 @@ fn cancel_scheduled(provider_id: &str) {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResolvedCommand {
     Custom(String),
-    BuiltIn { program: String, args: Vec<String> },
+    BuiltIn {
+        program: String,
+        args: Vec<String>,
+        envs: Vec<(String, String)>,
+    },
 }
 
 /// How long the login-shell PATH probe may take before it is abandoned. A
@@ -205,6 +259,7 @@ fn resolve_command(
         .map(|kickstart| ResolvedCommand::BuiltIn {
             program: resolve_builtin_program(&kickstart.program),
             args: kickstart.args,
+            envs: kickstart.envs,
         })
 }
 
@@ -382,7 +437,11 @@ pub fn evaluate(
         }
         if let Some(reset_at) = next_scoped_reset(snapshot, &scoped) {
             // Every scoped window is still live: aim the timer at the earliest
-            // reset among them.
+            // reset among them, and clear any ineffective-kick streak.
+            KICK_OUTCOMES
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .observe_alive(&provider_id);
             schedule_at_reset(
                 provider_id.clone(),
                 reset_at,
@@ -395,11 +454,23 @@ pub fn evaluate(
         }
 
         // A scoped window has rolled over: a scheduled timer is obsolete —
-        // kick now if the cooldown allows.
+        // kick now if the cooldown and the circuit breaker allow it.
         cancel_scheduled(&provider_id);
+        {
+            let mut outcomes = KICK_OUTCOMES
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if outcomes.refuses(&provider_id) {
+                continue;
+            }
+        }
         if !record_attempt(&provider_id) {
             continue;
         }
+        KICK_OUTCOMES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .record_kick(&provider_id);
 
         spawn_prompt(
             provider_id,
@@ -534,7 +605,8 @@ fn fresh_snapshot(
 
 /// Runs the kickstart command through the user's login shell: the app process
 /// does not inherit the login PATH where `claude`/`codex` live. Built-ins keep
-/// program and args separate; custom commands remain user-authored shell input.
+/// program, args, and environment separate; custom commands remain
+/// user-authored shell input.
 async fn send_prompt(resolved: &ResolvedCommand) -> Result<(), String> {
     // Unix: the login shell resolves the CLI the way the user's terminal
     // would (the app process lacks that PATH). Windows has no SHELL in GUI
@@ -546,8 +618,13 @@ async fn send_prompt(resolved: &ResolvedCommand) -> Result<(), String> {
             ResolvedCommand::Custom(script) => {
                 command.args(["/C", script]);
             }
-            ResolvedCommand::BuiltIn { program, args } => {
+            ResolvedCommand::BuiltIn {
+                program,
+                args,
+                envs,
+            } => {
                 command.arg("/C").arg(program).args(args);
+                command.envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
             }
         }
         command
@@ -559,11 +636,18 @@ async fn send_prompt(resolved: &ResolvedCommand) -> Result<(), String> {
             ResolvedCommand::Custom(script) => {
                 command.args(["-l", "-c", script]);
             }
-            ResolvedCommand::BuiltIn { program, args } => {
+            ResolvedCommand::BuiltIn {
+                program,
+                args,
+                envs,
+            } => {
                 // `$@` preserves argument boundaries while the login shell
-                // still supplies the user's CLI PATH.
+                // still supplies the user's CLI PATH. The environment is
+                // applied after `-l` so account-scoped variables such as
+                // CLAUDE_CONFIG_DIR survive the login scripts.
                 command.args(["-l", "-c", "exec \"$@\"", "usagedeck-kickstart"]);
                 command.arg(program).args(args);
+                command.envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
             }
         }
         command
@@ -708,6 +792,54 @@ mod tests {
         assert!(super::record_attempt("claude"));
         assert!(!super::record_attempt("claude"));
         assert!(super::record_attempt("codex"));
+    }
+
+    #[test]
+    fn ineffective_kicks_suspend_until_a_live_window_clears_them() {
+        let mut outcomes = super::KickOutcomes::default();
+
+        // Under the limit, kicks proceed.
+        outcomes.record_kick("kimi");
+        assert!(!outcomes.refuses("kimi"));
+        outcomes.record_kick("kimi");
+        // The second ineffective kick exhausts the budget: the next
+        // evaluation refuses instead of paying for another prompt.
+        assert!(outcomes.refuses("kimi"));
+        assert!(outcomes.refuses("kimi"));
+
+        // A live window (the kick worked, or the user messaged) clears the
+        // streak and the suspension.
+        outcomes.observe_alive("kimi");
+        assert!(!outcomes.refuses("kimi"));
+        assert!(!outcomes.refuses("other"));
+    }
+
+    #[test]
+    fn a_limited_provider_suspends_after_two_ineffective_kicks() {
+        // End-to-end over the shared state: two recorded kicks without an
+        // alive observation in between refuse the third.
+        {
+            let mut outcomes = super::KICK_OUTCOMES
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            outcomes.observe_alive("breaker-provider");
+        }
+        assert_kick_allowed_and_record("breaker-provider");
+        assert_kick_allowed_and_record("breaker-provider");
+        {
+            let mut outcomes = super::KICK_OUTCOMES
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            assert!(outcomes.refuses("breaker-provider"));
+        }
+    }
+
+    fn assert_kick_allowed_and_record(provider_id: &str) {
+        let mut outcomes = super::KICK_OUTCOMES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(!outcomes.refuses(provider_id));
+        outcomes.record_kick(provider_id);
     }
 
     #[test]
@@ -938,6 +1070,7 @@ mod tests {
             Some(super::ResolvedCommand::BuiltIn {
                 program: super::resolve_builtin_program("claude"),
                 args: vec!["-p".into(), "Hi".into()],
+                envs: Vec::new(),
             })
         );
         // Built-in when no custom entry exists.
@@ -946,6 +1079,7 @@ mod tests {
             Some(super::ResolvedCommand::BuiltIn {
                 program: super::resolve_builtin_program("claude"),
                 args: vec!["-p".into(), "Hi".into()],
+                envs: Vec::new(),
             })
         );
         // Providers without session windows are never kickstartable.
