@@ -317,6 +317,29 @@ mod tests {
     }
 
     #[test]
+    fn negative_remaining_maps_to_a_fully_used_weekly() {
+        // Over-quota accounts report negative remaining; treating it as
+        // absent would silently drop the weekly window again.
+        let body = r#"{"user":{"membership":{"level":"LEVEL_BASIC"}},
+            "usage":{"limit":"100","remaining":"-5","resetTime":"2026-09-07T02:17:43.139020Z"},
+            "limits":[{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},
+            "detail":{"limit":"100","remaining":"90","resetTime":"2026-08-31T15:17:43.139020Z"}}]}"#;
+        let url = test_http::serve_once(200, &[], body);
+        let provider = KimiProvider::with_dependencies(
+            auth(Some("secret")),
+            KimiClient::for_test(&url, Duration::from_secs(1)),
+        );
+
+        let snapshot = provider.refresh().unwrap();
+        let weekly = snapshot
+            .quotas
+            .iter()
+            .find(|quota| quota.id == "weekly")
+            .expect("an over-quota weekly must stay mapped");
+        assert_eq!(weekly.used_percent, 100.0);
+    }
+
+    #[test]
     fn refresh_maps_usage_and_window() {
         let url = test_http::serve_once(200, &[], QUOTA_BODY);
         let provider = KimiProvider::with_dependencies(

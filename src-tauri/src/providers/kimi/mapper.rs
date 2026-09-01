@@ -80,8 +80,10 @@ fn weekly_quota(body: &Value) -> Result<QuotaWindow, KimiError> {
     // The API reports the weekly window as `remaining` (the same shape as the
     // per-window `limits[].detail`); older responses carried `used` instead.
     // Prefer `remaining` and keep `used` as the fallback so both shapes map.
-    let used = match number(usage.get("remaining")).filter(|value| *value >= 0.0) {
-        Some(remaining) => (limit - remaining).max(0.0),
+    // `remaining` can go negative on over-quota accounts: clamp instead of
+    // treating the field as absent, which would silently drop the weekly.
+    let used = match number(usage.get("remaining")) {
+        Some(remaining) => (limit - remaining).clamp(0.0, limit),
         None => number(usage.get("used"))
             .filter(|value| *value >= 0.0)
             .ok_or(KimiError::InvalidResponse)?,
