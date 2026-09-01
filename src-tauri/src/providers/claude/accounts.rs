@@ -291,7 +291,14 @@ fn discover_in(
                 path: primary.root.clone(),
                 keychain_literal: primary.keychain_literal.clone(),
             },
-            log_roots: findings.into_iter().map(|finding| finding.root).collect(),
+            log_roots: {
+                // Findings are root-sorted and canonical, so a symlink and
+                // its target collapse to one entry.
+                let mut roots: Vec<PathBuf> =
+                    findings.into_iter().map(|finding| finding.root).collect();
+                roots.dedup();
+                roots
+            },
         });
     }
     default_extra_log_roots.sort();
@@ -455,15 +462,28 @@ fn identity_stamp(identity: &str) -> String {
 }
 
 fn candidate_directories(home: &Path) -> Vec<PathBuf> {
+    // Alternate CLAUDE_CONFIG_DIRs follow the `.claude` naming convention
+    // (`.claude-work`, `.config/claude-work`). Restricting discovery to that
+    // prefix keeps the scan from touching — and triggering macOS consent
+    // prompts for — unrelated home entries such as ~/.Trash, iCloud's
+    // `.Mobile Documents`, or protected folders a mere stat can cover.
     let mut candidates = child_directories(home)
         .into_iter()
         .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with('.'))
+                .is_some_and(|name| name.starts_with(".claude"))
         })
         .collect::<Vec<_>>();
-    candidates.extend(child_directories(&home.join(".config")));
+    candidates.extend(
+        child_directories(&home.join(".config"))
+            .into_iter()
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.to_lowercase().contains("claude"))
+            }),
+    );
     candidates.sort();
     candidates.dedup();
     candidates
@@ -474,8 +494,17 @@ fn child_directories(path: &Path) -> Vec<PathBuf> {
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
+        // The entry's own file type — no follow — keeps the enumeration from
+        // stat-ing through symlinks; a symlink is still admitted as a
+        // candidate so dotfile-managed config dirs remain discoverable, and
+        // the marker-file read inside `inspect_candidate` decides.
+        .filter(|entry| {
+            entry
+                .file_type()
+                .map(|file_type| file_type.is_dir() || file_type.is_symlink())
+                .unwrap_or(false)
+        })
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
         .collect()
 }
 
@@ -898,5 +927,41 @@ mod tests {
             cfg!(target_os = "macos")
         );
         assert!(should_probe_credential_store(false));
+    }
+
+    #[test]
+    fn candidate_directories_stay_within_the_claude_naming_convention() {
+        let home = tempfile::tempdir().unwrap();
+        let config = home.path().join(".config");
+        std::fs::create_dir_all(config.join("claude-work")).unwrap();
+        std::fs::create_dir_all(config.join("opencode")).unwrap();
+        for name in [
+            ".claude",
+            ".claude-work",
+            ".Trash",
+            ".Mobile Documents",
+            ".cache",
+        ] {
+            std::fs::create_dir_all(home.path().join(name)).unwrap();
+        }
+        // A symlinked config dir stays discoverable without stat-ing through
+        // unrelated symlink targets.
+        std::os::unix::fs::symlink(
+            home.path().join(".claude-work"),
+            home.path().join(".claude-linked"),
+        )
+        .unwrap();
+
+        let candidates = super::candidate_directories(home.path());
+
+        assert_eq!(
+            candidates,
+            vec![
+                home.path().join(".claude"),
+                home.path().join(".claude-linked"),
+                home.path().join(".claude-work"),
+                config.join("claude-work"),
+            ]
+        );
     }
 }
