@@ -374,7 +374,7 @@ fn build_provider_registry(
         Arc::new(KimiProvider::new()?) as Arc<dyn UsageProvider>,
         Arc::new(MiniMaxProvider::new()?) as Arc<dyn UsageProvider>,
     ]);
-    providers.extend(OpenCodeProvider::runtimes(pricing.clone(), &storage)?);
+    providers.extend(OpenCodeProvider::runtimes(pricing.clone(), storage)?);
     providers.extend(crate::providers::api_key_account::api_key_account_providers(storage)?);
     Ok(Arc::new(ProviderRegistry::new(providers)?))
 }
