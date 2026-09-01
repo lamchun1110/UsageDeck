@@ -267,6 +267,8 @@ export const ko = {
   'settings.kickstart.scope.session': '세션만',
   'settings.kickstart.scope.weeklyName': '주간',
   'settings.kickstart.scope.sessionName': '세션',
+  'settings.kickstart.scope.windowOnly': '{windows}만',
+  'settings.kickstart.scope.all': '{session} 및 {windows}',
   'settings.migration.keyTransferFailed':
     'OpenQuota의 일부 저장된 키를 전송하지 못했습니다: {providers}. 사용자 지정에서 다시 추가하세요.',
   'settings.customize.accountHint': 'API 계정은 별도 카드로 표시됩니다.',

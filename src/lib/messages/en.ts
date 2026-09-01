@@ -271,6 +271,8 @@ export const en = {
   'settings.kickstart.scope.session': 'Session only',
   'settings.kickstart.scope.weeklyName': 'Weekly',
   'settings.kickstart.scope.sessionName': 'Session',
+  'settings.kickstart.scope.windowOnly': '{windows} only',
+  'settings.kickstart.scope.all': '{session} and {windows}',
   'settings.migration.keyTransferFailed':
     'Some saved keys from OpenQuota could not be transferred: {providers}. Re-add them in Customize.',
   'settings.customize.accountHint':

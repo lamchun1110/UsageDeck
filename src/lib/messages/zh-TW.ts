@@ -265,6 +265,8 @@ export const zhTW = {
   'settings.kickstart.scope.session': '僅工作階段',
   'settings.kickstart.scope.weeklyName': '每週',
   'settings.kickstart.scope.sessionName': '工作階段',
+  'settings.kickstart.scope.windowOnly': '僅{windows}',
+  'settings.kickstart.scope.all': '{session}與{windows}',
   'settings.migration.keyTransferFailed':
     '部分 OpenQuota 已儲存的金鑰無法轉移：{providers}。請在自訂中重新新增。',
   'settings.customize.accountHint': 'API 帳戶以獨立卡片顯示，可在此新增或移除。',

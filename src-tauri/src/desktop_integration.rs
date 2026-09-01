@@ -149,8 +149,9 @@ fn status_notifier_host_available() -> bool {
     // A watcher that is still acquiring its D-Bus name loses the race against
     // app launch; probe once more before concluding the host is absent, so a
     // slow session start does not silently disable the tray for the whole
-    // run. The retry is bounded so tray-less sessions delay launch by at most
-    // about three seconds, once.
+    // run. The retry is bounded: a reachable bus without a watcher costs
+    // about one extra second, and only a wedged session bus can reach the
+    // full six-second worst case.
     if probe_status_notifier_watcher_with_timeout(std::time::Duration::from_secs(3)) {
         return true;
     }

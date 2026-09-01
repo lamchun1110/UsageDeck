@@ -143,8 +143,11 @@
     );
     const list = names.join(', ');
     return {
-      windowOnly: `${list} only`,
-      both: `${t('settings.kickstart.scope.sessionName')} and ${list}`,
+      windowOnly: t('settings.kickstart.scope.windowOnly', { windows: list }),
+      both: t('settings.kickstart.scope.all', {
+        session: t('settings.kickstart.scope.sessionName'),
+        windows: list,
+      }),
     };
   });
 
