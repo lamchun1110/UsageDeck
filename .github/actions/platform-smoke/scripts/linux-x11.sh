@@ -138,7 +138,7 @@ xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
     exit 1
   fi
   if test "${USAGEDECK_SMOKE_TRAY_HOST}" = available; then
-    kill "${watcher_pid}"
+    kill "${watcher_pid}" 2>/dev/null || true
     wait "${watcher_pid}" 2>/dev/null || true
     watcher_pid=""
     fallback_ready=false
