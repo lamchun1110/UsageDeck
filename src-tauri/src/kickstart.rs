@@ -825,6 +825,7 @@ mod tests {
         assert!(fresh_snapshot(&state).is_none());
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn login_script_exports_envs_inside_the_c_script() {
         use super::login_script_with_envs;
