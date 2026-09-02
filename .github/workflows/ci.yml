@@ -63,9 +63,17 @@ jobs:
         with:
           components: clippy,rustfmt
 
+      # rust-cache keys on runner.os and arch, so both Ubuntu legs would otherwise
+      # share one Linux-x64 cache. They do not share an environment: 22.04 carries
+      # glibc 2.35 and 24.04 glibc 2.39, so whichever leg saved last left the other
+      # restoring dependency artifacts it cannot load, and cargo skipped rebuilding
+      # them because the fingerprints looked fresh — surfacing as `can't find crate
+      # for tauri` in the first step to compile. Keying on the image keeps a cache
+      # with the environment that produced it.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          key: ${{ matrix.os }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
