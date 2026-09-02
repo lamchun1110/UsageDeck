@@ -47,6 +47,9 @@ tauri-plugin-single-instance = "2"
 fontdue = { version = "0.9.3", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Kept in step with the core-foundation version security-framework itself uses:
+# the CFData handed to `update_item` must be the same type the crate expects.
+core-foundation = "0.10"
 security-framework = "3.7"
 
 [target.'cfg(target_os = "windows")'.dependencies]

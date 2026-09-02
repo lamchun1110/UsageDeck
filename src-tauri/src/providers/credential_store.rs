@@ -127,10 +127,33 @@ pub fn read_owned_password(service: &str, account: &str) -> Result<Option<Vec<u8
     read_generic_password(service, account)
 }
 
+/// Updates a Keychain item owned by another application, and never creates
+/// one. `SecItemAdd` here would mint an item whose access control trusts only
+/// UsageDeck, locking the owning CLI out of its own credential; an absent item
+/// means the provider is logged out, which is the provider's to fix. Linux and
+/// Windows already refuse to create through this path.
+///
+/// The write itself must use the legacy `SecKeychainItemModifyAttributesAndData`
+/// rather than `SecItemUpdate`. On the file-based login keychain `SecItemUpdate`
+/// rewrites the item's access control list to trust only the calling process,
+/// which evicts the owner's own reader. For Claude Code that reader is
+/// `/usr/bin/security`, so every later read by the CLI blocks on SecurityAgent
+/// and macOS prompts for the login keychain password — observed as a prompt
+/// within seconds of each UsageDeck refresh. The legacy call modifies the data
+/// in place and leaves the ACL untouched.
 #[cfg(target_os = "macos")]
 pub fn write_generic_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
-    security_framework::passwords::set_generic_password(service, account, value)
-        .map_err(|_| "The macOS Keychain could not be updated.".into())
+    use security_framework::os::macos::passwords::find_generic_password;
+
+    match find_generic_password(None, service, account) {
+        Ok((_, mut item)) => item
+            .set_password(value)
+            .map_err(|_| "The macOS Keychain could not be updated.".into()),
+        Err(error) if error.code() == MACOS_ITEM_NOT_FOUND => {
+            Err("The credential owned by the provider no longer exists.".into())
+        }
+        Err(_) => Err("The macOS Keychain could not be updated.".into()),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -257,9 +280,13 @@ pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Resul
     }
 }
 
+/// Writes an item UsageDeck owns (the saved-key service), where creating the
+/// item is the point. Deliberately not routed through `write_generic_password`,
+/// which must never create.
 #[cfg(target_os = "macos")]
 pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
-    write_generic_password(service, account, value)
+    security_framework::passwords::set_generic_password(service, account, value)
+        .map_err(|_| "The macOS Keychain could not be updated.".into())
 }
 
 #[cfg(target_os = "windows")]
@@ -669,5 +696,38 @@ mod tests {
         assert!(super::read_owned_password(&service, account)
             .unwrap()
             .is_none());
+    }
+
+    /// Writing a credential owned by a provider must never bring the item into
+    /// existence: an item created here would carry an access control that
+    /// trusts only UsageDeck, locking the owning CLI out of its own login.
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn writing_a_missing_provider_credential_fails_without_creating_it() {
+        if std::env::var("USAGEDECK_TEST_CREDENTIAL_STORE").as_deref() != Ok("1") {
+            return;
+        }
+
+        let service = format!(
+            "com.lamchun1110.usagedeck.absent-test.{}",
+            std::process::id()
+        );
+        let account = "never-created";
+        super::delete_owned_password(&service, account).unwrap();
+
+        let write = super::write_generic_password(&service, account, b"value");
+        let read_back = super::read_generic_password(&service, account);
+        let cleanup = super::delete_owned_password(&service, account);
+
+        assert!(
+            write.is_err(),
+            "an absent provider credential must not be created"
+        );
+        assert_eq!(
+            read_back.unwrap(),
+            None,
+            "no keychain item may be left behind"
+        );
+        cleanup.unwrap();
     }
 }
