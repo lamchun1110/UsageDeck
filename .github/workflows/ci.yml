@@ -100,8 +100,8 @@ jobs:
           USAGEDECK_TEST_CREDENTIAL_STORE: '1'
         run: >-
           cargo test --manifest-path src-tauri/Cargo.toml
-          providers::credential_store::tests::system_credential_store_round_trip_when_requested
-          -- --exact --nocapture
+          providers::credential_store::tests
+          -- --nocapture
 
       - name: Test macOS Keychain integration
         if: runner.os == 'macOS'
@@ -122,8 +122,7 @@ jobs:
           security default-keychain -d user -s "${test_keychain}"
           export USAGEDECK_TEST_CREDENTIAL_STORE=1
           cargo test --manifest-path src-tauri/Cargo.toml \
-            providers::credential_store::tests::system_credential_store_round_trip_when_requested \
-            -- --exact --nocapture
+            providers::credential_store::tests -- --nocapture
 
       - name: Test Linux Secret Service integration
         if: runner.os == 'Linux'
@@ -136,8 +135,7 @@ jobs:
             eval "$(printf "\n" | gnome-keyring-daemon --unlock --components=secrets)"
             export USAGEDECK_TEST_CREDENTIAL_STORE=1
             cargo test --manifest-path src-tauri/Cargo.toml \
-              providers::credential_store::tests::system_credential_store_round_trip_when_requested \
-              -- --exact --nocapture
+              providers::credential_store::tests -- --nocapture
           '
 
       - name: Prepare Linux AppImage bundler
