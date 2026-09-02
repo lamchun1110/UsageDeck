@@ -25,6 +25,12 @@ pub fn test_bundled_pricing() -> ModelPricing {
         ))
         .expect("bundled models.dev pricing must be valid"),
     )
+    .with_tertiary(
+        codecs::catalog_from_compact(include_bytes!(
+            "../../resources/pricing_openrouter_snapshot.json"
+        ))
+        .expect("bundled OpenRouter pricing must be valid"),
+    )
 }
 
 #[cfg(test)]
@@ -36,6 +42,7 @@ mod bundled_resource_tests {
         let pricing = test_bundled_pricing();
         assert!(pricing.primary.entries.len() > 500);
         assert!(pricing.secondary.entries.len() > 500);
+        assert!(pricing.tertiary.entries.len() > 200);
         assert!(!pricing.supplement.pricing.is_empty());
         assert!(!pricing.supplement.alias_rules.is_empty());
         let raw_supplement: serde_json::Value =

@@ -3,6 +3,7 @@
 #
 #   src-tauri/resources/pricing_litellm_snapshot.json      (LiteLLM model_prices)
 #   src-tauri/resources/pricing_models_dev_snapshot.json   (models.dev api.json)
+#   src-tauri/resources/pricing_openrouter_snapshot.json   (OpenRouter /api/v1/models)
 #
 # The snapshots are the offline fallback for first launch / no network; at runtime the app fetches
 # the same feeds daily and its disk cache overrides these. Staleness is therefore harmless, but
@@ -21,6 +22,7 @@ RESOURCES="src-tauri/resources"
 
 LITELLM_URL="https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 MODELS_DEV_URL="https://models.dev/api.json"
+OPENROUTER_URL="https://openrouter.ai/api/v1/models"
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
@@ -29,6 +31,8 @@ echo "Fetching LiteLLM pricing..."
 curl -fsSL --max-time 120 "$LITELLM_URL" -o "$tmpdir/litellm.json"
 echo "Fetching models.dev pricing..."
 curl -fsSL --max-time 120 "$MODELS_DEV_URL" -o "$tmpdir/models_dev.json"
+echo "Fetching OpenRouter pricing..."
+curl -fsSL --max-time 120 "$OPENROUTER_URL" -o "$tmpdir/openrouter.json"
 
 python3 - "$tmpdir" "$RESOURCES" << 'PY'
 import json
@@ -39,15 +43,25 @@ tmpdir, resources = sys.argv[1], sys.argv[2]
 retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def compact_model(input_pm, output_pm, cache_write_pm, cache_read_pm,
-                  ia=None, oa=None, cwa=None, cra=None, fast=None):
+                  ia=None, oa=None, cwa=None, cra=None, fast=None, cre=None, cw1=None):
     model = {"i": input_pm, "o": output_pm, "cw": cache_write_pm, "cr": cache_read_pm}
-    for key, value in (("ia", ia), ("oa", oa), ("cwa", cwa), ("cra", cra), ("fast", fast)):
+    for key, value in (("ia", ia), ("oa", oa), ("cwa", cwa), ("cra", cra), ("fast", fast),
+                       ("cre", cre), ("cw1", cw1)):
         if value is not None:
             model[key] = value
     return model
 
 def number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+# OpenRouter quotes every rate as a decimal string.
+def string_number(value):
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return number(value)
 
 # LiteLLM: costs are per token; entries without both input and output cost are stubs -> skipped.
 with open(f"{tmpdir}/litellm.json") as f:
@@ -104,6 +118,42 @@ if not models:
 with open(f"{resources}/pricing_models_dev_snapshot.json", "w") as f:
     json.dump({"retrieved_at": retrieved_at, "models": models}, f, sort_keys=True, separators=(",", ":"))
 print(f"pricing_models_dev_snapshot.json: {len(models)} models")
+
+# OpenRouter: costs are per token and quoted as strings. Variant slugs (":batch", ":free",
+# ":nitro", ":floor") are routing tiers, not models, and would give fuzzy matching a cheaper twin
+# of every model, so they are dropped along with zero-rated entries. pricing.overrides holds
+# time-of-day discounts that cannot be applied to historical usage, so it is ignored. This mirrors
+# catalog_from_openrouter in src-tauri/src/pricing/codecs.rs - keep the two in step.
+with open(f"{tmpdir}/openrouter.json") as f:
+    openrouter = json.load(f)
+models = {}
+for entry in openrouter.get("data") or []:
+    if not isinstance(entry, dict):
+        continue
+    model_id = entry.get("id")
+    if not isinstance(model_id, str) or ":" in model_id:
+        continue
+    pricing = entry.get("pricing")
+    if not isinstance(pricing, dict):
+        continue
+    i, o = string_number(pricing.get("prompt")), string_number(pricing.get("completion"))
+    if i is None or o is None or (i <= 0 and o <= 0):
+        continue
+    cw = string_number(pricing.get("input_cache_write"))
+    cr = string_number(pricing.get("input_cache_read"))
+    cw1 = string_number(pricing.get("input_cache_write_1h"))
+    models[model_id] = compact_model(
+        i * 1e6, o * 1e6,
+        (cw if cw is not None else i) * 1e6,
+        (cr if cr is not None else i * 0.1) * 1e6,
+        cre=False if cr is None else None,
+        cw1=cw1 * 1e6 if cw1 is not None else None,
+    )
+if not models:
+    sys.exit("OpenRouter feed produced no usable entries - aborting.")
+with open(f"{resources}/pricing_openrouter_snapshot.json", "w") as f:
+    json.dump({"retrieved_at": retrieved_at, "models": models}, f, sort_keys=True, separators=(",", ":"))
+print(f"pricing_openrouter_snapshot.json: {len(models)} models")
 PY
 
 ls -lh "$RESOURCES"/pricing_*_snapshot.json

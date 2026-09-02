@@ -6,6 +6,10 @@ pub struct ModelPricing {
     pub supplement: PricingSupplement,
     pub primary: PricingCatalog,
     pub secondary: PricingCatalog,
+    /// Gap filler, consulted only after every other source misses. OpenRouter
+    /// quotes its own routing prices rather than each vendor's list price, so
+    /// it must never outrank the catalogs that do.
+    pub tertiary: PricingCatalog,
     memo: Mutex<HashMap<String, Option<ModelRates>>>,
 }
 
@@ -19,7 +23,18 @@ impl ModelPricing {
             supplement,
             primary,
             secondary,
+            tertiary: PricingCatalog::default(),
             memo: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Adds the lowest-precedence catalog. Consumes and returns the pricing so
+    /// the memo cache can never outlive the sources it was computed from.
+    pub fn with_tertiary(self, tertiary: PricingCatalog) -> Self {
+        Self {
+            tertiary,
+            memo: Mutex::new(HashMap::new()),
+            ..self
         }
     }
 
@@ -88,23 +103,86 @@ impl ModelPricing {
         self.lookup(model)
     }
 
+    /// Walks the source ladder twice: once accepting only sources that state a
+    /// real rate, then once accepting anything. Feeds carry zero-rated entries
+    /// for free tiers, stubs, and models published before their price is set,
+    /// and a zero ranked above a priced source would silently report no spend.
+    /// The second pass keeps a genuine free model resolving to zero rather than
+    /// to "unknown".
     fn lookup(&self, name: &str) -> Option<ModelRates> {
-        if let Some(rates) = self.supplement.pricing.get(name) {
-            return Some(*rates);
+        if signals_free_tier(name) {
+            // A free routing tier is priced at zero on purpose, and every feed
+            // publishes the paid twin right beside it - near enough for fuzzy
+            // matching to bill free usage at the full rate. An exact hit is the
+            // only trustworthy answer, so it wins outright here; the ordinary
+            // ladder still runs when no catalog names the slug at all.
+            return self
+                .exact_in_precedence_order(name)
+                .or_else(|| self.lookup_accepting(name, |_| true));
         }
-        if let Some((_, rates)) = self.primary.find_exact(name) {
+        self.lookup_accepting(name, ModelRates::is_priced)
+            .or_else(|| self.lookup_accepting(name, |_| true))
+    }
+
+    fn lookup_accepting(
+        &self,
+        name: &str,
+        accept: impl Fn(&ModelRates) -> bool,
+    ) -> Option<ModelRates> {
+        let exact = |catalog: &PricingCatalog| {
+            catalog
+                .find_exact(name)
+                .map(|(_, rates)| rates)
+                .filter(&accept)
+        };
+        let fuzzy = |catalog: &PricingCatalog| {
+            catalog
+                .find_fuzzy(name)
+                .map(|(_, rates)| rates)
+                .filter(&accept)
+        };
+        let vendor_prefixed = |catalog: &PricingCatalog| {
+            catalog
+                .find_vendor_prefixed(name)
+                .map(|(_, rates)| rates)
+                .filter(&accept)
+        };
+        if let Some(rates) = self.supplement.pricing.get(name).copied().filter(&accept) {
             return Some(rates);
         }
-        if let Some(rates) = self.fast_variant(name) {
+        if let Some(rates) = exact(&self.primary) {
+            return Some(rates);
+        }
+        if let Some(rates) = self.fast_variant(name).filter(&accept) {
             return Some(rates);
         }
         if name.ends_with("-fast") {
-            return self.secondary.find_exact(name).map(|(_, rates)| rates);
+            // Fuzzy matching is deliberately skipped here: a "-fast" name has no
+            // slow twin's rates, so a near miss would price it too cheaply.
+            return exact(&self.secondary).or_else(|| vendor_prefixed(&self.tertiary));
         }
-        if let Some((_, rates)) = self.primary.find_fuzzy(name) {
-            return Some(rates);
+        fuzzy(&self.primary)
+            .or_else(|| exact(&self.secondary))
+            // Only the primary catalog is trusted with fuzzy matching. The gap
+            // filler gets vendor-prefix stripping instead: enough to match the
+            // bare names logs record against OpenRouter's "vendor/model" ids,
+            // without letting the least authoritative source make the loosest
+            // matches - full fuzzy had it pricing "seed-1.6" from
+            // "bytedance-seed/seed-1.6-flash" and "aion-3.0" from
+            // "aion-labs/aion-3.0-mini".
+            .or_else(|| vendor_prefixed(&self.tertiary))
+    }
+
+    /// Exact hits only, walked in source precedence order.
+    fn exact_in_precedence_order(&self, name: &str) -> Option<ModelRates> {
+        if let Some(rates) = self.supplement.pricing.get(name) {
+            return Some(*rates);
         }
-        self.secondary.find_exact(name).map(|(_, rates)| rates)
+        self.primary
+            .find_exact(name)
+            .or_else(|| self.secondary.find_exact(name))
+            .or_else(|| self.tertiary.find_exact(name))
+            .map(|(_, rates)| rates)
     }
 
     fn fast_variant(&self, name: &str) -> Option<ModelRates> {
@@ -124,14 +202,46 @@ impl ModelPricing {
     }
 
     fn base_entry<'a>(&'a self, base: &'a str) -> Option<(&'a str, ModelRates)> {
-        if let Some(rates) = self.supplement.pricing.get(base) {
+        self.base_entry_accepting(base, ModelRates::is_priced)
+            .or_else(|| self.base_entry_accepting(base, |_| true))
+    }
+
+    fn base_entry_accepting<'a>(
+        &'a self,
+        base: &'a str,
+        accept: impl Fn(&ModelRates) -> bool,
+    ) -> Option<(&'a str, ModelRates)> {
+        if let Some(rates) = self
+            .supplement
+            .pricing
+            .get(base)
+            .filter(|rates| accept(rates))
+        {
             return Some((base, *rates));
         }
-        self.primary
-            .find_exact(base)
-            .or_else(|| self.primary.find_fuzzy(base))
-            .or_else(|| self.secondary.find_exact(base))
+        let exact =
+            |catalog: &'a PricingCatalog| catalog.find_exact(base).filter(|(_, r)| accept(r));
+        let fuzzy =
+            |catalog: &'a PricingCatalog| catalog.find_fuzzy(base).filter(|(_, r)| accept(r));
+        exact(&self.primary)
+            .or_else(|| fuzzy(&self.primary))
+            .or_else(|| exact(&self.secondary))
+            .or_else(|| {
+                self.tertiary
+                    .find_vendor_prefixed(base)
+                    .filter(|(_, rates)| accept(rates))
+            })
     }
+}
+
+/// Whether a model id advertises a free routing tier, which feeds publish as a
+/// `-free` or `:free` slug beside the paid model. Their zero rate is the right
+/// answer, so [`ModelPricing::lookup`] must not go looking for a better one.
+fn signals_free_tier(model: &str) -> bool {
+    model
+        .rsplit(['-', ':', '_', '/'])
+        .next()
+        .is_some_and(|last| last.eq_ignore_ascii_case("free"))
 }
 
 #[cfg(test)]
@@ -169,6 +279,140 @@ mod tests {
                 retrieved_at: None,
             },
         )
+    }
+
+    fn catalog(entries: &[(&str, ModelRates)]) -> PricingCatalog {
+        PricingCatalog {
+            entries: entries
+                .iter()
+                .map(|(name, rates)| ((*name).to_owned(), *rates))
+                .collect::<HashMap<_, _>>(),
+            retrieved_at: None,
+        }
+    }
+
+    #[test]
+    fn tertiary_fills_gaps_without_outranking_any_other_source() {
+        let supplement =
+            r#"{"pricing":{"supplemented":{"input_per_million":1,"output_per_million":2}}}"#;
+        let pricing = pricing(
+            Some(supplement),
+            &[
+                ("supplemented", rates(10.0, 20.0)),
+                ("shared", rates(3.0, 6.0)),
+            ],
+            &[("secondary-only", rates(5.0, 10.0))],
+        )
+        .with_tertiary(catalog(&[
+            ("supplemented", rates(90.0, 90.0)),
+            ("shared", rates(90.0, 90.0)),
+            ("secondary-only", rates(90.0, 90.0)),
+            ("vendor/tertiary-only", rates(7.0, 14.0)),
+        ]));
+
+        // Every source that already answers keeps its answer.
+        assert_eq!(
+            pricing.resolve("supplemented").unwrap().input_per_million,
+            1.0
+        );
+        assert_eq!(pricing.resolve("shared").unwrap().input_per_million, 3.0);
+        assert_eq!(
+            pricing.resolve("secondary-only").unwrap().input_per_million,
+            5.0
+        );
+        // Only a model nothing else prices falls through to the tertiary, and a
+        // vendor-prefixed slug still matches the bare name the logs record.
+        assert_eq!(
+            pricing.resolve("tertiary-only").unwrap().input_per_million,
+            7.0
+        );
+        assert!(pricing.resolve("priced-nowhere").is_none());
+    }
+
+    #[test]
+    fn tertiary_never_prices_a_fast_variant_by_fuzzy_match() {
+        let pricing =
+            pricing(None, &[], &[]).with_tertiary(catalog(&[("vendor/model", rates(2.0, 4.0))]));
+
+        // The slow twin resolves; its "-fast" name must not borrow those rates
+        // without an explicit multiplier, or fast usage is billed as slow.
+        assert_eq!(pricing.resolve("model").unwrap().input_per_million, 2.0);
+        assert!(pricing.resolve("model-fast").is_none());
+    }
+
+    #[test]
+    fn a_zero_rated_entry_never_shadows_a_source_that_prices_the_model() {
+        // Feeds publish a model before its price is set, or carry it as a stub.
+        // The higher-ranked zero must not win and report no spend.
+        let pricing = pricing(
+            None,
+            &[("stub-model", rates(0.0, 0.0))],
+            &[("stub-model", rates(4.0, 8.0))],
+        );
+        assert_eq!(
+            pricing.resolve("stub-model").unwrap().input_per_million,
+            4.0
+        );
+    }
+
+    #[test]
+    fn a_model_no_source_prices_still_resolves_to_zero() {
+        // Falling through to "unknown" would drop the model off the spend
+        // breakdown entirely; zero is the honest answer when zero is all we have.
+        let pricing = pricing(None, &[("only-zero", rates(0.0, 0.0))], &[]);
+        assert_eq!(pricing.resolve("only-zero").unwrap().input_per_million, 0.0);
+    }
+
+    #[test]
+    fn a_free_tier_slug_keeps_its_zero_instead_of_its_paid_twins_rate() {
+        let pricing = pricing(
+            None,
+            &[
+                ("vendor/model", rates(3.0, 6.0)),
+                ("vendor/model-free", rates(0.0, 0.0)),
+                ("vendor/other:free", rates(0.0, 0.0)),
+                ("vendor/other", rates(9.0, 9.0)),
+            ],
+            &[],
+        );
+        // "vendor/model" fuzzy-matches "vendor/model-free", so without the
+        // free-tier guard the free slug bills at the paid rate.
+        assert_eq!(
+            pricing
+                .resolve("vendor/model-free")
+                .unwrap()
+                .input_per_million,
+            0.0
+        );
+        assert_eq!(
+            pricing
+                .resolve("vendor/other:free")
+                .unwrap()
+                .input_per_million,
+            0.0
+        );
+        assert_eq!(
+            pricing.resolve("vendor/model").unwrap().input_per_million,
+            3.0
+        );
+    }
+
+    #[test]
+    fn the_tertiary_strips_vendor_prefixes_but_refuses_near_misses() {
+        let pricing = pricing(None, &[], &[]).with_tertiary(catalog(&[
+            ("bytedance-seed/seed-1.6-flash", rates(0.075, 0.15)),
+            ("aion-labs/aion-3.0", rates(3.0, 6.0)),
+        ]));
+        // The bare name provider logs record resolves against the prefixed id.
+        assert_eq!(pricing.resolve("aion-3.0").unwrap().input_per_million, 3.0);
+        assert_eq!(
+            pricing.resolve("seed-1.6-flash").unwrap().input_per_million,
+            0.075
+        );
+        // The gap filler is the least authoritative source, so it does not get
+        // to make the loosest match: a flash variant cannot price the plain
+        // model the way full fuzzy matching would have allowed.
+        assert!(pricing.resolve("seed-1.6").is_none());
     }
 
     #[test]
