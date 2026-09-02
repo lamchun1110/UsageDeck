@@ -132,23 +132,23 @@ pub fn read_owned_password(service: &str, account: &str) -> Result<Option<Vec<u8
 /// UsageDeck, locking the owning CLI out of its own credential; an absent item
 /// means the provider is logged out, which is the provider's to fix. Linux and
 /// Windows already refuse to create through this path.
+///
+/// The write itself must use the legacy `SecKeychainItemModifyAttributesAndData`
+/// rather than `SecItemUpdate`. On the file-based login keychain `SecItemUpdate`
+/// rewrites the item's access control list to trust only the calling process,
+/// which evicts the owner's own reader. For Claude Code that reader is
+/// `/usr/bin/security`, so every later read by the CLI blocks on SecurityAgent
+/// and macOS prompts for the login keychain password — observed as a prompt
+/// within seconds of each UsageDeck refresh. The legacy call modifies the data
+/// in place and leaves the ACL untouched.
 #[cfg(target_os = "macos")]
 pub fn write_generic_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
-    use core_foundation::data::CFData;
-    use security_framework::item::{
-        update_item, ItemClass, ItemSearchOptions, ItemUpdateOptions, ItemUpdateValue,
-    };
+    use security_framework::os::macos::passwords::find_generic_password;
 
-    let mut search = ItemSearchOptions::new();
-    search
-        .class(ItemClass::generic_password())
-        .service(service)
-        .account(account);
-    let mut update = ItemUpdateOptions::new();
-    update.set_value(ItemUpdateValue::Data(CFData::from_buffer(value)));
-
-    match update_item(&search, &update) {
-        Ok(()) => Ok(()),
+    match find_generic_password(None, service, account) {
+        Ok((_, mut item)) => item
+            .set_password(value)
+            .map_err(|_| "The macOS Keychain could not be updated.".into()),
         Err(error) if error.code() == MACOS_ITEM_NOT_FOUND => {
             Err("The credential owned by the provider no longer exists.".into())
         }
