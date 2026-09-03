@@ -53,6 +53,9 @@ pub fn catalog_from_litellm(data: &[u8]) -> Result<PricingCatalog, PricingCodecE
             .and_then(Value::as_object)
             .and_then(|specific| number(specific.get("fast")))
             .unwrap_or(1.0);
+        if !rates.is_plausible() {
+            continue;
+        }
         entries.insert(key.clone(), rates);
     }
     if entries.is_empty() {
@@ -91,6 +94,9 @@ pub fn catalog_from_models_dev(data: &[u8]) -> Result<PricingCatalog, PricingCod
             let cache_read = number(cost.get("cache_read"));
             rates.cache_read_per_million = cache_read.unwrap_or(input * 0.1);
             rates.cache_read_is_explicit = cache_read.is_some();
+            if !rates.is_plausible() {
+                continue;
+            }
             entries.insert(model_id.clone(), rates);
         }
     }
@@ -150,6 +156,9 @@ pub fn catalog_from_openrouter(data: &[u8]) -> Result<PricingCatalog, PricingCod
         // rather than leaving it to the Anthropic-style 2x-input convention.
         rates.cache_write_1h_per_million =
             number(pricing.get("input_cache_write_1h")).map(|rate| rate * 1_000_000.0);
+        if !rates.is_plausible() {
+            continue;
+        }
         entries.insert(id.to_owned(), rates);
     }
     if entries.is_empty() {
@@ -228,6 +237,9 @@ pub fn catalog_from_compact(data: &[u8]) -> Result<PricingCatalog, PricingCodecE
                 },
             )
         })
+        // A bundled snapshot or disk cache written before this guard existed
+        // still carries the corrupt rows, so filter on the way back in too.
+        .filter(|(_, rates)| rates.is_plausible())
         .collect::<HashMap<_, _>>();
     Ok(PricingCatalog {
         entries,
@@ -267,8 +279,48 @@ pub fn compact_data(catalog: &PricingCatalog) -> Result<Vec<u8>, PricingCodecErr
 #[cfg(test)]
 mod tests {
     use super::{
-        catalog_from_litellm, catalog_from_models_dev, catalog_from_openrouter, compact_data,
+        catalog_from_compact, catalog_from_litellm, catalog_from_models_dev,
+        catalog_from_openrouter, compact_data,
     };
+
+    #[test]
+    fn every_decoder_drops_a_rate_no_price_list_could_carry() {
+        // LiteLLM quoting input_cost_per_token in the wrong unit: 0.135 per
+        // token is $135,000 per million, and it reached real model names
+        // through fuzzy matching.
+        let litellm = catalog_from_litellm(
+            br#"{"good":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015},
+                 "wandb/bad":{"input_cost_per_token":0.135,"output_cost_per_token":0.54}}"#,
+        )
+        .unwrap();
+        assert_eq!(litellm.entries.keys().collect::<Vec<_>>(), vec!["good"]);
+
+        let models_dev = catalog_from_models_dev(
+            br#"{"p":{"models":{"good":{"cost":{"input":3,"output":15}},
+                               "bad":{"cost":{"input":8000,"output":35000}}}}}"#,
+        )
+        .unwrap();
+        assert_eq!(models_dev.entries.keys().collect::<Vec<_>>(), vec!["good"]);
+
+        let openrouter = catalog_from_openrouter(
+            br#"{"data":[{"id":"v/good","pricing":{"prompt":"0.000003","completion":"0.000015"}},
+                         {"id":"v/bad","pricing":{"prompt":"0.135","completion":"0.54"}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            openrouter.entries.keys().collect::<Vec<_>>(),
+            vec!["v/good"]
+        );
+
+        // Snapshots and disk caches written before the guard still hold the
+        // corrupt rows, so decoding filters them on the way back in.
+        let compact = catalog_from_compact(
+            br#"{"models":{"good":{"i":3,"o":15,"cw":3,"cr":0.3},
+                           "bad":{"i":135000,"o":540000,"cw":135000,"cr":13500}}}"#,
+        )
+        .unwrap();
+        assert_eq!(compact.entries.keys().collect::<Vec<_>>(), vec!["good"]);
+    }
 
     #[test]
     fn parses_litellm_defaults_and_round_trips_compact_data() {
