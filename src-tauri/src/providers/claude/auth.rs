@@ -233,6 +233,11 @@ impl ClaudeCredential {
 }
 
 pub(super) fn credential_generation(scope: &ClaudeCredentialScope) -> ClaudeCredentialGeneration {
+    // This is the guard that refuses to overwrite a credential the CLI
+    // rewrote underneath us, so it has to read the store as it is now. A
+    // cached read would compare our own snapshot against itself, pass, and
+    // clobber the token the CLI just wrote - signing the user out of both.
+    crate::providers::credential_store::invalidate_cached_credentials();
     ClaudeCredentialGeneration::from_candidates(&load_candidates(scope))
 }
 

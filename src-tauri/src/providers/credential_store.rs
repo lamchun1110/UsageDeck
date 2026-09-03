@@ -1,3 +1,85 @@
+/// Short-lived cache over [`read_generic_password`].
+///
+/// One provider refresh loads its credentials several times over — once to
+/// read them, again to check nothing changed before a write, again to answer
+/// whether the provider is signed in at all — and each load walks every
+/// service and account pair. That turned into a handful of credential-store
+/// reads per cycle where one would do, and on macOS every one of them is a
+/// Keychain read of the owning CLI's item.
+///
+/// The entry lives for [`CACHE_TTL`], which is far shorter than the five
+/// minute refresh interval, so a cycle can never serve a credential another
+/// process replaced since the previous cycle. A write invalidates the pair it
+/// touched, and [`invalidate_cached_credentials`] clears everything for the
+/// concurrent-modification guard, which has to see the store as it is right
+/// now rather than as it was moments ago.
+const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+type CachedRead = (std::time::Instant, Result<Option<Vec<u8>>, String>);
+
+static CREDENTIAL_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<(String, String), CachedRead>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn cache_lock(
+) -> std::sync::MutexGuard<'static, std::collections::HashMap<(String, String), CachedRead>> {
+    CREDENTIAL_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn cached_read(key: &(String, String)) -> Option<Result<Option<Vec<u8>>, String>> {
+    let cache = cache_lock();
+    let (stored_at, value) = cache.get(key)?;
+    (stored_at.elapsed() < CACHE_TTL).then(|| value.clone())
+}
+
+pub fn read_generic_password(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
+    let key = (service.to_owned(), account.to_owned());
+    if let Some(value) = cached_read(&key) {
+        return value;
+    }
+    let value = read_generic_password_uncached(service, account);
+    // A failure is cached too: a store that is locked or unreachable stays
+    // that way for the moment, and retrying it several times inside one cycle
+    // only multiplies the stall.
+    cache_lock().insert(key, (std::time::Instant::now(), value.clone()));
+    value
+}
+
+/// Drops every cached credential. Callers that must observe a change another
+/// process made - the guard that refuses to overwrite a credential rewritten
+/// underneath it - call this first.
+pub fn invalidate_cached_credentials() {
+    cache_lock().clear();
+}
+
+fn invalidate_cached_credential(service: &str, account: &str) {
+    cache_lock().remove(&(service.to_owned(), account.to_owned()));
+}
+
+/// Every mutation drops the cached read for the pair it touched, so the next
+/// read observes the store rather than the value from before the write.
+pub fn write_generic_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+    invalidate_cached_credential(service, account);
+    write_generic_password_uncached(service, account, value)
+}
+
+pub fn delete_generic_password(service: &str, account: &str) -> Result<(), String> {
+    invalidate_cached_credential(service, account);
+    delete_generic_password_uncached(service, account)
+}
+
+pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+    invalidate_cached_credential(service, account);
+    write_owned_password_uncached(service, account, value)
+}
+
+pub fn delete_owned_password(service: &str, account: &str) -> Result<(), String> {
+    invalidate_cached_credential(service, account);
+    delete_owned_password_uncached(service, account)
+}
+
 #[cfg(target_os = "macos")]
 const MACOS_ITEM_NOT_FOUND: i32 = -25_300;
 
@@ -112,7 +194,7 @@ fn generic_password_service_exists_blocking(service: &str) -> Option<bool> {
 }
 
 #[cfg(target_os = "macos")]
-pub fn read_generic_password(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
+fn read_generic_password_uncached(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
     use security_framework::passwords::{generic_password, PasswordOptions};
 
     match generic_password(PasswordOptions::new_generic_password(service, account)) {
@@ -142,7 +224,11 @@ pub fn read_owned_password(service: &str, account: &str) -> Result<Option<Vec<u8
 /// within seconds of each UsageDeck refresh. The legacy call modifies the data
 /// in place and leaves the ACL untouched.
 #[cfg(target_os = "macos")]
-pub fn write_generic_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+fn write_generic_password_uncached(
+    service: &str,
+    account: &str,
+    value: &[u8],
+) -> Result<(), String> {
     use security_framework::os::macos::passwords::find_generic_password;
 
     match find_generic_password(None, service, account) {
@@ -157,7 +243,7 @@ pub fn write_generic_password(service: &str, account: &str, value: &[u8]) -> Res
 }
 
 #[cfg(target_os = "macos")]
-pub fn delete_generic_password(service: &str, account: &str) -> Result<(), String> {
+fn delete_generic_password_uncached(service: &str, account: &str) -> Result<(), String> {
     use security_framework::passwords::delete_generic_password as delete_password;
 
     match delete_password(service, account) {
@@ -168,7 +254,7 @@ pub fn delete_generic_password(service: &str, account: &str) -> Result<(), Strin
 }
 
 #[cfg(target_os = "windows")]
-pub fn read_generic_password(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
+fn read_generic_password_uncached(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
     use std::{ptr, slice};
     use windows_sys::Win32::Security::Credentials::{
         CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC,
@@ -237,12 +323,16 @@ pub fn read_owned_password(service: &str, account: &str) -> Result<Option<Vec<u8
 }
 
 #[cfg(target_os = "windows")]
-pub fn write_generic_password(_service: &str, _account: &str, _value: &[u8]) -> Result<(), String> {
+fn write_generic_password_uncached(
+    _service: &str,
+    _account: &str,
+    _value: &[u8],
+) -> Result<(), String> {
     Err("UsageDeck does not overwrite credentials owned by another Windows application.".into())
 }
 
 #[cfg(target_os = "windows")]
-pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+fn write_owned_password_uncached(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
     use std::ptr;
     use windows_sys::Win32::Security::Credentials::{
         CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
@@ -284,13 +374,13 @@ pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Resul
 /// item is the point. Deliberately not routed through `write_generic_password`,
 /// which must never create.
 #[cfg(target_os = "macos")]
-pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+fn write_owned_password_uncached(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
     security_framework::passwords::set_generic_password(service, account, value)
         .map_err(|_| "The macOS Keychain could not be updated.".into())
 }
 
 #[cfg(target_os = "windows")]
-pub fn delete_generic_password(service: &str, account: &str) -> Result<(), String> {
+fn delete_generic_password_uncached(service: &str, account: &str) -> Result<(), String> {
     use windows_sys::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
 
     let target = format!("{service}:{account}")
@@ -308,12 +398,12 @@ pub fn delete_generic_password(service: &str, account: &str) -> Result<(), Strin
 }
 
 #[cfg(target_os = "windows")]
-pub fn delete_owned_password(service: &str, account: &str) -> Result<(), String> {
+fn delete_owned_password_uncached(service: &str, account: &str) -> Result<(), String> {
     delete_generic_password(service, account)
 }
 
 #[cfg(target_os = "macos")]
-pub fn delete_owned_password(service: &str, account: &str) -> Result<(), String> {
+fn delete_owned_password_uncached(service: &str, account: &str) -> Result<(), String> {
     delete_generic_password(service, account)
 }
 
@@ -411,7 +501,7 @@ where
 }
 
 #[cfg(target_os = "linux")]
-pub fn read_generic_password(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
+fn read_generic_password_uncached(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
     let service = service.to_owned();
     let account = account.to_owned();
     with_secret_service_timeout(move || read_generic_password_blocking(&service, &account))
@@ -477,7 +567,11 @@ pub fn read_owned_password(service: &str, account: &str) -> Result<Option<Vec<u8
 }
 
 #[cfg(target_os = "linux")]
-pub fn write_generic_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+fn write_generic_password_uncached(
+    service: &str,
+    account: &str,
+    value: &[u8],
+) -> Result<(), String> {
     let service = service.to_owned();
     let account = account.to_owned();
     let value = zeroize::Zeroizing::new(value.to_vec());
@@ -510,7 +604,7 @@ fn write_generic_password_blocking(
 }
 
 #[cfg(target_os = "linux")]
-pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+fn write_owned_password_uncached(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
     let service = service.to_owned();
     let account = account.to_owned();
     let value = zeroize::Zeroizing::new(value.to_vec());
@@ -546,7 +640,7 @@ fn write_owned_password_blocking(service: &str, account: &str, value: &[u8]) -> 
 }
 
 #[cfg(target_os = "linux")]
-pub fn delete_generic_password(service: &str, account: &str) -> Result<(), String> {
+fn delete_generic_password_uncached(service: &str, account: &str) -> Result<(), String> {
     let service = service.to_owned();
     let account = account.to_owned();
     with_secret_service_timeout(move || delete_generic_password_blocking(&service, &account))
@@ -576,7 +670,7 @@ fn delete_generic_password_blocking(service: &str, account: &str) -> Result<(), 
 }
 
 #[cfg(target_os = "linux")]
-pub fn delete_owned_password(service: &str, account: &str) -> Result<(), String> {
+fn delete_owned_password_uncached(service: &str, account: &str) -> Result<(), String> {
     delete_generic_password(service, account)
 }
 
@@ -617,22 +711,30 @@ pub fn read_owned_password(_service: &str, _account: &str) -> Result<Option<Vec<
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-pub fn write_generic_password(_service: &str, _account: &str, _value: &[u8]) -> Result<(), String> {
+fn write_generic_password_uncached(
+    _service: &str,
+    _account: &str,
+    _value: &[u8],
+) -> Result<(), String> {
     Err("The system credential store is unavailable on this platform.".into())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-pub fn write_owned_password(_service: &str, _account: &str, _value: &[u8]) -> Result<(), String> {
+fn write_owned_password_uncached(
+    _service: &str,
+    _account: &str,
+    _value: &[u8],
+) -> Result<(), String> {
     Err("The system credential store is unavailable on this platform.".into())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-pub fn delete_generic_password(_service: &str, _account: &str) -> Result<(), String> {
+fn delete_generic_password_uncached(_service: &str, _account: &str) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-pub fn delete_owned_password(_service: &str, _account: &str) -> Result<(), String> {
+fn delete_owned_password_uncached(_service: &str, _account: &str) -> Result<(), String> {
     Ok(())
 }
 
@@ -659,6 +761,48 @@ mod tests {
             Some(json)
         );
         assert!(decode_go_keyring_value(b"plain text").is_none());
+    }
+
+    #[test]
+    fn a_cached_credential_is_reused_until_it_expires() {
+        let key = ("cache-ttl-service".to_owned(), "account".to_owned());
+        super::cache_lock().insert(
+            key.clone(),
+            (std::time::Instant::now(), Ok(Some(b"fresh".to_vec()))),
+        );
+        assert_eq!(
+            super::cached_read(&key).unwrap().unwrap().as_deref(),
+            Some(b"fresh".as_slice())
+        );
+
+        // Past the TTL the entry stops answering, so the next read goes to the
+        // store and observes anything the owning CLI wrote in the meantime.
+        let expired = std::time::Instant::now()
+            .checked_sub(super::CACHE_TTL + std::time::Duration::from_secs(1))
+            .expect("a monotonic clock this far along");
+        super::cache_lock().insert(key.clone(), (expired, Ok(Some(b"stale".to_vec()))));
+        assert!(super::cached_read(&key).is_none());
+        super::cache_lock().remove(&key);
+    }
+
+    #[test]
+    fn invalidation_drops_the_pair_it_names_and_leaves_the_rest() {
+        let doomed = ("invalidate-service".to_owned(), "account".to_owned());
+        let bystander = ("invalidate-other".to_owned(), "account".to_owned());
+        for key in [&doomed, &bystander] {
+            super::cache_lock().insert(
+                key.clone(),
+                (std::time::Instant::now(), Ok(Some(b"value".to_vec()))),
+            );
+        }
+
+        super::invalidate_cached_credential(&doomed.0, &doomed.1);
+        assert!(super::cached_read(&doomed).is_none());
+        assert!(
+            super::cached_read(&bystander).is_some(),
+            "one write must not evict every other provider's credential"
+        );
+        super::cache_lock().remove(&bystander);
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
