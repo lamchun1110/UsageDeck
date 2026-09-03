@@ -1,6 +1,6 @@
 {
   "$comment": "UsageDeck pricing supplement. Prices models that no public catalog carries, supplies fast-variant multipliers the catalogs omit, and maps provider log model slugs to canonical pricing keys (LiteLLM keys, models.dev ids, or entries in this file). The raw main-branch file is refreshed by installed apps, so merged corrections arrive without an app release. Rates are USD per million tokens.",
-  "updated_at": "2026-08-12T22:41:05Z",
+  "updated_at": "2026-09-02T07:05:51Z",
   "pricing": {
     "auto": {
       "input_per_million": 1.25,
@@ -153,6 +153,8 @@
     }
   },
   "fast_multipliers": {
+    "claude-opus-4-6": 6.0,
+    "claude-opus-4-7": 6.0,
     "claude-opus-5": 2.0,
     "gpt-5": 2.0,
     "gpt-5.1-codex": 2.0,

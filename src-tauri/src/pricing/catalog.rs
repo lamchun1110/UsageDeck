@@ -22,8 +22,41 @@ impl PricingCatalog {
             .filter(|(key, _)| key_matches(key, model, &normalized_model))
             .map(|(key, rates)| (key.as_str(), *rates))
             .min_by(|(left, _), (right, _)| {
-                right.len().cmp(&left.len()).then_with(|| left.cmp(right))
+                // A key that names this very model, once its vendor prefix is
+                // dropped, beats one that names a variant of it. Length alone
+                // preferred the variant, because a suffix only makes a key
+                // longer: "GLM-4.7" matched "deepinfra/zai-org/GLM-4.7-Flash"
+                // and billed the full model at a tenth of its rate.
+                names_model_exactly(right, &normalized_model)
+                    .cmp(&names_model_exactly(left, &normalized_model))
+                    .then_with(|| right.len().cmp(&left.len()))
+                    .then_with(|| left.cmp(right))
             })
+    }
+
+    /// Exact match, then an exact match on ids whose vendor prefix is stripped.
+    ///
+    /// OpenRouter publishes every model as `vendor/model` while provider logs
+    /// record the bare name, so the gap filler is useless without this. It is
+    /// deliberately narrower than [`Self::find_fuzzy`]: prefix stripping still
+    /// requires the model name itself to match in full, where fuzzy matching
+    /// would let `seed-1.6-flash` price plain `seed-1.6` - the same near miss
+    /// the `-fast` handling in `ModelPricing::lookup` refuses to make. Ties
+    /// between vendors publishing one bare name resolve to the lowest id, so
+    /// the answer never depends on hash order.
+    pub fn find_vendor_prefixed(&self, model: &str) -> Option<(&str, ModelRates)> {
+        if let Some(hit) = self.find_exact(model) {
+            return Some(hit);
+        }
+        let normalized_model = normalized_key(model);
+        self.entries
+            .iter()
+            .filter(|(key, _)| {
+                key.rsplit_once('/')
+                    .is_some_and(|(_, bare)| normalized_key(bare) == normalized_model)
+            })
+            .map(|(key, rates)| (key.as_str(), *rates))
+            .min_by(|(left, _), (right, _)| left.cmp(right))
     }
 
     pub fn merging(mut self, other: PricingCatalog) -> Self {
@@ -33,6 +66,13 @@ impl PricingCatalog {
         }
         self
     }
+}
+
+/// Whether a catalog key names exactly this model once its vendor prefix is
+/// dropped, rather than naming a variant such as a `-Flash` or `-FP8` build.
+fn names_model_exactly(key: &str, normalized_model: &str) -> bool {
+    let bare = key.rsplit('/').next().unwrap_or(key);
+    normalized_key(bare) == normalized_model
 }
 
 pub fn normalized_key(value: &str) -> String {
@@ -134,6 +174,89 @@ mod tests {
         assert!(newer.find_fuzzy("claude-sonnet-4").is_none());
         let older = catalog(&[("claude-sonnet-4", 1.0)]);
         assert!(older.find_fuzzy("claude-sonnet-4-5").is_none());
+    }
+
+    #[test]
+    fn vendor_prefix_matching_requires_the_whole_model_name() {
+        let pricing = catalog(&[
+            ("bytedance-seed/seed-1.6-flash", 0.075),
+            ("aion-labs/aion-3.0", 3.0),
+        ]);
+        assert_eq!(
+            pricing
+                .find_vendor_prefixed("aion-3.0")
+                .unwrap()
+                .1
+                .input_per_million,
+            3.0
+        );
+        // Dots and dashes stay interchangeable, as everywhere else here.
+        assert_eq!(
+            pricing
+                .find_vendor_prefixed("aion-3-0")
+                .unwrap()
+                .1
+                .input_per_million,
+            3.0
+        );
+        // find_fuzzy accepts this; prefix stripping must not, or the flash
+        // variant prices the plain model.
+        assert!(pricing.find_vendor_prefixed("seed-1.6").is_none());
+        assert!(pricing.find_fuzzy("seed-1.6").is_some());
+    }
+
+    #[test]
+    fn vendor_prefix_ties_resolve_to_the_lowest_id() {
+        let pricing = catalog(&[("zeta/shared-model", 2.0), ("alpha/shared-model", 1.0)]);
+        assert_eq!(
+            pricing.find_vendor_prefixed("shared-model").unwrap().0,
+            "alpha/shared-model"
+        );
+    }
+
+    #[test]
+    fn a_variant_build_never_shadows_the_model_it_is_a_variant_of() {
+        // Every one of these is longer than the plain key, so ranking by length
+        // alone handed the query to the variant: "GLM-4.7" resolved through
+        // "deepinfra/zai-org/GLM-4.7-Flash" at a tenth of the real rate, and
+        // "claude-sonnet-4.5" through a us-gov Bedrock key at $3.60 instead of
+        // the $3.00 list price.
+        let pricing = catalog(&[
+            ("deepinfra/zai-org/GLM-4.7-Flash", 0.06),
+            ("deepinfra/zai-org/GLM-4.7", 0.4),
+            ("gmi/zai-org/GLM-4.7-FP8", 0.4),
+        ]);
+        assert_eq!(
+            pricing.find_fuzzy("GLM-4.7").unwrap().0,
+            "deepinfra/zai-org/GLM-4.7"
+        );
+
+        let regional = catalog(&[
+            (
+                "bedrock/us-gov-east-1/anthropic.claude-sonnet-4-5-20250929-v1:0",
+                3.6,
+            ),
+            ("vercel_ai_gateway/anthropic/claude-sonnet-4.5", 3.0),
+        ]);
+        assert_eq!(
+            regional
+                .find_fuzzy("claude-sonnet-4.5")
+                .unwrap()
+                .1
+                .input_per_million,
+            3.0
+        );
+
+        // With no exact model-name match, the longest key still wins.
+        let dated = catalog(&[("claude-sonnet-4-20250514", 3.0)]);
+        assert_eq!(
+            dated
+                .find_fuzzy("claude-sonnet-4")
+                .unwrap()
+                .1
+                .input_per_million,
+            3.0
+        );
     }
 
     #[test]

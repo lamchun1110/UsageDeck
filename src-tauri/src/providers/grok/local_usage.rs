@@ -267,7 +267,9 @@ mod tests {
         let today = history.today.unwrap();
         let yesterday = history.yesterday.unwrap();
         assert_eq!(today.tokens, 2_000_000);
-        assert!((today.estimated_cost_usd.unwrap() - 3.0).abs() < 0.000_001);
+        // A 1M-token prompt crosses the 200k threshold, so grok-build bills at its
+        // long-context tiers (input 2.0, output 4.0) rather than its base 1.0/2.0.
+        assert!((today.estimated_cost_usd.unwrap() - 6.0).abs() < 0.000_001);
         assert_eq!(yesterday.tokens, 2_000_000);
         assert!((yesterday.estimated_cost_usd.unwrap() - 18.0).abs() < 0.000_001);
         assert!(today.cost_estimated);
@@ -281,7 +283,9 @@ mod tests {
 {"ts":"2026-06-18T11:00:00Z","pid":7,"msg":"shell.turn.inference_done","ctx":{"prompt_tokens":1000000,"completion_tokens":0}}"#;
         let history = aggregate(parse(content), now(), &test_bundled_pricing());
 
-        assert!((history.today.unwrap().estimated_cost_usd.unwrap() - 3.36).abs() < 0.000_001);
+        // 200k uncached input and 800k cache read at grok-build's long-context tiers
+        // (2.0 and 0.4), then 1M at composer-2.5-fast's flat 3.0: 0.40 + 0.32 + 3.00.
+        assert!((history.today.unwrap().estimated_cost_usd.unwrap() - 3.72).abs() < 0.000_001);
     }
 
     #[test]

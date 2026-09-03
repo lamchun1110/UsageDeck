@@ -103,6 +103,64 @@ pub fn catalog_from_models_dev(data: &[u8]) -> Result<PricingCatalog, PricingCod
     })
 }
 
+/// OpenRouter's `/api/v1/models` feed. Rates are quoted per token as strings.
+///
+/// Only the plain model ids are kept: OpenRouter publishes variant slugs
+/// (`:batch` at half price, `:free` at zero, `:nitro`, `:floor`) that describe
+/// routing tiers rather than models, and letting them into the catalog would
+/// hand fuzzy matching a cheaper twin of every model. `pricing.overrides` is
+/// ignored for the same reason a historical event cannot be priced against it:
+/// the discounts are keyed to time of day, so applying them would need the rate
+/// table as it stood when the tokens were spent.
+pub fn catalog_from_openrouter(data: &[u8]) -> Result<PricingCatalog, PricingCodecError> {
+    let root = serde_json::from_slice::<Value>(data)?;
+    let models = root
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or(PricingCodecError::NotAnObject)?;
+    let mut entries = HashMap::new();
+    for model in models {
+        let Some(id) = model.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if id.contains(':') {
+            continue;
+        }
+        let Some(pricing) = model.get("pricing").and_then(Value::as_object) else {
+            continue;
+        };
+        let (Some(input), Some(output)) = (
+            number(pricing.get("prompt")),
+            number(pricing.get("completion")),
+        ) else {
+            continue;
+        };
+        // A zero-rated entry is a free routing tier, not a priced model; keeping
+        // it would resolve real usage to no cost at all.
+        if input <= 0.0 && output <= 0.0 {
+            continue;
+        }
+        let mut rates = ModelRates::new(input * 1_000_000.0, output * 1_000_000.0);
+        rates.cache_write_per_million =
+            number(pricing.get("input_cache_write")).unwrap_or(input) * 1_000_000.0;
+        let cache_read = number(pricing.get("input_cache_read"));
+        rates.cache_read_per_million = cache_read.unwrap_or(input * 0.1) * 1_000_000.0;
+        rates.cache_read_is_explicit = cache_read.is_some();
+        // The only feed that states the one-hour cache-write rate outright,
+        // rather than leaving it to the Anthropic-style 2x-input convention.
+        rates.cache_write_1h_per_million =
+            number(pricing.get("input_cache_write_1h")).map(|rate| rate * 1_000_000.0);
+        entries.insert(id.to_owned(), rates);
+    }
+    if entries.is_empty() {
+        return Err(PricingCodecError::NoUsableEntries);
+    }
+    Ok(PricingCatalog {
+        entries,
+        retrieved_at: None,
+    })
+}
+
 fn number(value: Option<&Value>) -> Option<f64> {
     let value = value?;
     value.as_f64().or_else(|| {
@@ -156,6 +214,10 @@ pub fn catalog_from_compact(data: &[u8]) -> Result<PricingCatalog, PricingCodecE
                     cache_write_per_million: model.cw,
                     cache_read_per_million: model.cr,
                     cache_write_1h_per_million: model.cw1,
+                    // No feed states a long-context 1h rate; it is derived per
+                    // usage source (see `with_anthropic_one_hour_cache`) after
+                    // a catalog hand-off, so it never needs a compact key.
+                    cache_write_1h_above_200k_per_million: None,
                     input_above_200k_per_million: model.ia,
                     output_above_200k_per_million: model.oa,
                     cache_write_above_200k_per_million: model.cwa,
@@ -204,7 +266,9 @@ pub fn compact_data(catalog: &PricingCatalog) -> Result<Vec<u8>, PricingCodecErr
 
 #[cfg(test)]
 mod tests {
-    use super::{catalog_from_litellm, catalog_from_models_dev, compact_data};
+    use super::{
+        catalog_from_litellm, catalog_from_models_dev, catalog_from_openrouter, compact_data,
+    };
 
     #[test]
     fn parses_litellm_defaults_and_round_trips_compact_data() {
@@ -231,6 +295,55 @@ mod tests {
         let catalog = catalog_from_models_dev(feed).unwrap();
         assert_eq!(catalog.entries["shared"].input_per_million, 1.0);
         assert!(!catalog.entries["shared"].cache_read_is_explicit);
+    }
+
+    #[test]
+    fn openrouter_converts_per_token_rates_and_keeps_the_one_hour_cache_rate() {
+        let feed = br#"{"data":[{"id":"anthropic/claude-sonnet-5","pricing":{
+            "prompt":"0.000002","completion":"0.00001","input_cache_read":"0.0000002",
+            "input_cache_write":"0.0000025","input_cache_write_1h":"0.000004"}}]}"#;
+        let catalog = catalog_from_openrouter(feed).unwrap();
+        let rates = catalog.entries["anthropic/claude-sonnet-5"];
+
+        assert_eq!(rates.input_per_million, 2.0);
+        assert_eq!(rates.output_per_million, 10.0);
+        assert!((rates.cache_read_per_million - 0.2).abs() < 0.000_001);
+        assert_eq!(rates.cache_write_per_million, 2.5);
+        assert_eq!(rates.cache_write_1h_per_million, Some(4.0));
+        assert!(rates.cache_read_is_explicit);
+    }
+
+    #[test]
+    fn openrouter_skips_variant_slugs_and_free_tiers() {
+        let feed = br#"{"data":[
+            {"id":"vendor/model","pricing":{"prompt":"0.000001","completion":"0.000002"}},
+            {"id":"vendor/model:batch","pricing":{"prompt":"0.0000005","completion":"0.000001"}},
+            {"id":"vendor/free","pricing":{"prompt":"0","completion":"0"}}]}"#;
+        let catalog = catalog_from_openrouter(feed).unwrap();
+
+        assert_eq!(catalog.entries.len(), 1);
+        assert!(catalog.entries.contains_key("vendor/model"));
+    }
+
+    #[test]
+    fn openrouter_defaults_cache_rates_and_ignores_time_of_day_overrides() {
+        let feed = br#"{"data":[{"id":"vendor/plain","pricing":{
+            "prompt":"0.000001","completion":"0.000002",
+            "overrides":[{"utc_days":["saturday"],"prompt":"0.0000005"}]}}]}"#;
+        let catalog = catalog_from_openrouter(feed).unwrap();
+        let rates = catalog.entries["vendor/plain"];
+
+        assert_eq!(rates.input_per_million, 1.0);
+        assert_eq!(rates.cache_write_per_million, 1.0);
+        assert!((rates.cache_read_per_million - 0.1).abs() < 0.000_001);
+        assert!(!rates.cache_read_is_explicit);
+        assert_eq!(rates.cache_write_1h_per_million, None);
+    }
+
+    #[test]
+    fn openrouter_rejects_a_feed_with_no_priced_models() {
+        assert!(catalog_from_openrouter(br#"{"data":[]}"#).is_err());
+        assert!(catalog_from_openrouter(br#"{"models":[]}"#).is_err());
     }
 
     #[test]

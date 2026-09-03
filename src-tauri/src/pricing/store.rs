@@ -18,8 +18,8 @@ use thiserror::Error;
 
 use super::{
     codecs::{
-        catalog_from_compact, catalog_from_litellm, catalog_from_models_dev, compact_data,
-        PricingCodecError,
+        catalog_from_compact, catalog_from_litellm, catalog_from_models_dev,
+        catalog_from_openrouter, compact_data, PricingCodecError,
     },
     ModelPricing, PricingCatalog, PricingSupplement,
 };
@@ -31,6 +31,7 @@ const LITELLM_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
 const SUPPLEMENT_URL: &str = "https://raw.githubusercontent.com/lamchun1110/UsageDeck/main/src-tauri/resources/pricing_supplement.json";
+const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/models";
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,16 +39,23 @@ enum SourceId {
     Litellm,
     ModelsDev,
     Supplement,
+    OpenRouter,
 }
 
 impl SourceId {
-    const ALL: [Self; 3] = [Self::Litellm, Self::ModelsDev, Self::Supplement];
+    const ALL: [Self; 4] = [
+        Self::Litellm,
+        Self::ModelsDev,
+        Self::Supplement,
+        Self::OpenRouter,
+    ];
 
     fn file_name(self) -> &'static str {
         match self {
             Self::Litellm => "litellm.json",
             Self::ModelsDev => "models_dev.json",
             Self::Supplement => "supplement.json",
+            Self::OpenRouter => "openrouter.json",
         }
     }
 
@@ -56,6 +64,7 @@ impl SourceId {
             Self::Litellm => LITELLM_URL,
             Self::ModelsDev => MODELS_DEV_URL,
             Self::Supplement => SUPPLEMENT_URL,
+            Self::OpenRouter => OPENROUTER_URL,
         }
     }
 }
@@ -72,6 +81,7 @@ struct BundledSources {
     supplement: Arc<[u8]>,
     litellm: Arc<[u8]>,
     models_dev: Arc<[u8]>,
+    openrouter: Arc<[u8]>,
 }
 
 impl Default for BundledSources {
@@ -85,6 +95,9 @@ impl Default for BundledSources {
             ),
             models_dev: Arc::from(
                 include_bytes!("../../resources/pricing_models_dev_snapshot.json").as_slice(),
+            ),
+            openrouter: Arc::from(
+                include_bytes!("../../resources/pricing_openrouter_snapshot.json").as_slice(),
             ),
         }
     }
@@ -377,7 +390,8 @@ fn load_pricing(
     };
     let primary = load_catalog(cache_directory, SourceId::Litellm, &bundled.litellm)?;
     let secondary = load_catalog(cache_directory, SourceId::ModelsDev, &bundled.models_dev)?;
-    Ok(ModelPricing::new(supplement, primary, secondary))
+    let tertiary = load_catalog(cache_directory, SourceId::OpenRouter, &bundled.openrouter)?;
+    Ok(ModelPricing::new(supplement, primary, secondary).with_tertiary(tertiary))
 }
 
 fn load_catalog(
@@ -458,6 +472,7 @@ fn validated_cache_data(
             PricingSupplement::decode(body)?;
             Ok(body.to_vec())
         }
+        SourceId::OpenRouter => Ok(compact_data(&stamp(catalog_from_openrouter(body)?))?),
     }
 }
 
@@ -559,6 +574,10 @@ mod tests {
             ),
             models_dev: Arc::from(
                 br#"{"models":{"bundled-dev-model":{"i":3,"o":4,"cw":3,"cr":0.3}}}"#
+                    .as_slice(),
+            ),
+            openrouter: Arc::from(
+                br#"{"models":{"vendor/bundled-router-model":{"i":5,"o":6,"cw":5,"cr":0.5}}}"#
                     .as_slice(),
             ),
         }
@@ -933,6 +952,9 @@ mod tests {
             br#"{"xai":{"models":{"fetched-dev":{"cost":{"input":1,"output":2}}}}}"#,
         ));
         http.push(response(br#"{"pricing":{"auto":{"input_per_million":9,"output_per_million":9}},"fast_multipliers":{},"alias_rules":[]}"#));
+        http.push(response(
+            br#"{"data":[{"id":"vendor/fetched-router","pricing":{"prompt":"0.000008","completion":"0.00001"}}]}"#,
+        ));
         let now = Utc.with_ymd_and_hms(2026, 7, 15, 10, 0, 0).unwrap();
         let store = PricingStore::with_dependencies(
             directory.path().to_path_buf(),
@@ -942,11 +964,11 @@ mod tests {
         )
         .unwrap();
         store.refresh_due();
-        assert_eq!(http.request_count(), 3);
+        assert_eq!(http.request_count(), 4);
         store.refresh_due();
         assert_eq!(
             http.request_count(),
-            3,
+            4,
             "fresh sources must respect the 24-hour TTL"
         );
         assert_eq!(
@@ -996,6 +1018,9 @@ mod tests {
             br#"{"x":{"models":{"fetched-dev":{"cost":{"input":1,"output":2}}}}}"#,
         ));
         http.push(response(br#"{"pricing":{"auto":{"input_per_million":9,"output_per_million":9}},"fast_multipliers":{},"alias_rules":[]}"#));
+        http.push(response(
+            br#"{"data":[{"id":"vendor/fetched-router","pricing":{"prompt":"0.000008","completion":"0.00001"}}]}"#,
+        ));
         let now = Utc.with_ymd_and_hms(2026, 7, 15, 10, 0, 0).unwrap();
         let store = Arc::new(
             PricingStore::with_dependencies(
@@ -1020,7 +1045,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(!store.refresh_in_flight.load(Ordering::Acquire));
-        assert_eq!(http.request_count(), 3, "only one refresh task may run");
+        assert_eq!(http.request_count(), 4, "only one refresh task may run");
         assert_eq!(
             store
                 .snapshot()
@@ -1040,6 +1065,9 @@ mod tests {
             br#"{"x":{"models":{"fetched-dev":{"cost":{"input":1,"output":2}}}}}"#,
         ));
         first_http.push(response(br#"{"pricing":{"auto":{"input_per_million":9,"output_per_million":9}},"fast_multipliers":{},"alias_rules":[]}"#));
+        first_http.push(response(
+            br#"{"data":[{"id":"vendor/fetched-router","pricing":{"prompt":"0.000008","completion":"0.00001"}}]}"#,
+        ));
         let first_now = Utc.with_ymd_and_hms(2026, 7, 15, 10, 0, 0).unwrap();
         let first = PricingStore::with_dependencies(
             directory.path().to_path_buf(),
@@ -1051,7 +1079,7 @@ mod tests {
         first.refresh_due();
 
         let second_http = Arc::new(StubHttp::default());
-        for _ in 0..3 {
+        for _ in 0..4 {
             second_http.push(FetchResponse {
                 status: StatusCode::NOT_MODIFIED,
                 etag: None,
@@ -1095,7 +1123,7 @@ mod tests {
         failed.refresh_due();
         assert_eq!(
             failed_http.request_count(),
-            3,
+            4,
             "failure backoff prevents immediate retry"
         );
         assert_eq!(
@@ -1117,6 +1145,9 @@ mod tests {
             br#"{"x":{"models":{"fetched-dev":{"cost":{"input":1,"output":2}}}}}"#,
         ));
         good_http.push(response(br#"{"pricing":{"auto":{"input_per_million":9,"output_per_million":9}},"alias_rules":[]}"#));
+        good_http.push(response(
+            br#"{"data":[{"id":"vendor/fetched-router","pricing":{"prompt":"0.000008","completion":"0.00001"}}]}"#,
+        ));
         let now = Utc.with_ymd_and_hms(2026, 7, 15, 10, 0, 0).unwrap();
         let good = PricingStore::with_dependencies(
             directory.path().to_path_buf(),

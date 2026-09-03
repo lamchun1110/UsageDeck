@@ -25,7 +25,9 @@ tracks usage limits, reset times, token history, and estimated spend across 13 A
 It lives in your tray or menu bar and reuses credentials already stored on your machine. Everything
 runs locally—there is no UsageDeck-operated account or backend, analytics, or telemetry. UsageDeck
 does make network requests to the third-party providers you configure or authenticate so it can
-retrieve their usage and quota information.
+retrieve their usage and quota information. It also refreshes its public model-price catalogs about
+once a day from GitHub, models.dev, and openrouter.ai so spend estimates stay current; those
+requests carry no credentials or usage data, and they happen whether or not you use those services.
 
 ## What it tracks
 

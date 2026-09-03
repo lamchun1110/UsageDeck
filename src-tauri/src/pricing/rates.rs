@@ -10,6 +10,11 @@ pub struct ModelRates {
     /// Anthropic-style (see [`ModelRates::with_anthropic_one_hour_cache`]) or
     /// the pricing data states it explicitly.
     pub cache_write_1h_per_million: Option<f64>,
+    /// One-hour cache-write rate past [`Self::long_context_threshold_tokens`].
+    /// The base rate is not a long-context rate, so without this the 1h bucket
+    /// would stay on the cheap tier while every other bucket escalated - and an
+    /// Anthropic 1h write would end up cheaper than the 5m write beside it.
+    pub cache_write_1h_above_200k_per_million: Option<f64>,
     pub input_above_200k_per_million: Option<f64>,
     pub output_above_200k_per_million: Option<f64>,
     pub cache_write_above_200k_per_million: Option<f64>,
@@ -27,6 +32,7 @@ impl ModelRates {
             cache_write_per_million: input_per_million,
             cache_read_per_million: input_per_million * 0.1,
             cache_write_1h_per_million: None,
+            cache_write_1h_above_200k_per_million: None,
             input_above_200k_per_million: None,
             output_above_200k_per_million: None,
             cache_write_above_200k_per_million: None,
@@ -44,6 +50,9 @@ impl ModelRates {
             cache_write_per_million: self.cache_write_per_million * factor,
             cache_read_per_million: self.cache_read_per_million * factor,
             cache_write_1h_per_million: self.cache_write_1h_per_million.map(|rate| rate * factor),
+            cache_write_1h_above_200k_per_million: self
+                .cache_write_1h_above_200k_per_million
+                .map(|rate| rate * factor),
             input_above_200k_per_million: self
                 .input_above_200k_per_million
                 .map(|rate| rate * factor),
@@ -71,7 +80,20 @@ impl ModelRates {
             self.cache_write_1h_per_million
                 .unwrap_or(self.input_per_million * 2.0),
         );
+        // The premium is 2x the input rate *of the tier in effect*, so a model
+        // with long-context pricing needs the doubled long-context input rate
+        // too; `cost_dollars` cannot derive it once the base rate is fixed.
+        self.cache_write_1h_above_200k_per_million = self
+            .cache_write_1h_above_200k_per_million
+            .or_else(|| self.input_above_200k_per_million.map(|rate| rate * 2.0));
         self
+    }
+
+    /// Whether these rates actually price a model. Feeds publish zero-rated
+    /// entries for free tiers, stubs, and models announced before their price
+    /// is set; such an entry must not shadow a source that states a real rate.
+    pub fn is_priced(&self) -> bool {
+        self.input_per_million > 0.0 || self.output_per_million > 0.0
     }
 
     pub fn cost_dollars(self, tokens: TokenBreakdown, apply_long_context_rates: bool) -> f64 {
@@ -94,7 +116,11 @@ impl ModelRates {
             self.cache_read_per_million,
             self.cache_read_above_200k_per_million,
         );
-        let cache_write_1h_rate = self.cache_write_1h_per_million.unwrap_or(cache_write_rate);
+        let cache_write_1h_rate = match self.cache_write_1h_per_million {
+            Some(base) => select(base, self.cache_write_1h_above_200k_per_million),
+            // No stated 1h rate: the 5m rate prices the bucket, already tiered.
+            None => cache_write_rate,
+        };
         let cost = tokens.input as f64 * input_rate
             + tokens.output as f64 * output_rate
             + tokens.cache_write_5m as f64 * cache_write_rate
@@ -170,6 +196,49 @@ mod tests {
             is_fast: false,
         };
         assert!((rates.cost_dollars(tokens, true) - 28.05).abs() < 0.000_001);
+    }
+
+    #[test]
+    fn anthropic_one_hour_writes_follow_the_long_context_input_rate() {
+        // Sonnet-shaped: 3/15 under 200k, doubled above it.
+        let mut rates = ModelRates::new(3.0, 15.0);
+        rates.cache_write_per_million = 3.75;
+        rates.cache_read_per_million = 0.3;
+        rates.input_above_200k_per_million = Some(6.0);
+        rates.output_above_200k_per_million = Some(22.5);
+        rates.cache_write_above_200k_per_million = Some(7.5);
+        rates.cache_read_above_200k_per_million = Some(0.6);
+        let rates = rates.with_anthropic_one_hour_cache();
+        assert_eq!(rates.cache_write_1h_per_million, Some(6.0));
+        assert_eq!(rates.cache_write_1h_above_200k_per_million, Some(12.0));
+
+        let write_1h = |amount: u64| TokenBreakdown {
+            input: 0,
+            cache_write_5m: 0,
+            cache_write_1h: amount,
+            cache_read: 0,
+            output: 0,
+            is_fast: false,
+        };
+        let write_5m = |amount: u64| TokenBreakdown {
+            input: 0,
+            cache_write_5m: amount,
+            cache_write_1h: 0,
+            cache_read: 0,
+            output: 0,
+            is_fast: false,
+        };
+        // 100k prompt stays under the threshold: 2x the base input rate.
+        assert!((rates.cost_dollars(write_1h(100_000), true) - 0.6).abs() < 0.000_001);
+        // 1M prompt clears it: 2x the *long-context* input rate, not the base
+        // one. Leaving it at 6.0 made a 1h write cheaper than the 5m write
+        // beside it, which no Anthropic price list allows.
+        assert!((rates.cost_dollars(write_1h(1_000_000), true) - 12.0).abs() < 0.000_001);
+        assert!((rates.cost_dollars(write_5m(1_000_000), true) - 7.5).abs() < 0.000_001);
+        assert!(
+            rates.cost_dollars(write_1h(1_000_000), true)
+                > rates.cost_dollars(write_5m(1_000_000), true)
+        );
     }
 
     #[test]
