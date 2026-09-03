@@ -1,3 +1,16 @@
+/// Rates above this are a feed error rather than a price, so an entry carrying
+/// one is dropped at ingest.
+///
+/// The dearest rate any catalog states for a real model is o1-pro at $150 in
+/// and $600 out, and LiteLLM, models.dev and OpenRouter independently agree on
+/// it, so this leaves over half again as much room. LiteLLM has meanwhile
+/// published `input_cost_per_token` in the wrong unit - 0.135 where the real
+/// figure is 0.000000135 - which reaches $135,000 per million and would bill a
+/// session at roughly two hundred thousand times its true cost. Dropping the
+/// entry lets another catalog answer, or leaves the model unpriced; both beat
+/// reporting a number that wrong.
+pub const MAX_PLAUSIBLE_RATE_PER_MILLION: f64 = 1_000.0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModelRates {
     pub input_per_million: f64,
@@ -94,6 +107,26 @@ impl ModelRates {
     /// is set; such an entry must not shadow a source that states a real rate.
     pub fn is_priced(&self) -> bool {
         self.input_per_million > 0.0 || self.output_per_million > 0.0
+    }
+
+    /// Whether every rate is a number a real price list could carry. Guards the
+    /// catalogs against feed errors: a rate that is negative, not finite, or
+    /// past [`MAX_PLAUSIBLE_RATE_PER_MILLION`] is corrupt data, not a price.
+    pub fn is_plausible(&self) -> bool {
+        [
+            self.input_per_million,
+            self.output_per_million,
+            self.cache_write_per_million,
+            self.cache_read_per_million,
+        ]
+        .into_iter()
+        .chain(self.cache_write_1h_per_million)
+        .chain(self.cache_write_1h_above_200k_per_million)
+        .chain(self.input_above_200k_per_million)
+        .chain(self.output_above_200k_per_million)
+        .chain(self.cache_write_above_200k_per_million)
+        .chain(self.cache_read_above_200k_per_million)
+        .all(|rate| rate.is_finite() && (0.0..=MAX_PLAUSIBLE_RATE_PER_MILLION).contains(&rate))
     }
 
     pub fn cost_dollars(self, tokens: TokenBreakdown, apply_long_context_rates: bool) -> f64 {
@@ -196,6 +229,25 @@ mod tests {
             is_fast: false,
         };
         assert!((rates.cost_dollars(tokens, true) - 28.05).abs() < 0.000_001);
+    }
+
+    #[test]
+    fn implausible_rates_are_rejected_as_feed_errors() {
+        // o1-pro, the dearest model all three feeds agree on, must survive.
+        assert!(ModelRates::new(150.0, 600.0).is_plausible());
+        assert!(ModelRates::new(0.0, 0.0).is_plausible());
+
+        // LiteLLM published input_cost_per_token as 0.135 rather than
+        // 0.000000135, landing at $135,000 per million.
+        assert!(!ModelRates::new(135_000.0, 540_000.0).is_plausible());
+        assert!(!ModelRates::new(-1.0, 2.0).is_plausible());
+        assert!(!ModelRates::new(f64::NAN, 2.0).is_plausible());
+        assert!(!ModelRates::new(f64::INFINITY, 2.0).is_plausible());
+
+        // Optional rates are covered too, not just the four required ones.
+        let mut long_context = ModelRates::new(3.0, 15.0);
+        long_context.output_above_200k_per_million = Some(9_999.0);
+        assert!(!long_context.is_plausible());
     }
 
     #[test]

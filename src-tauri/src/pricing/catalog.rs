@@ -17,6 +17,7 @@ impl PricingCatalog {
 
     pub fn find_fuzzy(&self, model: &str) -> Option<(&str, ModelRates)> {
         let normalized_model = normalized_key(model);
+        let bare_model = normalized_key(bare_name(model));
         self.entries
             .iter()
             .filter(|(key, _)| key_matches(key, model, &normalized_model))
@@ -27,8 +28,8 @@ impl PricingCatalog {
                 // preferred the variant, because a suffix only makes a key
                 // longer: "GLM-4.7" matched "deepinfra/zai-org/GLM-4.7-Flash"
                 // and billed the full model at a tenth of its rate.
-                names_model_exactly(right, &normalized_model)
-                    .cmp(&names_model_exactly(left, &normalized_model))
+                names_model_exactly(right, &bare_model)
+                    .cmp(&names_model_exactly(left, &bare_model))
                     .then_with(|| right.len().cmp(&left.len()))
                     .then_with(|| left.cmp(right))
             })
@@ -68,11 +69,18 @@ impl PricingCatalog {
     }
 }
 
-/// Whether a catalog key names exactly this model once its vendor prefix is
-/// dropped, rather than naming a variant such as a `-Flash` or `-FP8` build.
-fn names_model_exactly(key: &str, normalized_model: &str) -> bool {
-    let bare = key.rsplit('/').next().unwrap_or(key);
-    normalized_key(bare) == normalized_model
+/// The model name with any vendor prefix dropped: `openai/gpt-4o` -> `gpt-4o`.
+fn bare_name(value: &str) -> &str {
+    value.rsplit('/').next().unwrap_or(value)
+}
+
+/// Whether a catalog key names exactly this model once both sides lose their
+/// vendor prefix, rather than naming a variant such as a `-Flash` or `-FP8`
+/// build. Both sides matter: comparing a stripped key against a still-prefixed
+/// query left `openai/gpt-4o` with no exact match at all, so it fell back to
+/// the longest key and priced itself from `.../openai/gpt-4o-mini`.
+fn names_model_exactly(key: &str, bare_normalized_model: &str) -> bool {
+    normalized_key(bare_name(key)) == bare_normalized_model
 }
 
 pub fn normalized_key(value: &str) -> String {
@@ -203,6 +211,38 @@ mod tests {
         // variant prices the plain model.
         assert!(pricing.find_vendor_prefixed("seed-1.6").is_none());
         assert!(pricing.find_fuzzy("seed-1.6").is_some());
+    }
+
+    #[test]
+    fn a_vendor_prefixed_query_still_prefers_the_model_over_its_variant() {
+        let pricing = catalog(&[
+            ("vercel_ai_gateway/openai/gpt-4o", 2.5),
+            ("vercel_ai_gateway/openai/gpt-4o-mini", 0.15),
+        ]);
+        // Both sides lose their vendor prefix before comparing. Stripping only
+        // the key left a prefixed query with no exact match at all, so it fell
+        // through to the longest key and priced gpt-4o from gpt-4o-mini.
+        assert_eq!(
+            pricing
+                .find_fuzzy("openai/gpt-4o")
+                .unwrap()
+                .1
+                .input_per_million,
+            2.5
+        );
+        assert_eq!(
+            pricing.find_fuzzy("gpt-4o").unwrap().1.input_per_million,
+            2.5
+        );
+        // The variant still prices itself.
+        assert_eq!(
+            pricing
+                .find_fuzzy("openai/gpt-4o-mini")
+                .unwrap()
+                .1
+                .input_per_million,
+            0.15
+        );
     }
 
     #[test]

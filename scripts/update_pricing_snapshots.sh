@@ -36,6 +36,7 @@ curl -fsSL --max-time 120 "$OPENROUTER_URL" -o "$tmpdir/openrouter.json"
 
 python3 - "$tmpdir" "$RESOURCES" << 'PY'
 import json
+import math
 import sys
 from datetime import datetime, timezone
 
@@ -53,6 +54,23 @@ def compact_model(input_pm, output_pm, cache_write_pm, cache_read_pm,
 
 def number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+# Mirrors MAX_PLAUSIBLE_RATE_PER_MILLION and ModelRates::is_plausible in
+# src-tauri/src/pricing/rates.rs - keep the two in step. LiteLLM has published
+# input_cost_per_token in the wrong unit (0.135 rather than 0.000000135), which
+# lands at $135,000 per million; the dearest real rate any feed states is o1-pro
+# at $600 out. "fast" is a multiplier and "cre" a flag, so neither is a rate.
+MAX_PLAUSIBLE_RATE_PER_MILLION = 1000.0
+RATE_KEYS = ("i", "o", "cw", "cr", "ia", "oa", "cwa", "cra", "cw1")
+
+def plausible(model):
+    for key in RATE_KEYS:
+        value = model.get(key)
+        if value is None:
+            continue
+        if not math.isfinite(value) or not 0.0 <= value <= MAX_PLAUSIBLE_RATE_PER_MILLION:
+            return False
+    return True
 
 # OpenRouter quotes every rate as a decimal string.
 def string_number(value):
@@ -76,7 +94,7 @@ for key, entry in litellm.items():
     cw = number(entry.get("cache_creation_input_token_cost"))
     cr = number(entry.get("cache_read_input_token_cost"))
     provider_specific = entry.get("provider_specific_entry") or {}
-    models[key] = compact_model(
+    entry = compact_model(
         i * 1e6, o * 1e6,
         (cw if cw is not None else i) * 1e6,
         (cr if cr is not None else i * 0.1) * 1e6,
@@ -86,6 +104,8 @@ for key, entry in litellm.items():
         cra=(lambda v: v * 1e6 if v is not None else None)(number(entry.get("cache_read_input_token_cost_above_200k_tokens"))),
         fast=number(provider_specific.get("fast")) if isinstance(provider_specific, dict) else None,
     )
+    if plausible(entry):
+        models[key] = entry
 if not models:
     sys.exit("LiteLLM feed produced no usable entries - aborting.")
 with open(f"{resources}/pricing_litellm_snapshot.json", "w") as f:
@@ -108,11 +128,13 @@ for provider_name in sorted(models_dev):
         if i is None or o is None:
             continue
         cw, cr = number(cost.get("cache_write")), number(cost.get("cache_read"))
-        models[model_id] = compact_model(
+        entry = compact_model(
             i, o,
             cw if cw is not None else i,
             cr if cr is not None else i * 0.1,
         )
+        if plausible(entry):
+            models[model_id] = entry
 if not models:
     sys.exit("models.dev feed produced no usable entries - aborting.")
 with open(f"{resources}/pricing_models_dev_snapshot.json", "w") as f:
@@ -142,13 +164,15 @@ for entry in openrouter.get("data") or []:
     cw = string_number(pricing.get("input_cache_write"))
     cr = string_number(pricing.get("input_cache_read"))
     cw1 = string_number(pricing.get("input_cache_write_1h"))
-    models[model_id] = compact_model(
+    entry = compact_model(
         i * 1e6, o * 1e6,
         (cw if cw is not None else i) * 1e6,
         (cr if cr is not None else i * 0.1) * 1e6,
         cre=False if cr is None else None,
         cw1=cw1 * 1e6 if cw1 is not None else None,
     )
+    if plausible(entry):
+        models[model_id] = entry
 if not models:
     sys.exit("OpenRouter feed produced no usable entries - aborting.")
 with open(f"{resources}/pricing_openrouter_snapshot.json", "w") as f:
