@@ -41,6 +41,20 @@ Run the complete quality checks before submitting a pull request:
 corepack pnpm verify
 ```
 
+### Pre-push hook
+
+Optional, and recommended if you push to `main` directly. It runs `corepack pnpm verify:rust` —
+the formatting, Clippy, and Rust test steps CI runs — so a change cannot reach a remote with a
+failure CI would catch:
+
+```sh
+corepack pnpm hooks:install
+```
+
+Skip it for a single push with `git push --no-verify`, and remove it with
+`corepack pnpm hooks:uninstall`. It runs on one platform, so a Windows-only or Linux-only failure
+still needs CI.
+
 ## Pull requests
 
 - Keep each pull request focused on one change.

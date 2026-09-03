@@ -20,6 +20,8 @@
     "verify:frontend": "corepack pnpm lint && corepack pnpm check && corepack pnpm test && corepack pnpm build",
     "verify:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --all-targets",
     "verify": "corepack pnpm verify:versions && corepack pnpm verify:contracts && corepack pnpm verify:frontend && corepack pnpm verify:rust",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "hooks:uninstall": "git config --unset core.hooksPath",
     "tauri": "tauri"
   },
   "dependencies": {
