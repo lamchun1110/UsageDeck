@@ -1,0 +1,29 @@
+#!/bin/sh
+# Runs the Rust half of `pnpm verify` before a push leaves this machine.
+#
+# Every CI failure on main so far has been `Lint Rust` (cargo clippy with
+# -D warnings) or `Test Rust`, and each one reached main on a change that never
+# had a pre-merge run: a dead function, a needless borrow, a test that only
+# passes on unix. `verify:rust` is exactly those two steps plus the fmt check,
+# so it catches that class here, in seconds, instead of after the merge commit
+# is already on main.
+#
+# It cannot catch everything: a Windows-only or Linux-only failure still needs
+# CI, because this runs on one platform.
+#
+# Enable:    corepack pnpm hooks:install
+# Skip once: git push --no-verify
+set -eu
+
+# A branch deletion pushes no commits, so there is nothing to check. Git feeds
+# one line per ref on stdin, with an all-zero local sha for a delete.
+pushing_commits=0
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    case "$local_sha" in
+        *[!0]*) pushing_commits=1 ;;
+    esac
+done
+[ "$pushing_commits" -eq 1 ] || exit 0
+
+echo "pre-push: corepack pnpm verify:rust (skip with --no-verify)"
+corepack pnpm verify:rust
