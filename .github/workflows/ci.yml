@@ -211,3 +211,35 @@ jobs:
           path: src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
           retention-days: 14
+
+  # Dependency advisories are the one class of defect that appears without the
+  # code changing, so this runs beside the build rather than inside it: the
+  # matrix would repeat the same lockfile check on five runners and answer the
+  # same way each time. No glibc floor applies here, so it tracks ubuntu-latest.
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # rust-cache carries ~/.cargo/bin, so cargo-audit is restored rather than
+      # recompiled on every run. Keyed apart from the build legs, which cache a
+      # target directory this job never populates.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: audit
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Audits the committed lockfile, so the report covers the versions a
+      # release actually ships rather than whatever a fresh resolve would pick.
+      # Vulnerabilities fail the job; unmaintained and yanked crates report as
+      # warnings, which a Tauri dependency tree carries a steady supply of.
+      - name: Audit Rust dependencies
+        run: cargo audit --file src-tauri/Cargo.lock
