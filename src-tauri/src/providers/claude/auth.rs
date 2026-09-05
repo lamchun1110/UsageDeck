@@ -174,6 +174,48 @@ impl ClaudeCredential {
         pair.finalize().into()
     }
 
+    /// True when this login lives in a credential-store item Claude Code owns
+    /// and writing to it would do harm.
+    ///
+    /// macOS replaces an item's access control list on any write by a process
+    /// other than its owner, whichever API performs the write. Rotating such a
+    /// credential therefore evicts Claude Code's own reader
+    /// (`/usr/bin/security`) and makes the CLI prompt for the login keychain
+    /// password on every subsequent read. Windows refuses the write outright,
+    /// so deferring there replaces a guaranteed failure with a clear notice.
+    ///
+    /// Linux is deliberately excluded: the Secret Service has no equivalent
+    /// per-item access control to disturb, and its logins are the fallback for
+    /// an absent credentials file, so refusing to rotate them would strand the
+    /// account for no gain.
+    pub(super) fn is_foreign_keychain_item(&self) -> bool {
+        cfg!(any(target_os = "macos", target_os = "windows"))
+            && matches!(self.source, CredentialSource::Keychain { .. })
+    }
+
+    /// Builds a login that reports as Claude Code-owned, for tests that drive
+    /// the deferral path. `CredentialSource` is private to this module and a
+    /// real one would need an actual Keychain item, which no test may touch.
+    #[cfg(test)]
+    pub(super) fn keychain_backed_for_test(expires_at_millis: f64) -> Self {
+        Self {
+            oauth: ClaudeOAuth {
+                access_token: Some("access".into()),
+                refresh_token: Some("refresh".into()),
+                expires_at: Some(expires_at_millis),
+                subscription_type: Some("max".into()),
+                rate_limit_tier: None,
+                scopes: Some(vec!["user:profile".into()]),
+            },
+            source: CredentialSource::Keychain {
+                service: "Claude Code-credentials".into(),
+                account: "test".into(),
+            },
+            document: ClaudeCredentialsFile::default(),
+            inference_only: false,
+        }
+    }
+
     pub(super) fn update_and_save(
         &mut self,
         access_token: String,
@@ -761,6 +803,34 @@ mod tests {
         assert!(matches!(error, ClaudeError::CredentialsChanged));
         assert_eq!(credential.oauth.access_token.as_deref(), Some("account-a"));
         assert_eq!(fs::read(path).unwrap(), b"original credential");
+    }
+
+    #[test]
+    fn only_keychain_backed_logins_count_as_owned_by_claude_code() {
+        let build = |source: CredentialSource| ClaudeCredential {
+            oauth: ClaudeOAuth::default(),
+            source,
+            document: ClaudeCredentialsFile::default(),
+            inference_only: false,
+        };
+
+        // Rotating a Keychain item Claude Code owns rewrites its ACL and locks
+        // the CLI out of its own credential, so these are never written. Linux
+        // keeps rotating: its Secret Service has no such access control.
+        assert_eq!(
+            build(CredentialSource::Keychain {
+                service: "Claude Code-credentials".into(),
+                account: "jacky".into(),
+            })
+            .is_foreign_keychain_item(),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+
+        // A credentials file and an environment token carry no ACL to disturb.
+        assert!(
+            !build(CredentialSource::File("credentials.json".into())).is_foreign_keychain_item()
+        );
+        assert!(!build(CredentialSource::Environment).is_foreign_keychain_item());
     }
 
     #[test]
