@@ -376,6 +376,43 @@ impl ClaudeProvider {
             .ok_or(ClaudeError::AccountChanged)
     }
 
+    /// Snapshot returned when a Claude Code-owned login has gone stale.
+    ///
+    /// Rotating it ourselves would rewrite the Keychain item's access control
+    /// list and lock the CLI out of its own credential, so the last good
+    /// figures are shown with a notice until Claude Code refreshes the login on
+    /// its next run. The new token is picked up on the following poll.
+    fn deferred_refresh_snapshot(
+        &self,
+        credential: &ClaudeCredential,
+        usage: crate::models::UsageHistory,
+        mut warnings: Vec<String>,
+        now: chrono::DateTime<Utc>,
+    ) -> ProviderSnapshot {
+        warnings.push(
+            "Claude's saved login needs refreshing; showing the last successful limits until Claude Code signs in again."
+                .into(),
+        );
+        if let Some(mut snapshot) = self.last_good.lock().ok().and_then(|value| value.clone()) {
+            snapshot.usage = usage;
+            snapshot.warnings = warnings;
+            snapshot.notices = vec![deferred_refresh_notice()];
+            snapshot.refreshed_at = now;
+            return snapshot;
+        }
+        ProviderSnapshot {
+            provider_id: self.provider_id().into(),
+            plan: plan_name(credential),
+            quotas: Vec::new(),
+            value_metrics: Vec::new(),
+            status_metrics: Vec::new(),
+            notices: vec![deferred_refresh_notice()],
+            usage,
+            warnings,
+            refreshed_at: now,
+        }
+    }
+
     fn refresh_candidate(
         &self,
         credential: &mut ClaudeCredential,
@@ -436,6 +473,9 @@ impl ClaudeProvider {
         }
         self.activate_live_usage_cache(credential.fingerprint());
         if credential.needs_refresh(now.timestamp_millis()) {
+            if credential.is_foreign_keychain_item() {
+                return Ok(self.deferred_refresh_snapshot(credential, usage, warnings, now));
+            }
             let previous_fingerprint = credential.fingerprint();
             refresh_credential(
                 &self.client,
@@ -486,6 +526,9 @@ impl ClaudeProvider {
         let token = credential.access_token().ok_or(ClaudeError::NotLoggedIn)?;
         let (mut status, mut body, mut retry_after) = self.client.fetch_usage(token, config)?;
         if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+            if credential.is_foreign_keychain_item() {
+                return Ok(self.deferred_refresh_snapshot(credential, usage, warnings, now));
+            }
             let previous_fingerprint = credential.fingerprint();
             refresh_credential(
                 &self.client,
@@ -597,6 +640,17 @@ impl ClaudeProvider {
                 *active = Some(current);
             }
         }
+    }
+}
+
+/// Shown while a Claude Code-owned login is stale and UsageDeck is waiting for
+/// the CLI to rotate it rather than rotating it itself.
+fn deferred_refresh_notice() -> ProviderNotice {
+    ProviderNotice {
+        id: "loginRefreshDeferred".into(),
+        title: "Waiting for Claude Code".into(),
+        message: "Showing the last successful limits · Claude Code refreshes this login when you next use it".into(),
+        tone: ProviderNoticeTone::Warning,
     }
 }
 
@@ -1081,5 +1135,91 @@ mod tests {
         let authorization = server.join().unwrap();
         assert!(matches!(error, ClaudeError::AccountChanged));
         assert_eq!(authorization, "Bearer account-a");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn a_claude_code_owned_login_defers_its_refresh_instead_of_rotating_it() {
+        // Scoped to this test: on a platform that keeps rotating these logins
+        // the test is not compiled, and an unused import is a hard error.
+        use super::auth::{ClaudeCredential, ClaudeCredentialGeneration};
+
+        let directory = tempdir().unwrap();
+        let account_root = directory.path().join("account");
+        fs::create_dir_all(&account_root).unwrap();
+
+        // Nothing may reach this listener. Rotating the login would POST to the
+        // token endpoint, and that write is what rewrites the Keychain item's
+        // access control list and makes the CLI prompt for a password.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let (contacted, was_contacted) = mpsc::channel();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                if stream.is_ok() {
+                    let _ = contacted.send(());
+                }
+            }
+        });
+
+        let storage = Arc::new(Storage::open(&directory.path().join("usagedeck.db")).unwrap());
+        let pricing = Arc::new(
+            PricingStore::new_without_refresh_for_test(directory.path().join("pricing")).unwrap(),
+        );
+        let credential_scope = ClaudeCredentialScope::ConfigDir {
+            path: account_root.clone(),
+            keychain_literal: account_root.to_string_lossy().into_owned(),
+        };
+        let provider = ClaudeProvider::new_scoped(
+            ClaudeRuntimeConfig {
+                definition: definition(),
+                account_identity: accounts::identity_for_scope(&credential_scope),
+                credential_scope,
+                log_roots: vec![account_root],
+                include_standard_logs: false,
+                include_pi: false,
+            },
+            storage,
+            Arc::clone(&pricing),
+            ClaudeClient::new().unwrap(),
+        );
+        let config = ClaudeOAuthConfig {
+            usage_url: format!("{base}/usage"),
+            refresh_url: format!("{base}/token"),
+            client_id: "test-client".into(),
+        };
+
+        let now = Utc::now();
+        // Expired an hour ago, so the pre-emptive refresh path is the one taken.
+        let expired = (now - Duration::hours(1)).timestamp_millis() as f64;
+        let mut credential = ClaudeCredential::keychain_backed_for_test(expired);
+        let mut generation =
+            ClaudeCredentialGeneration::from_candidates(std::slice::from_ref(&credential));
+
+        let snapshot = provider
+            .refresh_candidate(
+                &mut credential,
+                &config,
+                now,
+                &pricing.current(),
+                &mut generation,
+            )
+            .unwrap();
+
+        assert_eq!(
+            snapshot
+                .notices
+                .iter()
+                .map(|notice| notice.id.as_str())
+                .collect::<Vec<_>>(),
+            ["loginRefreshDeferred"],
+            "a deferred login must say so rather than looking like fresh figures"
+        );
+        assert!(
+            was_contacted
+                .recv_timeout(StdDuration::from_millis(250))
+                .is_err(),
+            "a Claude Code-owned login must not be rotated, so nothing may reach the token endpoint"
+        );
     }
 }
