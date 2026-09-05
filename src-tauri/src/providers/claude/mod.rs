@@ -830,9 +830,7 @@ mod tests {
 
     use super::{
         accounts::{self, ClaudeAccount, ClaudeAccountDiscovery},
-        auth::{
-            ClaudeCredential, ClaudeCredentialGeneration, ClaudeCredentialScope, ClaudeOAuthConfig,
-        },
+        auth::{ClaudeCredentialScope, ClaudeOAuthConfig},
         client::ClaudeClient,
         definition, definition_for, rate_limit_notice, runtime_configs, ClaudeError,
         ClaudeProvider, ClaudeRuntimeConfig,
@@ -1142,6 +1140,10 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[test]
     fn a_claude_code_owned_login_defers_its_refresh_instead_of_rotating_it() {
+        // Scoped to this test: on a platform that keeps rotating these logins
+        // the test is not compiled, and an unused import is a hard error.
+        use super::auth::{ClaudeCredential, ClaudeCredentialGeneration};
+
         let directory = tempdir().unwrap();
         let account_root = directory.path().join("account");
         fs::create_dir_all(&account_root).unwrap();

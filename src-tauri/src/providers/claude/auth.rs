@@ -196,7 +196,7 @@ impl ClaudeCredential {
     /// Builds a login that reports as Claude Code-owned, for tests that drive
     /// the deferral path. `CredentialSource` is private to this module and a
     /// real one would need an actual Keychain item, which no test may touch.
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
     pub(super) fn keychain_backed_for_test(expires_at_millis: f64) -> Self {
         Self {
             oauth: ClaudeOAuth {
