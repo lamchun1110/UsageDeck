@@ -154,12 +154,17 @@ gpg --armor --export [email protected]                  # publish this as the pu
 When enabled, also set the repository variable `ENABLE_LINUX_GPG_SIGNING` to `true`.
 The release workflow then:
 
-1. Detached-signs every `.deb` and `.AppImage` with the project key, verifies each
+1. Detached-signs every `.deb`, `.rpm`, and `.AppImage` with the project key, verifies each
    signature round-trip, and uploads the `.asc` files next to the artifacts.
-2. Builds a `SHA256SUMS` manifest covering every installer (Windows, macOS, Linux),
+2. Builds RPM packages carrying an embedded OpenPGP signature from the same key
+   (`TAURI_SIGNING_RPM_KEY`), so `rpmkeys`/`dnf` can verify them directly once the public
+   key is imported. Note: rpm only parses EdDSA header signatures from 4.19 on, so the
+   embedded signature checks out on Fedora 40+/RHEL 10/openSUSE Tumbleweed while rpm 4.18
+   and older report it as invalid; the detached `.asc` covers every distro.
+3. Builds a `SHA256SUMS` manifest covering every installer (Windows, macOS, Linux),
    clearsigns it with the same key, and uploads `SHA256SUMS`, `SHA256SUMS.asc`, and
    `usagedeck-gpg-public.asc` to the release.
-3. Refuses to publish when the secret is missing or the key has no fingerprint.
+4. Refuses to publish when the secret is missing or the key has no fingerprint.
 
 Leaving `ENABLE_LINUX_GPG_SIGNING` unset (or set to `false`) keeps today's behavior:
 the workflow emits a warning and uploads only the updater-signed artifacts.
@@ -180,6 +185,10 @@ sha256sum --strict --check SHA256SUMS
 
 # 3. Verify a specific installer before installing it.
 gpg --verify UsageDeck_0.5.2_amd64.deb.asc UsageDeck_0.5.2_amd64.deb
+
+# RPM packages additionally carry an embedded signature from the same key:
+rpmkeys --import usagedeck-release.asc
+rpmkeys --checksig UsageDeck_0.5.2_x86_64.rpm
 ```
 
 Cross-check the key fingerprint against the announcement published on the

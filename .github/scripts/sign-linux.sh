@@ -30,7 +30,7 @@ gpg --batch --armor --export "$fingerprint" > usagedeck-gpg-public.asc
 
 signed=0
 shopt -s nullglob
-for path in "$bundle_root"/deb/*.deb "$bundle_root"/appimage/*.AppImage; do
+for path in "$bundle_root"/deb/*.deb "$bundle_root"/rpm/*.rpm "$bundle_root"/appimage/*.AppImage; do
   test -f "$path" || continue
   gpg --batch --yes --local-user "$fingerprint" \
     "${passphrase_args[@]}" --armor --detach-sign \
@@ -41,8 +41,8 @@ for path in "$bundle_root"/deb/*.deb "$bundle_root"/appimage/*.AppImage; do
   signed=$((signed + 1))
 done
 
-test "$signed" -ge 2 || {
-  echo "Expected at least two Linux packages (.deb and .AppImage) under $bundle_root." >&2
+test "$signed" -ge 3 || {
+  echo "Expected at least three Linux packages (.deb, .rpm, and .AppImage) under $bundle_root." >&2
   exit 1
 }
 echo "Signed $signed Linux package(s) with key $fingerprint."

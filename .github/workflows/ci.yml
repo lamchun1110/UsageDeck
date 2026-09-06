@@ -212,6 +212,15 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Upload Linux RPM package
+        if: matrix.os == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v7
+        with:
+          name: UsageDeck-Linux-rpm
+          path: src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
+          retention-days: 14
+
   # Dependency advisories are the one class of defect that appears without the
   # code changing, so this runs beside the build rather than inside it: the
   # matrix would repeat the same lockfile check on five runners and answer the

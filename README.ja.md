@@ -35,14 +35,14 @@ UsageDeck は OpenQuota のフォークとして始まり、現在は独立し�
 | ---------------- | ------------------------------------------ | ------------------------------------------------ |
 | Windows          | `_x64-setup.exe` または `_arm64-setup.exe` | x64 と ARM64                                     |
 | macOS            | `_universal.dmg`                           | Universal、Developer ID 署名済み、Apple 公証済み |
-| Linux            | `.AppImage` または `.deb`                  | x64 と ARM64、GPG 分離署名付き                   |
+| Linux            | `.AppImage`、`.deb` または `.rpm`          | x64 と ARM64、GPG 分離署名付き                   |
 
 アプリは自動で更新されます。更新ペイロードはプロジェクト独自のアップデーター鍵で署名されており、これは OS のパッケージ署名とは別の仕組みです。
 
 ### リリース署名
 
 - **macOS:** リポジトリ変数 `ENABLE_MACOS_NATIVE_SIGNING` が `true` の場合、公式リリースは Apple Developer ID 証明書で署名され、Apple による公証が適用されます。署名済みリリースのバンドル ID は `com.lamchun1110.usagedeck` です。リリースワークフローは公開前に、コード署名・Gatekeeper 評価・公証チケット・Hardened Runtime を検証します。
-- **Linux:** すべての `.AppImage` と `.deb` に、ASCII armored の分離署名 `<file>.asc` が付きます。リリースには `SHA256SUMS`、その GPG 署名版である `SHA256SUMS.asc`、検証に必要な公開鍵 `usagedeck-gpg-public.asc` も含まれます。
+- **Linux:** すべての `.AppImage`、`.deb`、`.rpm` に、ASCII armored の分離署名 `<file>.asc` が付きます。リリースには `SHA256SUMS`、その GPG 署名版である `SHA256SUMS.asc`、検証に必要な公開鍵 `usagedeck-gpg-public.asc` も含まれます。
 
 Linux ダウンロードを検証するには:
 

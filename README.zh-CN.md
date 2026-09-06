@@ -41,14 +41,14 @@ UsageDeck 会自动从现有的 OpenQuota 安装中迁移设置、用量历史�
 | ------- | -------------------------------------- | ---------------------------------------------- |
 | Windows | `_x64-setup.exe` 或 `_arm64-setup.exe` | x64 与 ARM64                                   |
 | macOS   | `_universal.dmg`                       | Universal，带 Developer ID 签名并经 Apple 公证 |
-| Linux   | `.AppImage` 或 `.deb`                  | x64 与 ARM64，附 GPG 分离签名                  |
+| Linux   | `.AppImage`、`.deb` 或 `.rpm`          | x64 与 ARM64，附 GPG 分离签名                  |
 
 应用会自动更新。更新包使用项目自己的更新器密钥做了加密签名，这与操作系统的包签名是两回事。
 
 ### 发布签名
 
 - **macOS：** 当仓库变量 `ENABLE_MACOS_NATIVE_SIGNING` 设为 `true` 时，正式发布版会使用 Apple Developer ID 证书签名并经 Apple 公证。已签名版本的 bundle ID 为 `com.lamchun1110.usagedeck`。发布工作流在发布前会验证代码签名、Gatekeeper 评估、公证票据与强化运行时（Hardened Runtime）。
-- **Linux：** 每个 `.AppImage` 和 `.deb` 都有对应的 ASCII 装甲分离签名文件 `<file>.asc`。发布内容还包含 `SHA256SUMS`、它的 GPG 签名副本 `SHA256SUMS.asc`，以及验证所需的公钥 `usagedeck-gpg-public.asc`。
+- **Linux：** 每个 `.AppImage`、`.deb` 和 `.rpm` 都有对应的 ASCII 装甲分离签名文件 `<file>.asc`。发布内容还包含 `SHA256SUMS`、它的 GPG 签名副本 `SHA256SUMS.asc`，以及验证所需的公钥 `usagedeck-gpg-public.asc`。
 
 验证 Linux 下载：
 

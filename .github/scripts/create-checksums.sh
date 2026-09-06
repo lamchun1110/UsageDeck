@@ -30,7 +30,7 @@ gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > checksums-release.json
 
 mkdir -p checksums
 jq -r '.assets[].name
-  | select(test("(-setup\\.exe|\\.AppImage|\\.deb|\\.app\\.tar\\.gz|\\.dmg)$"))' \
+  | select(test("(-setup\\.exe|\\.AppImage|\\.deb|\\.app\\.tar\\.gz|\\.rpm|\\.dmg)$"))' \
   checksums-release.json | sort -u > checksums/installers.txt
 test -s checksums/installers.txt || {
   echo "No installer assets found on $RELEASE_TAG to hash." >&2

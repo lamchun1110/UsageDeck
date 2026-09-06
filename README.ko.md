@@ -35,14 +35,14 @@ UsageDeck은 OpenQuota 포크로 시작해 지금은 독립 프로젝트가 되�
 | ------- | ---------------------------------------- | ---------------------------------------------- |
 | Windows | `_x64-setup.exe` 또는 `_arm64-setup.exe` | x64 및 ARM64                                   |
 | macOS   | `_universal.dmg`                         | 유니버설, Developer ID 서명 및 Apple 공증 완료 |
-| Linux   | `.AppImage` 또는 `.deb`                  | x64 및 ARM64, GPG 분리 서명 포함               |
+| Linux   | `.AppImage`, `.deb` 또는 `.rpm`          | x64 및 ARM64, GPG 분리 서명 포함               |
 
 앱은 스스로 업데이트합니다. 업데이트 페이로드는 프로젝트 자체의 업데이터 키로 서명되며, 이는 운영 체제의 패키지 서명과는 별개입니다.
 
 ### 릴리스 서명
 
 - **macOS:** 저장소 변수 `ENABLE_MACOS_NATIVE_SIGNING`이 `true`일 때 공식 릴리스는 Apple Developer ID 인증서로 서명되고 Apple 공증을 받습니다. 서명된 릴리스의 번들 ID는 `com.lamchun1110.usagedeck`입니다. 릴리스 워크플로는 게시 전에 코드 서명, Gatekeeper 평가, 공증 티켓, Hardened Runtime을 검증합니다.
-- **Linux:** 모든 `.AppImage`와 `.deb`에는 ASCII 아머 분리 서명 `<file>.asc`가 함께 제공됩니다. 릴리스에는 `SHA256SUMS`, GPG로 서명된 `SHA256SUMS.asc`, 검증에 필요한 공개 키 `usagedeck-gpg-public.asc`도 포함됩니다.
+- **Linux:** 모든 `.AppImage`, `.deb`, `.rpm`에는 ASCII 아머 분리 서명 `<file>.asc`가 함께 제공됩니다. 릴리스에는 `SHA256SUMS`, GPG로 서명된 `SHA256SUMS.asc`, 검증에 필요한 공개 키 `usagedeck-gpg-public.asc`도 포함됩니다.
 
 Linux 다운로드를 검증하려면:
 

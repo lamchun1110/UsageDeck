@@ -34,6 +34,19 @@ const signedArtifacts = [
     platforms: ['linux-aarch64-deb'],
   },
   {
+    // RPM file names are dash separated: UsageDeck-0.7.8-1.x86_64.rpm.
+    label: 'Linux x64 RPM package',
+    pattern: /\.x86_64\.rpm$/i,
+    dashSeparatedVersion: true,
+    platforms: ['linux-x86_64-rpm'],
+  },
+  {
+    label: 'Linux ARM64 RPM package',
+    pattern: /\.aarch64\.rpm$/i,
+    dashSeparatedVersion: true,
+    platforms: ['linux-aarch64-rpm'],
+  },
+  {
     label: 'macOS Universal app archive',
     pattern: /_universal\.app\.tar\.gz$/i,
     platforms: [
@@ -47,7 +60,7 @@ const signedArtifacts = [
   },
 ];
 
-const distributablePattern = /(-setup\.exe|\.AppImage|\.deb|\.app\.tar\.gz|\.dmg)$/i;
+const distributablePattern = /(-setup\.exe|\.AppImage|\.deb|\.app\.tar\.gz|\.rpm|\.dmg)$/i;
 
 function findExactlyOne(assets, pattern, label) {
   const matches = assets.filter((asset) => pattern.test(asset.name));
@@ -73,7 +86,8 @@ export function createUpdaterMetadata(release, signatures, repository, tag, vers
 
   for (const definition of signedArtifacts) {
     const asset = findExactlyOne(assets, definition.pattern, definition.label);
-    if (!asset.name.includes(`_${version}_`)) {
+    const versionNeedle = definition.dashSeparatedVersion ? `-${version}-` : `_${version}_`;
+    if (!asset.name.includes(versionNeedle)) {
       throw new Error(
         `${definition.label} does not match release version ${version}: ${asset.name}`,
       );

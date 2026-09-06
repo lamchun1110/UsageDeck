@@ -194,7 +194,7 @@ jobs:
               --verify-tag \
               --title "UsageDeck ${RELEASE_TAG#v}" \
               --generate-notes \
-              --notes $'UsageDeck desktop release for Windows and Linux on x64/ARM64, plus a macOS Universal build.\n\nAutomatic updates are cryptographically signed. Linux in-app updates are supported by AppImage builds; Debian packages update through the package installer.'
+              --notes $'UsageDeck desktop release for Windows and Linux on x64/ARM64, plus a macOS Universal build.\n\nAutomatic updates are cryptographically signed. Linux in-app updates are supported by AppImage builds; Debian and RPM packages update through the package installer.'
           fi
 
           body="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body')"
@@ -235,14 +235,14 @@ jobs:
           - name: Linux x64
             windows: false
             platform: ubuntu-22.04
-            args: --bundles deb,appimage --config src-tauri/tauri.release.conf.json
+            args: --bundles deb,appimage,rpm --config src-tauri/tauri.release.conf.json
             windows-signing-args: ''
             rust-targets: ''
             smoke-artifact-root: src-tauri/target/release/bundle
           - name: Linux ARM64
             windows: false
             platform: ubuntu-22.04-arm
-            args: --target aarch64-unknown-linux-gnu --bundles deb,appimage --config src-tauri/tauri.release.conf.json
+            args: --target aarch64-unknown-linux-gnu --bundles deb,appimage,rpm --config src-tauri/tauri.release.conf.json
             windows-signing-args: ''
             rust-targets: aarch64-unknown-linux-gnu
             smoke-artifact-root: src-tauri/target/aarch64-unknown-linux-gnu/release/bundle
@@ -350,6 +350,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Embeds the project GPG signature into RPM bundles at build time so
+          # dnf/rpmkeys can verify them after importing usagedeck-gpg-public.asc;
+          # sign-linux.sh still adds the detached .asc shared by all Linux packages.
+          TAURI_SIGNING_RPM_KEY: ${{ runner.os == 'Linux' && needs.validate.outputs.linux_gpg_signing == 'true' && secrets.GPG_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_RPM_KEY_PASSPHRASE: ${{ runner.os == 'Linux' && needs.validate.outputs.linux_gpg_signing == 'true' && secrets.GPG_PASSPHRASE || '' }}
           ES_USERNAME: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'esign' && secrets.ES_USERNAME || '' }}
           ES_PASSWORD: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'esign' && secrets.ES_PASSWORD || '' }}
           ES_CREDENTIAL_ID: ${{ runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'esign' && secrets.ES_CREDENTIAL_ID || '' }}
@@ -636,7 +641,7 @@ jobs:
             > release-check/release.json
           jq -r '.assets[]
             | select(
-                .name | test("(-setup\\.exe|\\.AppImage|\\.deb|\\.app\\.tar\\.gz)(\\.sig)?$")
+                .name | test("(-setup\\.exe|\\.AppImage|\\.deb|\\.app\\.tar\\.gz|\\.rpm)(\\.sig)?$")
               )
             | [.id, .name]
             | @tsv' release-check/release.json |
@@ -687,7 +692,8 @@ jobs:
               -x "$signature.minisig"
             verified=$((verified + 1))
           done
-          test "$verified" -eq 7
+          # 2 NSIS installers, 2 debs, 2 AppImages, 2 RPMs, and 1 macOS app archive.
+          test "$verified" -eq 9
 
       - name: Publish signed checksums
         if: needs.validate.outputs.linux_gpg_signing == 'true'

@@ -61,7 +61,7 @@ Grab the file for your platform from the
 | -------- | -------------------------------------- | -------------------------------------------------- |
 | Windows  | `_x64-setup.exe` or `_arm64-setup.exe` | x64 and ARM64                                      |
 | macOS    | `_universal.dmg`                       | Universal, Developer ID signed and Apple notarized |
-| Linux    | `.AppImage` or `.deb`                  | x64 and ARM64, with detached GPG signatures        |
+| Linux    | `.AppImage`, `.deb`, or `.rpm`         | x64 and ARM64, with detached GPG signatures        |
 
 The app updates itself. Update payloads are cryptographically signed with the project's own updater
 key, which is a separate thing from operating-system package signing.
@@ -75,9 +75,11 @@ key, which is a separate thing from operating-system package signing.
   Apple when the `ENABLE_MACOS_NATIVE_SIGNING` repository variable is set to `true`. Signed releases
   use the bundle ID `com.lamchun1110.usagedeck` and are stapled. The release workflow verifies the
   code signature, Gatekeeper assessment, notarization ticket, and hardened runtime before publishing.
-- **Linux:** every `.AppImage` and `.deb` has a matching ASCII-armored detached signature named
-  `<file>.asc`. Releases also include `SHA256SUMS`, its GPG-signed copy `SHA256SUMS.asc`, and
-  `usagedeck-gpg-public.asc`, the public key needed for verification.
+- **Linux:** every `.AppImage`, `.deb`, and `.rpm` has a matching ASCII-armored detached signature
+  named `<file>.asc`. RPM packages additionally carry an embedded OpenPGP signature from the same
+  key, verifiable with `rpmkeys --checksig` on rpm 4.19 or newer (Fedora 40+, RHEL 10,
+  openSUSE Tumbleweed). Releases also include `SHA256SUMS`, its GPG-signed copy `SHA256SUMS.asc`,
+  and `usagedeck-gpg-public.asc`, the public key needed for verification.
 
 To verify a Linux download:
 
