@@ -169,11 +169,20 @@ pub struct LogFile {
     opened: bool,
     disabled: bool,
     write_failures: u32,
+    appends_since_check: u32,
 }
 
 /// Consecutive write failures tolerated before file logging gives up for the
 /// session.
 const WRITE_FAILURE_LIMIT: u32 = 3;
+
+/// Appends between checks that the path still names the open handle.
+///
+/// Deleting or replacing a log leaves the descriptor perfectly writable, so
+/// every later line lands in an unlinked inode nobody can read and the sink
+/// reports success the whole time. Checking costs a `stat`, which is too much
+/// per line and nothing at all spread across this many.
+const REOPEN_CHECK_INTERVAL: u32 = 64;
 
 impl LogFile {
     pub fn new(path: PathBuf, max_bytes: u64) -> Self {
@@ -187,6 +196,7 @@ impl LogFile {
             opened: false,
             disabled: false,
             write_failures: 0,
+            appends_since_check: 0,
         }
     }
 
@@ -218,6 +228,7 @@ impl LogFile {
         if !self.opened {
             self.open()?;
         }
+        self.drop_handle_if_detached();
         // A write failure drops the handle instead of latching the logger off:
         // transient causes (a full disk, an archive momentarily locked by a
         // backup scan) deserve a retry on the next line, not a silent logger
@@ -249,6 +260,50 @@ impl LogFile {
         self.write_failures = 0;
         self.size = self.size.saturating_add(bytes.len() as u64);
         Ok(())
+    }
+
+    /// Drops the handle when the path no longer names the file behind it, so
+    /// the next append reopens through the usual path and recreates the log.
+    /// The counter makes this one `stat` per [`REOPEN_CHECK_INTERVAL`] lines
+    /// rather than one per line.
+    fn drop_handle_if_detached(&mut self) {
+        if self.file.is_none() {
+            return;
+        }
+        self.appends_since_check = self.appends_since_check.saturating_add(1);
+        if self.appends_since_check < REOPEN_CHECK_INTERVAL {
+            return;
+        }
+        self.appends_since_check = 0;
+        if self.path_names_open_file() {
+            return;
+        }
+        // Not a write failure: nothing went wrong with the descriptor, the
+        // file underneath it simply went away. Leaving the failure count
+        // alone keeps an unrelated streak from disabling the logger.
+        self.file = None;
+        self.size = 0;
+    }
+
+    #[cfg(unix)]
+    fn path_names_open_file(&self) -> bool {
+        use std::os::unix::fs::MetadataExt;
+
+        let Some(open) = self.file.as_ref().and_then(|file| file.metadata().ok()) else {
+            // The handle cannot be described; let the reopen decide.
+            return false;
+        };
+        fs::metadata(&self.path)
+            .map(|on_disk| on_disk.ino() == open.ino() && on_disk.dev() == open.dev())
+            .unwrap_or(false)
+    }
+
+    /// Windows keeps a deleted file's name reserved while a handle is open, so
+    /// a replaced log is the case worth catching and presence is the only
+    /// portable signal.
+    #[cfg(not(unix))]
+    fn path_names_open_file(&self) -> bool {
+        self.path.exists()
     }
 
     fn record_write_failure(&mut self) {
@@ -731,6 +786,53 @@ mod tests {
         reopened.open().unwrap();
         assert_eq!(fs::metadata(path).unwrap().len(), 0);
         assert_eq!(fs::metadata(reopened.archive_path()).unwrap().len(), 250);
+    }
+
+    #[test]
+    fn a_deleted_log_file_is_reopened_instead_of_written_into_the_void() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("UsageDeck.log");
+        let mut sink = LogFile::new(path.clone(), 1_000_000);
+        sink.open().unwrap();
+        sink.append("before the deletion").unwrap();
+
+        // Deleting the file leaves the handle perfectly writable, so every
+        // later line lands in an unlinked inode nobody can read and the sink
+        // reports success throughout. Observed in the wild: three days of
+        // logs written to a path that no longer existed.
+        fs::remove_file(&path).unwrap();
+        for index in 0..=super::REOPEN_CHECK_INTERVAL {
+            sink.append(&format!("after the deletion {index}")).unwrap();
+        }
+
+        assert!(path.exists(), "the sink must recreate the log it lost");
+        let recovered = fs::read_to_string(&path).unwrap();
+        assert!(
+            recovered.contains(&format!(
+                "after the deletion {}",
+                super::REOPEN_CHECK_INTERVAL
+            )),
+            "later lines must reach the new file, got: {recovered}"
+        );
+    }
+
+    #[test]
+    fn a_live_log_file_keeps_its_handle_across_the_recheck() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("UsageDeck.log");
+        let mut sink = LogFile::new(path.clone(), 1_000_000);
+        sink.open().unwrap();
+        for index in 0..=super::REOPEN_CHECK_INTERVAL * 2 {
+            sink.append(&format!("line {index}")).unwrap();
+        }
+
+        // Rechecking must not truncate or rotate a file that is simply fine.
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("line 0"),
+            "the recheck must not lose history"
+        );
+        assert!(written.contains(&format!("line {}", super::REOPEN_CHECK_INTERVAL * 2)));
     }
 
     #[test]
