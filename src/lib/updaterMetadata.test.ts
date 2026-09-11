@@ -9,6 +9,10 @@ describe('release updater metadata', () => {
     'UsageDeck_0.2.0_arm64.AppImage',
     'UsageDeck_0.2.0_amd64.deb',
     'UsageDeck_0.2.0_arm64.deb',
+    // RPM file names are dash separated, which is why the metadata script
+    // matches their version differently from every other artifact.
+    'UsageDeck-0.2.0-1.x86_64.rpm',
+    'UsageDeck-0.2.0-1.aarch64.rpm',
     'UsageDeck_0.2.0_universal.app.tar.gz',
   ];
   const release = {
@@ -41,13 +45,17 @@ describe('release updater metadata', () => {
     expect(update.platforms['windows-aarch64'].url).toContain('_arm64-setup.exe');
     expect(update.platforms['linux-aarch64'].url).toContain('_arm64.AppImage');
     expect(update.platforms['darwin-aarch64'].url).toContain('_universal.app.tar.gz');
-    expect(Object.keys(update.platforms)).toHaveLength(16);
+    expect(update.platforms['linux-x86_64-rpm'].url).toContain('.x86_64.rpm');
+    expect(update.platforms['linux-aarch64-rpm'].url).toContain('.aarch64.rpm');
+    expect(Object.keys(update.platforms)).toHaveLength(18);
     expect(Object.keys(update.platforms)).toEqual(
       expect.arrayContaining([
         'windows-x86_64',
         'windows-aarch64',
         'linux-x86_64',
         'linux-aarch64',
+        'linux-x86_64-rpm',
+        'linux-aarch64-rpm',
         'darwin-x86_64',
         'darwin-aarch64',
       ]),
