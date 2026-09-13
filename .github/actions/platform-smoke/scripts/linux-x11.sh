@@ -174,9 +174,14 @@ xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
         close_requested=true
         break
       fi
+      # The status is the one fact worth having here: 0 means the app chose to
+      # quit, and anything above 128 means a signal killed it. Reporting only
+      # that it had gone left two failures on this step indistinguishable.
+      app_status=0
+      wait "${app_pid}" 2>/dev/null || app_status=$?
       cat "${stdio_log}" >&2 || true
       cat "${runtime_log}" >&2 || true
-      echo "UsageDeck exited before its standalone window was closed." >&2
+      echo "UsageDeck exited on its own with status ${app_status} before its standalone window was closed." >&2
       exit 1
     fi
     window_id="$(xdotool search --onlyvisible --limit 1 --pid "${app_pid}" --name "^UsageDeck$" 2>/dev/null || true)"

@@ -354,8 +354,12 @@ requireContracts('Linux packages', linuxPackages, [
   'test "${package_name}" = \'usage-deck\'',
   'sudo apt-get install --yes',
   'sudo apt-get remove --yes',
-  'linux-x11.sh" "${appimage}" unavailable',
-  'linux-x11.sh" "${installed_binary}" available',
+  // Both tray-host modes must stay covered. The calls go through a helper
+  // that retries once, so the chain is asserted in two parts: the helper
+  // reaches linux-x11.sh, and each mode reaches the helper.
+  'linux-x11.sh" "$1" "$2" "$3"',
+  'run_x11_smoke "${appimage}" unavailable',
+  'run_x11_smoke "${installed_binary}" available',
   'linux-wayland.sh',
 ]);
 
@@ -380,7 +384,7 @@ requireContracts('Linux X11 package smoke', linuxX11, [
   'xdotool windowclose',
   'close_attempted=false',
   'close_requested=false',
-  'exited before its standalone window was closed',
+  'exited on its own with status ${app_status} before its standalone window was closed',
   'did not keep a visible standalone window available for closing',
   'did not exit when its standalone window was closed',
 ]);
