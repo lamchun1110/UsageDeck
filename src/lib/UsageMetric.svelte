@@ -69,6 +69,20 @@
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = undefined;
   }
+  function toggleDetail(event: Event) {
+    if (!period?.modelBreakdown?.models.length) return;
+    if (open) {
+      open = false;
+      return;
+    }
+    if (showTimer) clearTimeout(showTimer);
+    showTimer = undefined;
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const estimatedHeight = Math.min(86 + period.modelBreakdown.models.length * 52, 360);
+    detailTop = Math.max(8, Math.min(rect.bottom + 7, window.innerHeight - estimatedHeight - 8));
+    open = true;
+  }
   onDestroy(() => {
     if (showTimer) clearTimeout(showTimer);
     if (hideTimer) clearTimeout(hideTimer);
@@ -98,10 +112,12 @@
     class:usage-reading-interactive={period?.modelBreakdown?.models.length}
     data-tooltip={valueTooltip(period)}
     disabled={!period?.modelBreakdown?.models.length}
+    aria-expanded={period?.modelBreakdown?.models.length ? open : undefined}
     onmouseenter={scheduleShow}
     onmouseleave={scheduleHide}
     onfocus={scheduleShow}
-    onblur={scheduleHide}>{reading(period)}</button
+    onblur={scheduleHide}
+    onclick={toggleDetail}>{reading(period)}</button
   >
 </div>
 
@@ -154,7 +170,7 @@
       padding: 0 1px;
       border-radius: 6px;
       outline: none;
-      cursor: default;
+      cursor: pointer;
       transition:
         background-color 120ms ease,
         box-shadow 120ms ease;
@@ -169,7 +185,7 @@
     .usage-label-warning {
       display: inline-block;
       margin-left: 4px;
-      color: var(--meter-warning);
+      color: var(--warning);
       font-style: normal;
       font-size: 9px;
       transform: translateY(-1px);

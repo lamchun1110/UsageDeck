@@ -262,7 +262,7 @@
       border-radius: 12px;
       color: var(--text);
       background: color-mix(in srgb, var(--tray) 96%, transparent);
-      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
+      box-shadow: var(--shadow-popover);
       backdrop-filter: blur(20px);
       animation: detail-in 180ms ease-out both;
     }

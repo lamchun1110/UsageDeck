@@ -90,15 +90,8 @@
     aria-label={t('quota.sectionAria', { label: definition.label })}
   >
     <div class="metric__heading"><h2>{definition.label}</h2></div>
-    <div class="meter-shell">
-      <div
-        class="meter"
-        role="progressbar"
-        aria-label={t('quota.usedAria', { label: definition.label })}
-        aria-valuemin="0"
-        aria-valuemax="100"
-        aria-valuenow="0"
-      ></div>
+    <div class="meter-shell" aria-hidden="true">
+      <div class="meter"></div>
     </div>
     <div class="metric__reading">
       <span>{t('quota.noData')}</span><span>{t('quota.resetUnavailable')}</span>

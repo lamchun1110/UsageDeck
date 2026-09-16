@@ -550,9 +550,10 @@
     }
 
     .shortcut-field button {
-      max-width: 115px;
+      max-width: 168px;
       padding: 4px 7px;
       overflow: hidden;
+      flex: 0 1 auto;
       border: 1px solid var(--separator);
       border-radius: 6px;
       color: var(--secondary);

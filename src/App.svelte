@@ -82,6 +82,7 @@
   let settingsResetConfirmationOpen = $state(false);
   let resettingCustomization = $state(false);
   let resettingAllSettings = $state(false);
+  let providerResetConfirmationId = $state<string | null>(null);
   let resettingProviderId = $state<string | null>(null);
   let showAbout = $state(false);
   let shareTimer: ReturnType<typeof setTimeout> | undefined;
@@ -469,6 +470,11 @@
     if (screen.startsWith('provider:')) return providerDisplayName(screen.slice(9));
     return screen === 'settings' ? t('app.title.settings') : t('app.title.customize');
   }
+  function mainPopoverAriaLabel() {
+    if (screen === 'dashboard') return t('app.dashboardAria');
+    if (screen === 'settings') return t('app.settingsAria');
+    return t('app.customizeAria', { provider: topBarTitle() });
+  }
   function openAbout() {
     showAbout = true;
   }
@@ -651,7 +657,7 @@
   class="popover"
   class:popover--floating={floatingWindow}
   class:popover--macos={floatingWindow && platform === 'macos'}
-  aria-label={t('app.dashboardAria')}
+  aria-label={mainPopoverAriaLabel()}
   oncontextmenu={(event) => {
     if (event.target instanceof Element && event.target.closest('input, textarea')) return;
     event.preventDefault();
@@ -710,7 +716,7 @@
             class="text-button"
             type="button"
             disabled={resettingProviderId !== null}
-            onclick={() => resetProviderCustomization(screen.slice(9))}
+            onclick={() => (providerResetConfirmationId = screen.slice(9))}
             aria-label={t('app.resetProviderAria', { provider: topBarTitle() })}
             data-tooltip={t('app.resetProviderAria', { provider: topBarTitle() })}
             ><Icon name="reset" size={15} strokeWidth={2} /></button
@@ -909,6 +915,16 @@
                 <button class="menu-item" type="button" onclick={() => void checkForUpdates(true)}
                   ><Icon name="refresh" /><span>{t('settings.btn.checkUpdates')}</span></button
                 >
+                <button
+                  class="menu-item"
+                  type="button"
+                  aria-label={t('app.menu.refresh')}
+                  disabled={anyRefreshing}
+                  onclick={() => void refresh()}
+                  ><Icon name="refresh" /><span>{t('app.menu.refresh')}</span><kbd
+                    >{shortcuts.refresh}</kbd
+                  ></button
+                >
                 <hr />
                 <button class="menu-item" type="button" onclick={openAbout}
                   ><Icon name="about" /><span>{t('app.menu.about')}</span></button
@@ -942,6 +958,25 @@
         pending={resettingCustomization}
         onConfirm={() => void confirmCustomizationReset()}
         onCancel={() => (resetConfirmationOpen = false)}
+      />
+    {/if}
+
+    {#if providerResetConfirmationId}
+      <ConfirmationSheet
+        title={t('app.sheet.providerResetTitle', {
+          provider: providerDisplayName(providerResetConfirmationId),
+        })}
+        message={t('app.sheet.providerResetMessage', {
+          provider: providerDisplayName(providerResetConfirmationId),
+        })}
+        confirmLabel={t('app.sheet.resetAll')}
+        pending={resettingProviderId !== null}
+        onConfirm={() => {
+          const id = providerResetConfirmationId;
+          providerResetConfirmationId = null;
+          if (id) void resetProviderCustomization(id);
+        }}
+        onCancel={() => (providerResetConfirmationId = null)}
       />
     {/if}
 
@@ -1104,7 +1139,7 @@
       border-radius: 7px;
       color: var(--secondary);
       background: transparent;
-      cursor: default;
+      cursor: pointer;
       place-items: center;
       transition:
         color 120ms ease,
@@ -1272,13 +1307,13 @@
       position: absolute;
       right: 0;
       bottom: 36px;
-      z-index: 10;
+      z-index: var(--z-menu);
       width: 130px;
       padding: 4px;
       border: 1px solid var(--separator);
       border-radius: 9px;
       background: var(--tray);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+      box-shadow: var(--shadow-popover);
     }
 
     .options-menu button {
@@ -1290,9 +1325,16 @@
       background: none;
       font-size: 11px;
       text-align: left;
+      cursor: pointer;
     }
 
     .options-menu button:hover {
+      background: var(--button-hover);
+    }
+
+    .options-menu button:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--meter-fill) 55%, transparent);
+      outline-offset: -1px;
       background: var(--button-hover);
     }
 
@@ -1496,13 +1538,20 @@
       padding: 6px;
       border: 0;
       border-radius: 10px;
-      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+      box-shadow: var(--shadow-popover);
       transform-origin: bottom right;
       animation: menu-in 180ms ease-out both;
     }
 
     .options-menu button {
       font-size: 11px;
+      cursor: pointer;
+    }
+
+    .options-menu button:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--meter-fill) 55%, transparent);
+      outline-offset: -1px;
+      background: var(--button-hover);
     }
 
     .screen-header {
@@ -1625,7 +1674,7 @@
       border: 1px solid var(--separator);
       border-radius: 9px;
       background: var(--tray);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+      box-shadow: var(--shadow-popover);
       transform-origin: bottom right;
       animation: menu-in 160ms ease-out both;
     }
@@ -1646,7 +1695,7 @@
       position: absolute;
       right: 14px;
       bottom: 62px;
-      z-index: 90;
+      z-index: var(--z-menu);
       display: flex;
       align-items: center;
       gap: 6px;
@@ -1655,7 +1704,7 @@
       border-radius: 999px;
       color: var(--text);
       background: color-mix(in srgb, var(--tray) 96%, transparent);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+      box-shadow: var(--shadow-popover);
       font-size: 10px;
       animation: detail-in var(--motion-spring) both;
     }

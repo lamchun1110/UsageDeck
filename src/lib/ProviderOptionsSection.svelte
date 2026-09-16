@@ -78,7 +78,7 @@
   }
 
   .setting-row + .setting-row {
-    border-top: 1px solid var(--divider);
+    border-top: 1px solid var(--separator);
   }
 
   .setting-row span {

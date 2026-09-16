@@ -81,7 +81,7 @@
     position: absolute;
     top: calc(100% + 7px);
     left: 50%;
-    z-index: 50;
+    z-index: var(--z-tooltip);
     width: max-content;
     max-width: min(190px, calc(100vw - 24px));
     padding: 5px 7px;
@@ -89,7 +89,7 @@
     border-radius: 6px;
     color: var(--text);
     background: color-mix(in srgb, var(--tray) 96%, transparent);
-    box-shadow: 0 5px 18px rgba(0, 0, 0, 0.24);
+    box-shadow: var(--shadow-popover);
     content: attr(data-tooltip);
     font-size: 10px;
     font-weight: 400;
@@ -172,7 +172,7 @@
   .pointer-reorder-layer {
     position: fixed;
     inset: 0;
-    z-index: 9999;
+    z-index: var(--z-reorder);
     overflow: visible;
     pointer-events: none;
     isolation: isolate;

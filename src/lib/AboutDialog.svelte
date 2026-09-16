@@ -47,7 +47,7 @@
     border-radius: 16px;
     color: var(--text);
     background: var(--tray);
-    box-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-sheet);
     flex-direction: column;
     animation: detail-in var(--motion-spring) both;
   }
@@ -55,6 +55,7 @@
   .about-card h1 {
     margin: 10px 0 2px;
     font-size: 17px;
+    text-wrap: balance;
   }
 
   .about-card p,
@@ -63,6 +64,7 @@
     color: var(--secondary);
     font-size: 10px;
     text-align: center;
+    text-wrap: balance;
   }
 
   .about-card__close {

@@ -22,16 +22,22 @@
   dismissible={!pending}
   onDismiss={onCancel}
 >
-  <span class="confirmation-sheet__icon"><Icon name="warning" size={18} strokeWidth={1.9} /></span>
-  <div class="confirmation-sheet__copy">
-    <h1 id="confirmation-title">{title}</h1>
-    <p id="confirmation-message">{message}</p>
-  </div>
-  <div class="confirmation-sheet__actions">
-    <button type="button" disabled={pending} onclick={onCancel}>{t('sheet.cancel')}</button>
-    <button class="confirmation-sheet__confirm" type="button" disabled={pending} onclick={onConfirm}
-      >{pending ? t('sheet.pending') : confirmLabel}</button
+  <div class="confirmation-sheet">
+    <span class="confirmation-sheet__icon"><Icon name="warning" size={18} strokeWidth={1.9} /></span
     >
+    <div class="confirmation-sheet__copy">
+      <h1 id="confirmation-title">{title}</h1>
+      <p id="confirmation-message">{message}</p>
+    </div>
+    <div class="confirmation-sheet__actions">
+      <button type="button" disabled={pending} onclick={onCancel}>{t('sheet.cancel')}</button>
+      <button
+        class="confirmation-sheet__confirm"
+        type="button"
+        disabled={pending}
+        onclick={onConfirm}>{pending ? t('sheet.pending') : confirmLabel}</button
+      >
+    </div>
   </div>
 </Sheet>
 
@@ -64,6 +70,7 @@
       font-size: 13px;
       font-weight: 650;
       letter-spacing: -0.01em;
+      text-wrap: balance;
     }
 
     .confirmation-sheet p {
@@ -71,6 +78,7 @@
       color: var(--secondary);
       font-size: 11px;
       line-height: 15px;
+      text-wrap: balance;
     }
 
     .confirmation-sheet__actions {

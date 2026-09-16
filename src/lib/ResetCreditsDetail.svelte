@@ -222,7 +222,7 @@
     .reset-credits-detail {
       position: fixed;
       right: 8px;
-      z-index: 100;
+      z-index: var(--z-popover);
       box-sizing: border-box;
       width: 250px;
       max-height: calc(100vh - 16px);
@@ -231,9 +231,7 @@
       border-radius: 11px;
       color: var(--text);
       background: color-mix(in srgb, var(--tray) 98%, transparent);
-      box-shadow:
-        0 10px 28px rgba(0, 0, 0, 0.22),
-        0 2px 7px rgba(0, 0, 0, 0.12);
+      box-shadow: var(--shadow-popover);
       backdrop-filter: blur(16px);
       animation: reset-detail-in 120ms ease-out both;
     }
@@ -315,7 +313,7 @@
       background: var(--card);
       font: inherit;
       font-size: 10px;
-      cursor: default;
+      cursor: pointer;
     }
 
     .reset-use {

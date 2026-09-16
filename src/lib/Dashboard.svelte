@@ -263,10 +263,23 @@
   }
   function openProviderMenu(event: MouseEvent, providerId: string) {
     event.preventDefault();
+    event.stopPropagation();
     metricMenu = null;
     const focusFirstItem = event.button !== 2;
     const provider = settings.providers.find((item) => item.id === providerId);
     const menuHeight = provider && canRenameProvider(provider.id, renamableProviderIds) ? 204 : 174;
+    const trigger =
+      event.target instanceof Element ? event.target.closest('button.provider-actions') : null;
+    if (trigger) {
+      const rect = trigger.getBoundingClientRect();
+      providerMenu = {
+        id: providerId,
+        x: Math.max(6, Math.min(rect.right - 190, window.innerWidth - 196)),
+        y: Math.max(6, Math.min(rect.bottom + 6, window.innerHeight - menuHeight)),
+      };
+      queueMicrotask(() => focusContextMenu(true));
+      return;
+    }
     providerMenu = {
       id: providerId,
       x: Math.max(6, Math.min(event.clientX, window.innerWidth - 196)),
@@ -532,6 +545,16 @@
           {/if}
         </span>
         <span class="provider-mark"><ProviderIcon providerId={provider.id} size={17} /></span>
+        <button
+          type="button"
+          class="provider-actions"
+          aria-label={t('dashboard.provider.actionsAria', {
+            provider: providerDisplayName(provider.id),
+          })}
+          aria-haspopup="menu"
+          onclick={(event) => openProviderMenu(event, provider.id)}
+          ><Icon name="more" size={14} strokeWidth={2} /></button
+        >
       </header>
       <section
         class="provider-card"
@@ -789,8 +812,9 @@
 {/if}
 
 {#if enabledProviders.length === 0}
-  <section class="empty-dashboard">
+  <section class="empty-dashboard" aria-label={t('dashboard.empty')}>
     <span>{t('dashboard.empty')}</span>
+    <button type="button" onclick={onCustomize}>{t('dashboard.emptyCta')}</button>
   </section>
 {/if}
 
@@ -826,6 +850,45 @@
       margin-left: auto;
       color: var(--secondary);
       place-items: center;
+    }
+
+    /* Visible affordance for the right-click provider menu. */
+    .provider-actions {
+      display: grid;
+      width: 22px;
+      height: 22px;
+      flex: 0 0 22px;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      color: var(--secondary);
+      background: transparent;
+      cursor: pointer;
+      place-items: center;
+      opacity: 0;
+    }
+
+    .provider-header:hover .provider-actions,
+    .provider-header:focus-within .provider-actions,
+    .provider-actions:focus-visible {
+      opacity: 1;
+    }
+
+    .provider-actions:hover {
+      color: var(--text);
+      background: var(--button-hover);
+    }
+
+    .provider-actions:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--meter-fill) 55%, transparent);
+      outline-offset: 1px;
+    }
+
+    /* Touch and pen users never hover: keep the actions button reachable. */
+    @media (pointer: coarse) {
+      .provider-actions {
+        opacity: 0.65;
+      }
     }
 
     .provider-status-slot {
@@ -1164,6 +1227,8 @@
       min-height: 0;
       align-items: center;
       justify-content: center;
+      flex-direction: column;
+      gap: 10px;
       padding: 24px 16px;
       color: var(--secondary);
       text-align: center;
@@ -1177,6 +1242,26 @@
     .empty-dashboard span {
       width: 100%;
       font-size: 12px;
+    }
+
+    .empty-dashboard button {
+      padding: 6px 14px;
+      border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+      border-radius: 8px;
+      color: var(--text);
+      background: var(--card);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .empty-dashboard button:hover {
+      background: var(--card-hover);
+    }
+
+    .empty-dashboard button:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--meter-fill) 65%, transparent);
+      outline-offset: 2px;
     }
 
     .warning {
@@ -1322,13 +1407,13 @@
 
     .context-menu {
       position: fixed;
-      z-index: 80;
+      z-index: var(--z-menu);
       width: 190px;
       padding: 4px;
       border: 1px solid var(--separator);
       border-radius: 10px;
       background: color-mix(in srgb, var(--tray) 97%, transparent);
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+      box-shadow: var(--shadow-popover);
       backdrop-filter: blur(18px);
       animation: menu-in 180ms ease-out both;
     }
@@ -1349,6 +1434,11 @@
       background: transparent;
       font-size: 11px;
       text-align: left;
+      cursor: pointer;
+    }
+
+    .context-menu button:disabled {
+      cursor: default;
     }
 
     .context-menu button.danger {

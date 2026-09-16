@@ -59,7 +59,7 @@
     }
 
     .status-badge--warning {
-      color: var(--meter-warning);
+      color: var(--warning);
       background: color-mix(in srgb, var(--meter-warning) 12%, transparent);
     }
 

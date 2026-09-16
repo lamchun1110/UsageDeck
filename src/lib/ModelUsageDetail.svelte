@@ -81,7 +81,7 @@
     .model-usage-detail {
       position: fixed;
       right: 8px;
-      z-index: 100;
+      z-index: var(--z-popover);
       box-sizing: border-box;
       width: 280px;
       max-height: calc(100vh - 16px);
@@ -91,7 +91,7 @@
       border-radius: 12px;
       color: var(--text);
       background: color-mix(in srgb, var(--tray) 97%, transparent);
-      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
+      box-shadow: var(--shadow-popover);
       animation: model-detail-in 120ms ease-out both;
     }
 

@@ -269,7 +269,7 @@
 
     .select-menu__list {
       position: fixed;
-      z-index: 1000;
+      z-index: var(--z-select);
       width: max-content;
       min-width: max(var(--select-menu-trigger-width), 132px);
       max-width: min(240px, calc(100vw - 16px));
@@ -280,9 +280,7 @@
       border: 1px solid var(--separator);
       border-radius: 8px;
       background: color-mix(in srgb, var(--tray) 90%, transparent);
-      box-shadow:
-        0 12px 32px rgba(0, 0, 0, 0.2),
-        0 2px 8px rgba(0, 0, 0, 0.1);
+      box-shadow: var(--shadow-popover);
       backdrop-filter: blur(22px) saturate(1.35);
       transform-origin: top right;
       will-change: transform, opacity;

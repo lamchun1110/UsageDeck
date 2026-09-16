@@ -108,7 +108,8 @@ describe('native UI language contract', () => {
     // The English catalog carries the canonical wording these surfaces show.
     expect(enMessages).toContain("'dashboard.welcome.title': 'Welcome to UsageDeck'");
     expect(enMessages).toContain("'dashboard.welcome.openCustomize': 'Open Customize'");
-    expect(enMessages).toContain("'dashboard.empty': 'Turn on Customize to choose what to show.'");
+    expect(enMessages).toContain("'dashboard.empty': 'Open Customize to choose what to show.'");
+    expect(enMessages).toContain("'dashboard.emptyCta': 'Open Customize'");
     expect(enMessages).toContain("'dashboard.menu.customize': 'Customize…'");
     expect(dashboard).not.toContain('Providers Detected');
     expect(dashboard).not.toContain('Starter Provider');

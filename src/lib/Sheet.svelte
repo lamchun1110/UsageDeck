@@ -135,10 +135,10 @@
   :global {
     .sheet-backdrop {
       position: absolute;
-      z-index: 120;
+      z-index: var(--z-sheet);
       display: grid;
       padding: 48px 18px 18px;
-      background: color-mix(in srgb, #000 24%, transparent);
+      background: var(--scrim);
       backdrop-filter: blur(7px) saturate(0.9);
       animation: sheet-backdrop-in var(--motion-switch) both;
       inset: 0;
@@ -151,7 +151,7 @@
     }
 
     .sheet-backdrop--plain {
-      background: rgba(0, 0, 0, 0.28);
+      background: var(--scrim-strong);
       backdrop-filter: blur(6px);
     }
 
@@ -162,9 +162,7 @@
       border-radius: 15px;
       color: var(--text);
       background: color-mix(in srgb, var(--tray) 96%, transparent);
-      box-shadow:
-        0 22px 60px rgba(0, 0, 0, 0.3),
-        0 2px 8px rgba(0, 0, 0, 0.14);
+      box-shadow: var(--shadow-sheet);
       backdrop-filter: blur(24px) saturate(1.18);
       animation: sheet-surface-in var(--motion-spring) both;
     }

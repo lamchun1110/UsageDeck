@@ -655,6 +655,7 @@ describe('UsageDeck dashboard', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Customize' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Customize Codex' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Reset Codex' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Reset All' }));
 
     expect(mocks.invoke).toHaveBeenCalledWith('reset_provider_customization', {
       providerId: 'codex',
@@ -1367,7 +1368,7 @@ describe('UsageDeck dashboard', () => {
     const optionsSummary = screen.getByLabelText('Open options');
     const optionsMenu = optionsSummary.closest('details')!;
     await fireEvent.click(optionsSummary);
-    const shareSummary = screen.getByText('Share Screenshot').closest('summary')!;
+    const shareSummary = screen.getByText('Copy Share Card').closest('summary')!;
     const shareMenu = shareSummary.closest('details')!;
     await fireEvent.click(shareSummary);
     expect(optionsMenu).toHaveAttribute('open');
@@ -1636,7 +1637,7 @@ describe('UsageDeck dashboard', () => {
       clientX: 120,
       clientY: 180,
     });
-    expect(screen.getByRole('menuitem', { name: 'Share Screenshot' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Copy Share Card' })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Customize…' }));
     expect(screen.getByRole('heading', { name: 'Codex' })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Back' }));

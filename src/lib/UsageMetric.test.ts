@@ -121,4 +121,31 @@ describe('UsageMetric model detail', () => {
       'data-tooltip',
     );
   });
+
+  it('toggles the model detail open and shut on click', async () => {
+    vi.useFakeTimers();
+    render(UsageMetric, {
+      label: 'Today',
+      period: {
+        tokens: 2_000,
+        estimatedCostUsd: 0.04,
+        costEstimated: true,
+        estimateComplete: true,
+        unknownModels: [],
+        modelBreakdown: {
+          sourceNote: 'From your Codex logs (estimated)',
+          models: [{ model: 'gpt-5.4', totalTokens: 2_000, costUsd: 0.04 }],
+        },
+      },
+    });
+
+    const reading = screen.getByRole('button', { name: '$0.04 · 2K tokens' });
+    await fireEvent.click(reading);
+    expect(reading).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('tooltip', { name: 'Today model usage' })).toHaveTextContent('gpt-5.4');
+
+    await fireEvent.click(reading);
+    expect(reading).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('tooltip', { name: 'Today model usage' })).not.toBeInTheDocument();
+  });
 });

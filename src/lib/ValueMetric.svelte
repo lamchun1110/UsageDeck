@@ -208,7 +208,7 @@
       color: inherit;
       background: none;
       font: inherit;
-      cursor: default;
+      cursor: pointer;
       outline: none;
       transition:
         background-color 120ms ease,

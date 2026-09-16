@@ -7,6 +7,7 @@
   import type { ProviderCatalogIndex } from './metrics';
   import Icon from './Icon.svelte';
   import ProviderIcon from './ProviderIcon.svelte';
+  import SelectMenu from './SelectMenu.svelte';
   import { reorderFlip } from './motion';
   import { pointerReorder } from './pointerReorder';
 
@@ -81,17 +82,15 @@
 <section class="screen customize-screen" aria-label={t('app.title.customize')}>
   <p class="account-add-hint">{t('settings.account.addHint')}</p>
   <div class="account-add-row">
-    <select
+    <SelectMenu
+      label={t('settings.account.familyAria')}
       value={activeAccountFamily ?? ''}
-      aria-label={t('settings.account.familyAria')}
-      disabled={addingAccount}
-      onchange={(e) => (activeAccountFamily = (e.currentTarget as HTMLSelectElement).value || null)}
-    >
-      <option value="">{t('settings.account.chooseFamily')}</option>
-      {#each apiKeyFamilies as family (family)}
-        <option value={family}>{providerDisplayName(family)}</option>
-      {/each}
-    </select>
+      options={[
+        { value: '', label: t('settings.account.chooseFamily') },
+        ...apiKeyFamilies.map((family) => ({ value: family, label: providerDisplayName(family) })),
+      ]}
+      onChange={(value) => (activeAccountFamily = value || null)}
+    />
     {#if activeAccountFamily}
       <input
         placeholder={t('settings.account.namePlaceholder')}
@@ -193,6 +192,49 @@
 
 <style>
   :global {
+    .account-add-hint {
+      margin: 0 0 8px;
+      color: var(--secondary);
+      font-size: 11px;
+      line-height: 15px;
+    }
+
+    .account-add-row {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding: 12px;
+      border: 1px solid var(--separator);
+      border-radius: 12px;
+      background: var(--card);
+    }
+
+    .account-add-row input {
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+      padding: 7px 9px;
+      border: 1px solid var(--separator);
+      border-radius: 8px;
+      outline: none;
+      color: var(--text);
+      background: var(--card);
+      font: inherit;
+      font-size: 12px;
+    }
+
+    .account-add-row input:focus {
+      border-color: var(--meter-fill);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--meter-fill) 20%, transparent);
+    }
+
+    .account-error {
+      margin: -4px 0 8px;
+      color: var(--error);
+      font-size: 11px;
+      line-height: 15px;
+    }
+
     .provider-list-row {
       display: flex;
       min-height: 52px;

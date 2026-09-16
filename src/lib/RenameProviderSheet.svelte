@@ -58,6 +58,7 @@
       font-size: 13px;
       font-weight: 650;
       letter-spacing: -0.01em;
+      text-wrap: balance;
     }
 
     form input {
@@ -84,6 +85,7 @@
       color: var(--secondary);
       font-size: 11px;
       line-height: 15px;
+      text-wrap: balance;
     }
 
     .rename-sheet__actions {

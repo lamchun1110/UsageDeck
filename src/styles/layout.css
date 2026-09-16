@@ -20,14 +20,11 @@
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: 12px;
   }
 
   .metric__heading h2,
   .metric__heading > span {
     margin: 0;
-    font-size: 13px;
-    line-height: 17px;
   }
 
   .metric__heading h2 {
@@ -111,12 +108,9 @@
   .settings-section h2,
   .metric-section h2 {
     margin: 0;
-    padding: 7px 10px 4px;
+    padding: 0;
     color: var(--secondary);
-    font-size: 9px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
 
   .chevron,

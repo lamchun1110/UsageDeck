@@ -11,6 +11,7 @@
   import ProviderIcon from './ProviderIcon.svelte';
   import ProviderNameSection from './ProviderNameSection.svelte';
   import ProviderOptionsSection from './ProviderOptionsSection.svelte';
+  import SelectMenu from './SelectMenu.svelte';
   import { reorderFlip } from './motion';
   import { pointerReorder } from './pointerReorder';
   import { canRenameProvider } from './providerNames';
@@ -350,15 +351,16 @@
           {#if scopeSelectable}
             <label class="kickstart-scope">
               <span>{t('settings.kickstart.scopeLabel')}</span>
-              <select
+              <SelectMenu
+                label={t('settings.kickstart.scopeLabel')}
                 value={scopeValue()}
-                aria-label={t('settings.kickstart.scopeLabel')}
-                onchange={(event) => changeScope(event.currentTarget.value)}
-              >
-                <option value="session">{t('settings.kickstart.scope.session')}</option>
-                <option value="weekly">{windowScopeLabels.windowOnly}</option>
-                <option value="both">{windowScopeLabels.both}</option>
-              </select>
+                options={[
+                  { value: 'session', label: t('settings.kickstart.scope.session') },
+                  { value: 'weekly', label: windowScopeLabels.windowOnly },
+                  { value: 'both', label: windowScopeLabels.both },
+                ]}
+                onChange={(value) => changeScope(value)}
+              />
             </label>
           {/if}
         </div>
@@ -562,22 +564,6 @@
       border-top: 1px solid var(--separator);
       font-size: 10px;
       color: var(--secondary);
-    }
-
-    .kickstart-scope select {
-      flex: 0 1 auto;
-      max-width: 60%;
-      padding: 4px 8px;
-      border: 1px solid var(--separator);
-      border-radius: 6px;
-      background: color-mix(in srgb, var(--card) 75%, var(--tray));
-      color: var(--text);
-      font-size: 10px;
-      outline: none;
-    }
-
-    .kickstart-scope select:focus {
-      box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--meter-fill) 55%, transparent);
     }
 
     .customization-pill .symbol-icon {

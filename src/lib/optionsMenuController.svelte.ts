@@ -11,10 +11,31 @@ export class OptionsMenuController {
     const menu = (event.currentTarget as HTMLElement).closest<HTMLDetailsElement>(
       'details.options-menu',
     );
-    if (!menu || event.key !== 'Escape' || !menu.open) return;
+    if (!menu || !menu.open) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.close(true);
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = [...menu.querySelectorAll<HTMLElement>('.menu-item:not(:disabled)')];
+    if (items.length === 0) return;
     event.preventDefault();
-    event.stopPropagation();
-    this.close(true);
+    const current = items.indexOf(document.activeElement as HTMLElement);
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? items.length - 1
+          : event.key === 'ArrowDown'
+            ? current < 0
+              ? 0
+              : (current + 1) % items.length
+            : current < 0
+              ? items.length - 1
+              : (current - 1 + items.length) % items.length;
+    items[next].focus();
   }
 
   handleWindowPointerDown(event: PointerEvent) {

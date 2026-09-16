@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  // Unique ids for the clear-filled knockout mask; one per icon instance.
+  let clearMaskUid = 0;
+</script>
+
 <script lang="ts">
   type IconName =
     | 'about'
@@ -14,6 +19,7 @@
     | 'grip-dots'
     | 'grip-lines'
     | 'lock'
+    | 'more'
     | 'pin'
     | 'pin-filled'
     | 'external-link'
@@ -36,6 +42,8 @@
   }
 
   let { name, size = 16, strokeWidth = 1.8 }: Props = $props();
+  clearMaskUid += 1;
+  const clearMaskId = `clear-filled-knockout-${clearMaskUid}`;
 </script>
 
 <svg
@@ -94,6 +102,14 @@
     /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
   {:else if name === 'lock'}
     <rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" />
+  {:else if name === 'more'}
+    <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle
+      cx="12"
+      cy="12"
+      r="1.4"
+      fill="currentColor"
+      stroke="none"
+    /><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
   {:else if name === 'pin'}
     <path d="M9 3h6v4.2c0 1.7.7 3.1 2 4.3V13H7v-1.5c1.3-1.2 2-2.6 2-4.3V3Z" /><path d="M12 13v8" />
   {:else if name === 'pin-filled'}
@@ -109,10 +125,19 @@
   {:else if name === 'check'}
     <path d="m5 12 4 4L19 6" />
   {:else if name === 'clear-filled'}
-    <circle cx="12" cy="12" r="9" fill="currentColor" stroke="none" /><path
-      d="m9 9 6 6m0-6-6 6"
-      stroke="var(--tray)"
-      stroke-width="2"
+    <mask id={clearMaskId}>
+      <rect width="24" height="24" fill="white" /><path
+        d="m9 9 6 6m0-6-6 6"
+        stroke="black"
+        stroke-width="2.4"
+      />
+    </mask><circle
+      cx="12"
+      cy="12"
+      r="9"
+      fill="currentColor"
+      stroke="none"
+      mask={`url(#${clearMaskId})`}
     />
   {:else if name === 'close'}
     <path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5" />
