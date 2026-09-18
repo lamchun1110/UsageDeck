@@ -5195,7 +5195,7 @@ dependencies = [
 
 [[package]]
 name = "usagedeck"
-version = "0.7.8"
+version = "0.7.9"
 dependencies = [
  "base64 0.23.1",
  "chrono",
