@@ -67,7 +67,8 @@
   let bootstrapFailed = $state(false);
   // Refresh liveness lives outside viewState: progressive usage-state events replace viewState
   // wholesale and would otherwise wipe optimistic refreshing flags mid-flight, re-enabling the
-  // button and allowing a second concurrent refresh.
+  // button and allowing a second concurrent refresh. The refresh guards below consult these
+  // counters, so they hold even while the in-viewState flags are wiped.
   let activeRefreshCount = $state(0);
   let providerRefreshCounts = $state<Record<string, number>>({});
   let automaticUpdatesReady = $state(false);
@@ -88,7 +89,9 @@
   let shareTimer: ReturnType<typeof setTimeout> | undefined;
   const providerStates = $derived(Object.values(viewState.providers));
   const anyRefreshing = $derived(
-    activeRefreshCount > 0 || providerStates.some((state) => state.refreshing),
+    activeRefreshCount > 0 ||
+      Object.values(providerRefreshCounts).some((count) => count > 0) ||
+      providerStates.some((state) => state.refreshing),
   );
   const lastFullRefresh = $derived(viewState.lastFullRefreshAt ?? undefined);
   const platform = desktopPlatform();
@@ -330,7 +333,13 @@
   }
   async function refreshProvider(providerId: string) {
     const current = viewState.providers[providerId];
-    if (!current || current.refreshing || (providerRefreshCounts[providerId] ?? 0) > 0) return;
+    if (
+      !current ||
+      activeRefreshCount > 0 ||
+      current.refreshing ||
+      (providerRefreshCounts[providerId] ?? 0) > 0
+    )
+      return;
     providerRefreshCounts = {
       ...providerRefreshCounts,
       [providerId]: (providerRefreshCounts[providerId] ?? 0) + 1,

@@ -1091,6 +1091,108 @@ describe('UsageDeck dashboard', () => {
     expect(screen.getByText('Next update in 1m')).toBeInTheDocument();
   });
 
+  it('does not start a full refresh while a provider refresh is in flight, even after a usage-state event wipes the refreshing flags', async () => {
+    let finishProviderRefresh: ((state: UsageViewState) => void) | undefined;
+    const providerResult = new Promise<UsageViewState>(
+      (resolve) => (finishProviderRefresh = resolve),
+    );
+    let emitUsageState: ((state: UsageViewState) => void) | undefined;
+    mocks.listen.mockImplementation(
+      (eventName: string, handler: (event: { payload: unknown }) => void) => {
+        if (eventName === 'usage-state') {
+          emitUsageState = (state) => handler({ payload: state });
+        }
+        return Promise.resolve(vi.fn());
+      },
+    );
+    mockInvoke((command: string) => {
+      if (command === 'get_usage_state') return Promise.resolve(liveState);
+      if (command === 'get_app_settings') return Promise.resolve(settingsState);
+      if (command === 'refresh_provider_usage') return providerResult;
+      return Promise.resolve();
+    });
+
+    render(App);
+    const provider = await screen.findByRole('group', { name: 'Codex provider' });
+    await fireEvent.contextMenu(provider, { clientX: 120, clientY: 180 });
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Refresh Codex' }));
+    expect(mocks.invoke).toHaveBeenCalledWith('refresh_provider_usage', { providerId: 'codex' });
+
+    // A progressive usage-state event replaces viewState wholesale, wiping the
+    // optimistic refreshing flag the full-refresh guard used to rely on.
+    await waitFor(() => expect(emitUsageState).toBeTypeOf('function'));
+    emitUsageState!({
+      ...liveState,
+      providers: { codex: { ...codexState, refreshing: false } },
+    });
+    const wipedProvider = await screen.findByRole('group', { name: 'Codex provider' });
+    await waitFor(() =>
+      expect(within(wipedProvider).queryByLabelText('Refreshing')).not.toBeInTheDocument(),
+    );
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh all provider usage' }));
+    expect(mocks.invoke).not.toHaveBeenCalledWith('refresh_usage');
+
+    finishProviderRefresh?.(liveState);
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole('group', { name: 'Codex provider' })).queryByLabelText(
+          'Refreshing',
+        ),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it('does not start a provider refresh while a full refresh is in flight, even after a usage-state event wipes the refreshing flags', async () => {
+    let finishFullRefresh: ((state: UsageViewState) => void) | undefined;
+    const fullResult = new Promise<UsageViewState>((resolve) => (finishFullRefresh = resolve));
+    let emitUsageState: ((state: UsageViewState) => void) | undefined;
+    mocks.listen.mockImplementation(
+      (eventName: string, handler: (event: { payload: unknown }) => void) => {
+        if (eventName === 'usage-state') {
+          emitUsageState = (state) => handler({ payload: state });
+        }
+        return Promise.resolve(vi.fn());
+      },
+    );
+    mockInvoke((command: string) => {
+      if (command === 'get_usage_state') return Promise.resolve(liveState);
+      if (command === 'get_app_settings') return Promise.resolve(settingsState);
+      if (command === 'refresh_usage') return fullResult;
+      return Promise.resolve();
+    });
+
+    render(App);
+    await screen.findByRole('group', { name: 'Codex provider' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh all provider usage' }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('refresh_usage'));
+
+    await waitFor(() => expect(emitUsageState).toBeTypeOf('function'));
+    emitUsageState!({
+      ...liveState,
+      providers: { codex: { ...codexState, refreshing: false } },
+    });
+    const wipedProvider = await screen.findByRole('group', { name: 'Codex provider' });
+    await waitFor(() =>
+      expect(within(wipedProvider).queryByLabelText('Refreshing')).not.toBeInTheDocument(),
+    );
+
+    await fireEvent.contextMenu(wipedProvider, { clientX: 120, clientY: 180 });
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Refresh Codex' }));
+    expect(mocks.invoke).not.toHaveBeenCalledWith('refresh_provider_usage', {
+      providerId: 'codex',
+    });
+
+    finishFullRefresh?.(liveState);
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole('group', { name: 'Codex provider' })).queryByLabelText(
+          'Refreshing',
+        ),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it('keeps the Claude card structure stable while optional quota data refreshes', async () => {
     let finishRefresh: ((state: UsageViewState) => void) | undefined;
     const refreshResult = new Promise<UsageViewState>((resolve) => (finishRefresh = resolve));
