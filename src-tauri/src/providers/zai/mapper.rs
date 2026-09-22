@@ -65,7 +65,7 @@ pub fn map_quota(body: &Value) -> Result<Vec<QuotaWindow>, ZaiError> {
     for entry in limits
         .iter()
         .copied()
-        .filter(|entry| matches_limit(entry, "TOKENS_LIMIT"))
+        .filter(|entry| matches_tokens_limit(entry))
     {
         let Some(window) = classify_token_window(entry)? else {
             continue;
@@ -192,6 +192,16 @@ fn matches_limit(entry: &serde_json::Map<String, Value>, expected: &str) -> bool
         || entry.get("name").and_then(Value::as_str) == Some(expected)
 }
 
+/// Z.ai renamed the coding-plan quota entry type from `TOKENS_LIMIT` to
+/// `CREDIT_LIMIT` (observed on live credit-plan accounts); the entry layout
+/// (unit/number/percentage/nextResetTime) is identical. Accept both spellings
+/// on either the `type` or `name` field.
+fn matches_tokens_limit(entry: &serde_json::Map<String, Value>) -> bool {
+    ["TOKENS_LIMIT", "CREDIT_LIMIT"]
+        .iter()
+        .any(|expected| matches_limit(entry, expected))
+}
+
 fn reset_time(value: Option<&Value>) -> Option<DateTime<Utc>> {
     let milliseconds = number(value)?;
     if milliseconds < i64::MIN as f64 || milliseconds > i64::MAX as f64 {
@@ -257,6 +267,25 @@ mod tests {
         assert_eq!(web.period_seconds, MONTHLY_PERIOD_SECONDS);
         assert!(!web.estimated);
         assert_eq!(web.source_note, None);
+    }
+
+    #[test]
+    fn credit_limit_entries_map_like_tokens_limit() {
+        // Z.ai credit plans renamed TOKENS_LIMIT -> CREDIT_LIMIT with the
+        // same layout; both spellings (type or name) must map.
+        let mapped = map_quota(&json!({"data":{"limits":[
+            {"type":"CREDIT_LIMIT","unit":3,"number":5,"percentage":10},
+            {"name":"CREDIT_LIMIT","unit":6,"number":1,"percentage":40}
+        ]}}))
+        .unwrap();
+
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0].id, "session");
+        assert_eq!(mapped[0].period_seconds, 5 * 60 * 60);
+        assert_eq!(mapped[0].used_percent, 10.0);
+        assert_eq!(mapped[1].id, "weekly");
+        assert_eq!(mapped[1].period_seconds, 7 * 24 * 60 * 60);
+        assert_eq!(mapped[1].used_percent, 40.0);
     }
 
     #[test]
