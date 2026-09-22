@@ -4,6 +4,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::{auth::ClaudeOAuthConfig, ClaudeError};
+use crate::providers::http::RATE_LIMIT_MAX_COOLDOWN;
 
 const OAUTH_SCOPES: &str =
     "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
@@ -126,13 +127,17 @@ impl ClaudeClient {
 }
 
 fn parse_retry_after(value: &str, now: DateTime<Utc>) -> Option<u64> {
+    // The shared transport caps advertised cooldowns so a misbehaving
+    // endpoint cannot park a provider for hours; Claude's own parser must
+    // honor the same ceiling.
+    let cap = RATE_LIMIT_MAX_COOLDOWN.as_secs();
     let value = value.trim();
     if let Ok(seconds) = value.parse::<u64>() {
-        return Some(seconds);
+        return Some(seconds.min(cap));
     }
     let date = DateTime::parse_from_rfc2822(value).ok()?.to_utc();
     let milliseconds = date.signed_duration_since(now).num_milliseconds().max(0) as u64;
-    Some(milliseconds.div_ceil(1000))
+    Some(milliseconds.div_ceil(1000).min(cap))
 }
 
 #[cfg(test)]
@@ -229,6 +234,16 @@ mod tests {
         assert_eq!(
             parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT", now),
             Some(60)
+        );
+    }
+
+    #[test]
+    fn retry_after_is_capped_like_the_shared_transport() {
+        let now = Utc.with_ymd_and_hms(2015, 10, 21, 7, 27, 0).unwrap();
+        assert_eq!(parse_retry_after("604800", now), Some(600));
+        assert_eq!(
+            parse_retry_after("Wed, 22 Oct 2025 07:27:00 GMT", now),
+            Some(600)
         );
     }
 }
