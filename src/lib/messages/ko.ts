@@ -279,8 +279,6 @@ export const ko = {
   'settings.kickstart.scope.all': '{session} 및 {windows}',
   'settings.migration.keyTransferFailed':
     'OpenQuota의 일부 저장된 키를 전송하지 못했습니다: {providers}. 사용자 지정에서 다시 추가하세요.',
-  'settings.customize.accountHint': 'API 계정은 별도 카드로 표시됩니다.',
-
   'apikey.sectionAria': '{provider} API 키',
   'apikey.title': 'API 키',
   'apikey.add': '추가',

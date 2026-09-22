@@ -275,8 +275,6 @@ export const zhCN = {
   'settings.kickstart.scope.all': '{session}与{windows}',
   'settings.migration.keyTransferFailed':
     '部分 OpenQuota 已保存的密钥无法转移：{providers}。请在自定义中重新添加。',
-  'settings.customize.accountHint': 'API 账户以独立卡片显示，可在此添加或移除。',
-
   'apikey.sectionAria': '{provider} API Key',
   'apikey.title': 'API Key',
   'apikey.add': '添加',

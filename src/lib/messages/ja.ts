@@ -282,8 +282,6 @@ export const ja = {
   'settings.kickstart.scope.all': '{session}と{windows}',
   'settings.migration.keyTransferFailed':
     'OpenQuota から一部の保存済みキーを移行できませんでした：{providers}。カスタマイズで再追加してください。',
-  'settings.customize.accountHint': 'API アカウントは独立したカードとして表示されます。',
-
   'apikey.sectionAria': '{provider} API キー',
   'apikey.title': 'API キー',
   'apikey.add': '追加',

@@ -283,9 +283,6 @@ export const en = {
   'settings.kickstart.scope.all': '{session} and {windows}',
   'settings.migration.keyTransferFailed':
     'Some saved keys from OpenQuota could not be transferred: {providers}. Re-add them in Customize.',
-  'settings.customize.accountHint':
-    'API accounts appear as separate cards. Add or remove them here.',
-
   // API key section inside Customize → provider detail.
   'apikey.sectionAria': '{provider} API Key',
   'apikey.title': 'API Key',
