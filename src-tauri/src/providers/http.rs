@@ -46,8 +46,10 @@ const RETRY_DELAY: Duration = Duration::from_millis(250);
 /// Cooldown applied when a 429 arrives without a usable `Retry-After`.
 const RATE_LIMIT_DEFAULT_COOLDOWN: Duration = Duration::from_secs(60);
 /// Upper bound for an advertised `Retry-After`, so a misbehaving endpoint
-/// cannot park a provider for hours.
-const RATE_LIMIT_MAX_COOLDOWN: Duration = Duration::from_secs(600);
+/// cannot park a provider for hours. Providers that parse the header
+/// themselves instead of going through this transport (Claude) reuse the
+/// constant so every cooldown lands under the same cap.
+pub(crate) const RATE_LIMIT_MAX_COOLDOWN: Duration = Duration::from_secs(600);
 
 /// Parses the `Retry-After` header: delay seconds or an HTTP-date (RFC 2822),
 /// as sent by some gateways. A past date cools down for zero seconds.
