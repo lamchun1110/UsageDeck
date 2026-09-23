@@ -349,7 +349,15 @@ mod tests {
         let stale = directory.path().join("stale.jsonl");
         fs::write(&stale, "").unwrap();
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 60 * 60);
-        fs::File::open(&stale).unwrap().set_modified(old).unwrap();
+        // A write-mode handle: Windows refuses to set file times through the
+        // read-only handle fs::File::open grants, which only surfaced on the
+        // Windows CI legs.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
         // discover_files canonicalizes its root, so expectations must too.
         let root = fs::canonicalize(directory.path()).unwrap();
         let discovered = super::discover_files(directory.path());
