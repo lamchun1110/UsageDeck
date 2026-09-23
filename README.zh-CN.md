@@ -102,7 +102,7 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 
 ## 从源码构建
 
-你需要 Node.js 22 及以上版本、pnpm 11.11.0、稳定版 Rust 工具链，以及所用平台的
+你需要 Node.js 24 及以上版本、pnpm 11.11.0、稳定版 Rust 工具链，以及所用平台的
 [Tauri 2 前置要求](https://v2.tauri.app/start/prerequisites/)。
 
 ```sh

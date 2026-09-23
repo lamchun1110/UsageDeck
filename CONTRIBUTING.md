@@ -27,7 +27,7 @@ Security vulnerabilities should not be reported in a public issue. Follow
 
 ## Development setup
 
-You need Node.js 22 or later, pnpm 11.11.0, stable Rust, and the
+You need Node.js 24 or later, pnpm 11.11.0, stable Rust, and the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
 
 ```sh

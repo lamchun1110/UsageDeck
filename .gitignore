@@ -11,3 +11,6 @@ Thumbs.db
 .vscode/
 .local/
 .omo/
+# Local agent/tool state; settings.local.json in particular must never ship.
+.claude/
+.codegraph/

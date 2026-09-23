@@ -84,21 +84,6 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify application versions
-        run: pnpm verify:versions
-
-      - name: Verify frontend-backend command contract
-        run: pnpm verify:contracts
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Type check
-        run: pnpm check
-
-      - name: Test frontend
-        run: pnpm test
-
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
@@ -226,6 +211,47 @@ jobs:
           path: src-tauri/target/release/bundle/rpm/*.rpm
           if-no-files-found: error
           retention-days: 14
+
+  # The frontend gates are deterministic and OS-independent, so they run once
+  # here instead of on all five matrix legs; the matrix keeps only what varies
+  # by OS: builds, Rust tests, credential-store integration, and smoke tests.
+  # This leg also runs the vitest coverage thresholds (vite.config.ts), which
+  # `pnpm test` alone does not enforce.
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 11.11.0
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify application versions
+        run: pnpm verify:versions
+
+      - name: Verify frontend-backend command contract
+        run: pnpm verify:contracts
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm check
+
+      - name: Test frontend with coverage thresholds
+        run: pnpm test:coverage
 
   # Dependency advisories are the one class of defect that appears without the
   # code changing, so this runs beside the build rather than inside it: the

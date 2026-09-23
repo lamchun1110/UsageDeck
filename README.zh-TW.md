@@ -93,7 +93,7 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 
 ## 從原始碼建置
 
-你需要 Node.js 22 以上、pnpm 11.11.0、穩定版 Rust 工具鏈，以及對應平台的 [Tauri 2 環境需求](https://v2.tauri.app/start/prerequisites/)。
+你需要 Node.js 24 以上、pnpm 11.11.0、穩定版 Rust 工具鏈，以及對應平台的 [Tauri 2 環境需求](https://v2.tauri.app/start/prerequisites/)。
 
 ```sh
 corepack pnpm install --frozen-lockfile
