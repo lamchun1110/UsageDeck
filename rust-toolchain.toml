@@ -1,0 +1,6 @@
+# Pins the compiler for local builds, CI, and signed release binaries alike, so
+# a new stable landing mid-cycle cannot change what ships. dtolnay/rust-toolchain
+# honors this file when the workflow does not pass an explicit toolchain input.
+# Bump deliberately; verify:rust (-D warnings) and release builds run on this.
+[toolchain]
+channel = "1.97.1"
