@@ -550,16 +550,27 @@ pub fn request_notification_permission(
     )
 }
 
+/// `std::process::Child` does not reap an exited child on drop, so every
+/// settings helper opened here would linger as a zombie until the app quits.
+/// Park the handle on a detached waiter thread instead.
+fn detach(mut child: std::process::Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+}
+
 #[tauri::command]
 pub fn open_notification_settings() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let result = child_process::background_command("explorer.exe")
         .arg("ms-settings:notifications")
-        .spawn();
+        .spawn()
+        .map(detach);
     #[cfg(target_os = "macos")]
     let result = child_process::background_command("open")
         .arg("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
-        .spawn();
+        .spawn()
+        .map(detach);
     #[cfg(target_os = "linux")]
     let result = [
         ("gnome-control-center", "notifications"),
@@ -572,6 +583,7 @@ pub fn open_notification_settings() -> Result<(), String> {
             .arg(argument)
             .spawn()
             .ok()
+            .map(detach)
     })
     .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "settings unavailable"));
 

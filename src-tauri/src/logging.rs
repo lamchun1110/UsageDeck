@@ -450,36 +450,6 @@ fn sensitive_url_parameter(name: &str) -> bool {
     .any(|candidate| name.contains(candidate))
 }
 
-#[allow(dead_code)]
-pub fn redact_body(body: &str) -> String {
-    let redacted = json_sensitive_regex()
-        .replace_all(body, |captures: &Captures<'_>| {
-            format!("\"{}\": \"{}\"", &captures[1], redact_value(&captures[2]))
-        })
-        .into_owned();
-    redact_log_message(&redacted)
-}
-
-#[allow(dead_code)]
-pub fn body_preview(body: &str) -> String {
-    body_preview_with_limit(body, 500)
-}
-
-fn body_preview_with_limit(body: &str, limit: usize) -> String {
-    let redacted = redact_body(body);
-    if redacted.len() <= limit {
-        return redacted;
-    }
-    let end = redacted
-        .char_indices()
-        .take_while(|(index, _)| *index < limit)
-        .map(|(index, character)| index + character.len_utf8())
-        .last()
-        .unwrap_or(0)
-        .min(redacted.len());
-    format!("{}... ({} bytes total)", &redacted[..end], body.len())
-}
-
 pub fn redact_log_message(message: &str) -> String {
     let mut output = jwt_regex()
         .replace_all(message, |captures: &Captures<'_>| {
@@ -572,16 +542,6 @@ fn url_authority_regex() -> &'static Regex {
     VALUE.get_or_init(|| Regex::new(r"(https?://)[^/@\s]+:[^/@\s]+@").unwrap())
 }
 
-fn json_sensitive_regex() -> &'static Regex {
-    static VALUE: OnceLock<Regex> = OnceLock::new();
-    VALUE.get_or_init(|| {
-        Regex::new(
-            r#"(?i)"(name|password|token|access_token|refresh_token|secret|api_key|apiKey|authorization|bearer|credential|session_token|sessionToken|auth_token|authToken|id_token|idToken|accessToken|refreshToken|user_id|userId|account_id|accountId|team_id|teamId|org_id|orgId|account_display_name|accountDisplayName|payment_id|paymentId|profile_arn|profileArn|email|login|analytics_tracking_id)"\s*:\s*"([^"]*)""#,
-        )
-        .unwrap()
-    })
-}
-
 #[macro_export]
 macro_rules! app_error {
     ($tag:expr, $($argument:tt)*) => {{
@@ -645,8 +605,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        body_preview, default_log_path, format_line, redact_body, redact_log_message, redact_url,
-        redact_value, update_local_usage_failure, LogFile,
+        default_log_path, format_line, redact_log_message, redact_url, redact_value,
+        update_local_usage_failure, LogFile,
     };
 
     #[test]
@@ -682,21 +642,6 @@ mod tests {
         assert!(!redacted.contains("password"));
         assert!(redacted.contains("api_key=sk-1...cdef"));
         assert!(redacted.contains("limit=10"));
-    }
-
-    #[test]
-    fn redacts_body_secrets_before_truncating() {
-        let body = format!(
-            "{{\"email\":\"person@example.com\",\"token\":\"{}\"}}{}",
-            "eyJheader.payload.signature",
-            "x".repeat(600)
-        );
-        let redacted = redact_body(&body);
-        assert!(!redacted.contains("person@example.com"));
-        assert!(!redacted.contains("eyJheader.payload.signature"));
-        let preview = body_preview(&body);
-        assert!(!preview.contains("person@example.com"));
-        assert!(preview.ends_with(&format!("... ({} bytes total)", body.len())));
     }
 
     #[test]

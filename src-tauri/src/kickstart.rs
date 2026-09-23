@@ -225,7 +225,7 @@ fn login_shell() -> String {
 /// resolution to the static tiers, and an unanswered probe is not cached.
 #[cfg(not(target_os = "windows"))]
 fn probe_login_path(program: &str) -> Option<String> {
-    let script = format!("command -v {program}");
+    let script = format!("command -v {}", shell_word(program));
     let mut command = child_process::background_command(&login_shell());
     command.args(["-l", "-c", &script]);
     let output = child_process::output_with_timeout(&mut command, PROGRAM_PROBE_TIMEOUT).ok()?;
