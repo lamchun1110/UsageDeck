@@ -22,6 +22,11 @@ use crate::{
 
 const GH_KEYRING_SERVICE: &str = "gh:github.com";
 const GH_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+/// Grace for the stdout reader after the child exits: the OS can deschedule
+/// the reader thread past any short window, and a fixed 100ms receive
+/// discarded tokens `gh` had already written. Still bounded so a pipe held
+/// open past the child cannot stall the refresh.
+const GH_TOKEN_READER_GRACE: Duration = Duration::from_secs(2);
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 const MAX_TOKEN_BYTES: usize = 4096;
 
@@ -413,10 +418,7 @@ fn run_gh_token_command(timeout: Duration) -> Option<CopilotToken> {
     if !status.success() {
         return None;
     }
-    let bytes = receiver
-        .recv_timeout(Duration::from_millis(100))
-        .ok()?
-        .ok()?;
+    let bytes = receiver.recv_timeout(GH_TOKEN_READER_GRACE).ok()?.ok()?;
     if bytes.len() > MAX_TOKEN_BYTES {
         return None;
     }

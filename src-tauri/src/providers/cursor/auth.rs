@@ -112,6 +112,10 @@ fn read_state_value(path: &Path, key: &str) -> Option<String> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .ok()?;
+    // The Cursor editor writes this database live; without a busy timeout a
+    // concurrent write fails the token read and the provider flaps to "not
+    // logged in" until the next refresh.
+    let _ = connection.busy_timeout(std::time::Duration::from_millis(150));
     connection
         .query_row(
             "SELECT value FROM ItemTable WHERE key = ?1 LIMIT 1",
@@ -126,6 +130,9 @@ fn read_state_value(path: &Path, key: &str) -> Option<String> {
 
 fn write_state_value(path: &Path, key: &str, value: &str) -> Result<(), CursorError> {
     let connection = Connection::open(path).map_err(|_| CursorError::AuthWrite)?;
+    // Same contention as the read side: a busy timeout keeps a concurrent
+    // editor write from failing the rotated-token save with SQLITE_BUSY.
+    let _ = connection.busy_timeout(std::time::Duration::from_millis(150));
     connection
         .execute(
             "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?1, ?2)",

@@ -139,6 +139,10 @@ fn discover_files(directory: &Path) -> Vec<PathBuf> {
         .filter(|entry| {
             entry.file_type().is_file()
                 && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")
+                // Same 35-day window as the other local-usage scanners, so a
+                // multi-year install does not enumerate every session file
+                // ever written on each refresh.
+                && crate::providers::log_usage::log_file_can_contribute(entry.path())
         })
         .map(|entry| entry.into_path())
         .collect::<Vec<_>>();
@@ -335,6 +339,22 @@ mod tests {
             },
             PricingCatalog::default(),
         )
+    }
+
+    #[test]
+    fn discovery_skips_session_files_older_than_the_usage_window() {
+        let directory = tempdir().unwrap();
+        let fresh = directory.path().join("fresh.jsonl");
+        fs::write(&fresh, "").unwrap();
+        let stale = directory.path().join("stale.jsonl");
+        fs::write(&stale, "").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 60 * 60);
+        fs::File::open(&stale).unwrap().set_modified(old).unwrap();
+        // discover_files canonicalizes its root, so expectations must too.
+        let root = fs::canonicalize(directory.path()).unwrap();
+        let discovered = super::discover_files(directory.path());
+        assert!(discovered.contains(&root.join("fresh.jsonl")));
+        assert!(!discovered.contains(&root.join("stale.jsonl")));
     }
 
     #[test]
