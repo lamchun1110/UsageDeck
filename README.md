@@ -145,7 +145,7 @@ to OpenQuota and OpenUsage described below. See the public
 
 ## Building from source
 
-You need Node.js 22+, pnpm 11.11.0, a stable Rust toolchain, and the
+You need Node.js 24+, pnpm 11.11.0, a stable Rust toolchain, and the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
 
 ```sh

@@ -93,7 +93,7 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 
 ## 소스에서 빌드하기
 
-Node.js 22 이상, pnpm 11.11.0, 안정 버전 Rust 툴체인, 그리고 사용하는 플랫폼의 [Tauri 2 사전 요구 사항](https://v2.tauri.app/start/prerequisites/)이 필요합니다.
+Node.js 24 이상, pnpm 11.11.0, 안정 버전 Rust 툴체인, 그리고 사용하는 플랫폼의 [Tauri 2 사전 요구 사항](https://v2.tauri.app/start/prerequisites/)이 필요합니다.
 
 ```sh
 corepack pnpm install --frozen-lockfile
