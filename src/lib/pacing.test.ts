@@ -133,4 +133,36 @@ describe('quota pacing', () => {
     expect(twelveHour).toContain(dayPeriod);
     expect(twentyFourHour).not.toContain(dayPeriod);
   });
+
+  it('classifies exact deadlines around local midnight without a day off-by-one', () => {
+    // Wall-clock anchors (setHours) keep the fixtures deterministic in any
+    // runner timezone. The UTC-day-difference plus Math.round in deadlineParts
+    // is what keeps these classifications correct on 23- and 25-hour DST days
+    // as well; deadlineParts reads the local clock, so a literal DST case
+    // cannot be constructed portably against it.
+    const late = new Date();
+    late.setHours(23, 0, 0, 0);
+    const smallHours = new Date(late);
+    smallHours.setDate(smallHours.getDate() + 1);
+    smallHours.setHours(1, 0, 0, 0);
+    expect(formatResetParts(smallHours.toISOString(), late.getTime(), 'exact')?.kind).toBe(
+      'tomorrow',
+    );
+    const sameLateEvening = new Date(late);
+    sameLateEvening.setHours(23, 59, 0, 0);
+    expect(formatResetParts(sameLateEvening.toISOString(), late.getTime(), 'exact')?.kind).toBe(
+      'today',
+    );
+    const twoDaysOut = new Date(late);
+    twoDaysOut.setDate(twoDaysOut.getDate() + 2);
+    twoDaysOut.setHours(9, 0, 0, 0);
+    expect(formatResetParts(twoDaysOut.toISOString(), late.getTime(), 'exact')?.kind).toBe('date');
+    // The stroke of midnight belongs to the new day, not the old one.
+    const midnight = new Date(late);
+    midnight.setDate(midnight.getDate() + 1);
+    midnight.setHours(0, 0, 0, 0);
+    expect(formatResetParts(midnight.toISOString(), late.getTime(), 'exact')?.kind).toBe(
+      'tomorrow',
+    );
+  });
 });
