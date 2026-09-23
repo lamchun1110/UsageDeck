@@ -36,7 +36,7 @@ jobs:
       macos_signing: ${{ steps.signing_policy.outputs.macos_signing }}
       linux_gpg_signing: ${{ steps.signing_policy.outputs.linux_gpg_signing }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -109,20 +109,26 @@ jobs:
             xdg-utils \
             patchelf
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 11.11.0
           run_install: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Resolve pinned toolchain
+        id: pinned-toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel *= *\"\(.*\)\"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
+          toolchain: ${{ steps.pinned-toolchain.outputs.channel }}
           components: clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri -> target
 
@@ -160,7 +166,7 @@ jobs:
     outputs:
       release_id: ${{ steps.release.outputs.release_id }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.validate.outputs.release_commit }}
 
@@ -255,7 +261,7 @@ jobs:
             smoke-artifact-root: src-tauri/target/universal-apple-darwin/release/bundle
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.validate.outputs.release_commit }}
 
@@ -276,20 +282,26 @@ jobs:
             xdotool \
             xvfb
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 11.11.0
           run_install: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Resolve pinned toolchain
+        id: pinned-toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel *= *\"\(.*\)\"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
+          toolchain: ${{ steps.pinned-toolchain.outputs.channel }}
           targets: ${{ matrix.rust-targets }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri -> target
 
@@ -345,7 +357,7 @@ jobs:
 
       - name: Build and upload platform artifacts
         if: runner.os != 'Windows' || needs.validate.outputs.windows_signing_backend != 'signpath'
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -373,7 +385,7 @@ jobs:
 
       - name: Build unsigned Windows installer for SignPath
         if: runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'signpath'
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -384,7 +396,7 @@ jobs:
       - name: Upload unsigned installer for SignPath
         if: runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'signpath'
         id: upload-unsigned-windows
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: signpath-unsigned-${{ matrix.name }}-${{ github.run_id }}
           path: ${{ matrix.smoke-artifact-root }}/nsis/*-setup.exe
@@ -402,7 +414,7 @@ jobs:
 
       - name: Check out release smoke tooling
         if: runner.os != 'Windows' || needs.validate.outputs.windows_signing_backend != 'signpath'
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.workflow_sha }}
           path: .release-workflow
@@ -435,7 +447,7 @@ jobs:
           - name: Windows ARM64
             platform: windows-11-arm
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.validate.outputs.release_commit }}
 
@@ -455,7 +467,7 @@ jobs:
           "artifact_id=$($matches[0].id)" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Download unsigned reference without executing it
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: signpath-unsigned-${{ matrix.name }}-${{ github.run_id }}
           path: unsigned-reference
@@ -474,11 +486,11 @@ jobs:
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: signpath-signed
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 11.11.0
           run_install: false
@@ -553,7 +565,7 @@ jobs:
           }
 
       - name: Check out release smoke tooling
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.workflow_sha }}
           path: .release-workflow
@@ -577,7 +589,7 @@ jobs:
       checks: read
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.validate.outputs.release_commit }}
 

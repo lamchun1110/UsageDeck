@@ -1,0 +1,12 @@
+# Pins the compiler for local builds, CI, and signed release binaries alike, so
+# a new stable landing mid-cycle cannot change what ships. Bump deliberately;
+# verify:rust (-D warnings) and release builds run on this.
+#
+# rustup installs these components when it installs the pinned toolchain for
+# local builds. CI passes the channel from this file back into
+# dtolnay/rust-toolchain explicitly (see the "Resolve pinned toolchain" steps):
+# without a toolchain input, the action's components/targets inputs install
+# into the default toolchain instead of the one this file selects.
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]
