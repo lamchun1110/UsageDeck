@@ -1193,6 +1193,51 @@ describe('UsageDeck dashboard', () => {
     );
   });
 
+  it('loads quota history once per refresh cycle and refetches when the cycle changes', async () => {
+    let emitUsageState: ((state: UsageViewState) => void) | undefined;
+    mocks.listen.mockImplementation(
+      (eventName: string, handler: (event: { payload: unknown }) => void) => {
+        if (eventName === 'usage-state') {
+          emitUsageState = (state) => handler({ payload: state });
+        }
+        return Promise.resolve(vi.fn());
+      },
+    );
+    const cycleOne = {
+      ...liveState,
+      lastFullRefreshAt: new Date(Date.now() - 60_000).toISOString(),
+    };
+    const historyCalls: number[] = [];
+    mockInvoke((command: string) => {
+      if (command === 'get_usage_state') return Promise.resolve(cycleOne);
+      if (command === 'get_app_settings') return Promise.resolve(settingsState);
+      if (command === 'quota_history') {
+        historyCalls.push(Date.now());
+        return Promise.resolve({});
+      }
+      return Promise.resolve();
+    });
+
+    render(App);
+    await screen.findByRole('group', { name: 'Codex provider' });
+    await waitFor(() => expect(historyCalls).toHaveLength(1));
+
+    // Progressive events within the same completed refresh cycle share the
+    // marker; the dashboard must not refetch history per event.
+    emitUsageState!(cycleOne);
+    emitUsageState!(cycleOne);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(historyCalls).toHaveLength(1);
+
+    // A new completed cycle (fresh lastFullRefreshAt) is a new marker.
+    const cycleTwo = {
+      ...liveState,
+      lastFullRefreshAt: new Date().toISOString(),
+    };
+    emitUsageState!(cycleTwo);
+    await waitFor(() => expect(historyCalls).toHaveLength(2));
+  });
+
   it('keeps the Claude card structure stable while optional quota data refreshes', async () => {
     let finishRefresh: ((state: UsageViewState) => void) | undefined;
     const refreshResult = new Promise<UsageViewState>((resolve) => (finishRefresh = resolve));
