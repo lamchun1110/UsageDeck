@@ -55,7 +55,7 @@ function settingsView(overrides: Partial<AppSettings> = {}): SettingsViewState {
 describe('SettingsScreen language selector', () => {
   afterEach(cleanup);
 
-  function renderSettings(onChange: ReturnType<typeof vi.fn>) {
+  function renderSettings(onChange: (settings: AppSettings) => void) {
     render(SettingsScreen, {
       props: {
         settingsView: settingsView(),
