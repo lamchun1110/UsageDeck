@@ -187,6 +187,7 @@ export const zhCN = {
   'settings.row.panelHeight': '面板高度',
   'settings.row.timeFormat': '时间格式',
   'settings.row.language': '语言',
+  'settings.language.system': '跟随系统',
   'settings.row.showUsageAs': '用量显示方式',
   'settings.row.resetTimes': '重置时间显示',
   'settings.row.alwaysShowPacing': '始终显示消耗节奏',
@@ -341,6 +342,7 @@ export const zhCN = {
   'trend.detailsAria': '使用趋势图表详细信息',
   'trend.peakTokens': '峰值 {tokens} tokens',
   'trend.dayTokens': '{date} · {tokens} tokens',
+  'trend.localUsageSource': '来自您的 {provider} 使用记录',
 
   'reset.detailsAria': '{title} 详细信息',
   'reset.using': '重置中…',

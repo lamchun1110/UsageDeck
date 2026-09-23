@@ -286,7 +286,10 @@
       <span><b>{t('settings.row.language')}</b></span><SelectMenu
         label={t('settings.row.language')}
         value={settings.language}
-        options={LANGUAGE_PREFERENCES.map(({ value, label }) => ({ value, label }))}
+        options={LANGUAGE_PREFERENCES.map(({ value, label }) => ({
+          value,
+          label: value === 'system' ? t('settings.language.system') : label,
+        }))}
         onChange={(value) => patch({ language: value as AppSettings['language'] })}
       />
     </div>

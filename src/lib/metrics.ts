@@ -1,3 +1,5 @@
+import { t } from './i18n.svelte';
+
 import type {
   MetricDefinition,
   ProviderCatalog,
@@ -97,7 +99,8 @@ export class ProviderCatalogIndex {
   localUsageSourceNote(id: string) {
     const provider = this.provider(id);
     return (
-      provider?.localUsageSourceNote ?? `From your ${provider?.displayName ?? id} usage history`
+      provider?.localUsageSourceNote ??
+      t('trend.localUsageSource', { provider: provider?.displayName ?? id })
     );
   }
 }

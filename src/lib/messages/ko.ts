@@ -188,6 +188,7 @@ export const ko = {
   'settings.row.panelHeight': '패널 높이',
   'settings.row.timeFormat': '시간 형식',
   'settings.row.language': '언어',
+  'settings.language.system': '시스템 따르기',
   'settings.row.showUsageAs': '사용량 표시 기준',
   'settings.row.resetTimes': '초기화 시간 표시',
   'settings.row.alwaysShowPacing': '항상 소진 속도 표시',
@@ -345,6 +346,7 @@ export const ko = {
   'trend.detailsAria': '사용 추이 차트 세부 정보',
   'trend.peakTokens': '최대 {tokens} tokens',
   'trend.dayTokens': '{date} · {tokens} tokens',
+  'trend.localUsageSource': '{provider} 사용 기록 기준',
 
   'reset.detailsAria': '{title} 세부 정보',
   'reset.using': '재설정 중…',

@@ -187,6 +187,7 @@ export const zhTW = {
   'settings.row.panelHeight': '面板高度',
   'settings.row.timeFormat': '時間格式',
   'settings.row.language': '語言',
+  'settings.language.system': '跟隨系統',
   'settings.row.showUsageAs': '用量顯示方式',
   'settings.row.resetTimes': '重置時間顯示',
   'settings.row.alwaysShowPacing': '永遠顯示消耗節奏',
@@ -342,6 +343,7 @@ export const zhTW = {
   'trend.detailsAria': '使用趨勢圖表詳細資訊',
   'trend.peakTokens': '峰值 {tokens} tokens',
   'trend.dayTokens': '{date} · {tokens} tokens',
+  'trend.localUsageSource': '來自您的 {provider} 使用記錄',
 
   'reset.detailsAria': '{title} 詳細資訊',
   'reset.using': '重置中…',

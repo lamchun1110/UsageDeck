@@ -668,7 +668,9 @@
                   data-reorder-group={`dashboard-metrics:${provider.id}`}
                   data-reorder-id={metric.id}
                   role="group"
-                  aria-label={`${metricDefinition(metric.id)?.label ?? metric.id} options`}
+                  aria-label={t('dashboard.provider.metricOptions', {
+                    metric: metricDefinition(metric.id)?.label ?? metric.id,
+                  })}
                   use:pointerReorder={{
                     id: metric.id,
                     group: `dashboard-metrics:${provider.id}`,
