@@ -164,9 +164,17 @@ export function createWindowController(options: WindowControllerOptions) {
     }
   }
 
+  // A single rejected fitPanelToContent used to disable automatic fitting for
+  // the whole session; a transient IPC failure should not latch. Refocusing
+  // the window re-arms the latch so the next fit can succeed.
+  function recoverResizeAvailability() {
+    resizeAvailable = true;
+  }
+
   return {
     beginContentMorph,
     scheduleFit,
+    recoverResizeAvailability,
     dispose() {
       window.clearTimeout(contentMorphTimer);
       contentMorphActive = false;

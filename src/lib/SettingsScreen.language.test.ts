@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { setLanguage } from './i18n.svelte';
 import SettingsScreen from './SettingsScreen.svelte';
 import type { AppSettings, SettingsViewState } from './types';
 
@@ -54,8 +55,7 @@ function settingsView(overrides: Partial<AppSettings> = {}): SettingsViewState {
 describe('SettingsScreen language selector', () => {
   afterEach(cleanup);
 
-  it('offers the language preference and reports the selection', async () => {
-    const onChange = vi.fn();
+  function renderSettings(onChange: ReturnType<typeof vi.fn>) {
     render(SettingsScreen, {
       props: {
         settingsView: settingsView(),
@@ -74,6 +74,11 @@ describe('SettingsScreen language selector', () => {
         onResetAllSettings: vi.fn(),
       },
     });
+  }
+
+  it('offers the language preference and reports the selection', async () => {
+    const onChange = vi.fn();
+    renderSettings(onChange);
 
     await fireEvent.click(screen.getByRole('combobox', { name: 'Language' }));
     await fireEvent.click(screen.getByRole('option', { name: '简体中文' }));
@@ -81,5 +86,16 @@ describe('SettingsScreen language selector', () => {
     expect(onChange).toHaveBeenCalledTimes(1);
     const updated = onChange.mock.calls[0][0] as AppSettings;
     expect(updated.language).toBe('zh-CN');
+  });
+
+  it('localizes the System entry with the active language', async () => {
+    setLanguage('zh-CN');
+    try {
+      renderSettings(vi.fn());
+      await fireEvent.click(screen.getByRole('combobox', { name: '语言' }));
+      expect(screen.getByRole('option', { name: '跟随系统' })).toBeInTheDocument();
+    } finally {
+      setLanguage('system');
+    }
   });
 });

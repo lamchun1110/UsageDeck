@@ -189,6 +189,7 @@ export const ja = {
   'settings.row.panelHeight': 'パネルの高さ',
   'settings.row.timeFormat': '時刻形式',
   'settings.row.language': '言語',
+  'settings.language.system': 'システムに従う',
   'settings.row.showUsageAs': '使用量の表示方法',
   'settings.row.resetTimes': 'リセット時刻の表示',
   'settings.row.alwaysShowPacing': 'ペースを常に表示',
@@ -349,6 +350,7 @@ export const ja = {
   'trend.detailsAria': '使用トレンドチャートの詳細',
   'trend.peakTokens': 'ピーク {tokens} tokens',
   'trend.dayTokens': '{date} · {tokens} tokens',
+  'trend.localUsageSource': '{provider} の使用履歴から',
 
   'reset.detailsAria': '{title} の詳細',
   'reset.using': 'リセット中…',

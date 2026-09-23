@@ -259,7 +259,7 @@ function quotaShareRow(quota: QuotaWindow, settings: AppSettings, now: number): 
       settings.usageDisplay === 'left' && quota.limitValue !== null
         ? Math.max(0, quota.limitValue - quota.usedValue)
         : quota.usedValue;
-    reading = `$${displayed.toFixed(2)} ${
+    reading = `${formatMetricNumber(displayed, 'dollars', 'full')} ${
       settings.usageDisplay === 'left' ? t('quota.left') : t('quota.spent')
     }`;
     if (quota.limitValue !== null && quota.limitValue > 0) {

@@ -580,6 +580,10 @@
     motionQuery.addEventListener('change', updateMotionPreference);
     const refreshWindowState = () => {
       if (bootstrapFailed) loadBootstrapState();
+      // A hidden webview's timers throttle; reset the clock so reset
+      // countdowns and "updated X ago" labels are fresh on refocus.
+      now = Date.now();
+      windowController.recoverResizeAvailability();
       void settingsController.refreshIfIdle();
       panelResize.refresh();
       scheduleWindowFit();

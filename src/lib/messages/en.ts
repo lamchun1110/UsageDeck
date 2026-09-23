@@ -188,6 +188,7 @@ export const en = {
   'settings.row.panelHeight': 'Panel Height',
   'settings.row.timeFormat': 'Time Format',
   'settings.row.language': 'Language',
+  'settings.language.system': 'System',
   'settings.row.showUsageAs': 'Show Usage As',
   'settings.row.resetTimes': 'Reset Times',
   'settings.row.alwaysShowPacing': 'Always Show Pacing',
@@ -354,6 +355,7 @@ export const en = {
   'trend.detailsAria': 'Usage trend chart details',
   'trend.peakTokens': 'peak {tokens} tokens',
   'trend.dayTokens': '{date} · {tokens} tokens',
+  'trend.localUsageSource': 'From your {provider} usage history',
 
   // Reset-credits detail.
   'reset.detailsAria': '{title} details',
