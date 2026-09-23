@@ -4,6 +4,7 @@ const root = new URL('../../', import.meta.url);
 const read = (path) => fs.readFileSync(new URL(path, root), 'utf8');
 const ci = read('.github/workflows/ci.yml');
 const release = read('.github/workflows/release.yml');
+const pages = read('.github/workflows/pages.yml');
 const action = read('.github/actions/platform-smoke/action.yml');
 const windows = read('.github/actions/platform-smoke/scripts/windows.ps1');
 const macos = read('.github/actions/platform-smoke/scripts/macos.sh');
@@ -160,10 +161,13 @@ requireContracts('release', release, [
 ]);
 
 requireContracts('release smoke tooling checkout', release, [
+  // The uses line stops at "actions/checkout@" on purpose: the workflow pins
+  // the action to a commit SHA that dependabot rotates, so this contract must
+  // not need a matching edit on every pin bump.
   `      - name: Check out release smoke tooling
         if: runner.os != 'Windows' || needs.validate.outputs.windows_signing_backend != 'signpath'
-        uses: actions/checkout@v7
-        with:
+        uses: actions/checkout@`,
+  `        with:
           ref: \${{ github.workflow_sha }}
           path: .release-workflow
           sparse-checkout: .github/actions/platform-smoke
@@ -172,6 +176,27 @@ requireContracts('release smoke tooling checkout', release, [
         if: runner.os != 'Windows' || needs.validate.outputs.windows_signing_backend != 'signpath'
         uses: ./.release-workflow/.github/actions/platform-smoke`,
 ]);
+
+// Every third-party action must run at a frozen commit SHA; local composite
+// actions (uses: ./...) are exempt. Release jobs hold the updater-signing and
+// notarization secrets, so a force-moved mutable tag could alter the release
+// boundary. The trailing "# vX" comment on each pin is what dependabot reads
+// to keep the pins moving.
+for (const [source, content] of [
+  ['CI', ci],
+  ['release', release],
+  ['pages', pages],
+]) {
+  const unpinned = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('uses: '))
+    .filter((line) => !line.startsWith('uses: ./'))
+    .filter((line) => !/@[0-9a-f]{40}( # .+)?$/.test(line));
+  if (unpinned.length > 0) {
+    throw new Error(`${source} pins actions to mutable refs: ${unpinned.join(' ; ')}`);
+  }
+}
 
 const expression = (value) => `\${{ ${value} }}`;
 const exactSigningBindings = {
