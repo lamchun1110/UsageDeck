@@ -143,6 +143,12 @@ pub enum ClaudeError {
         "Claude Desktop login found, but its macOS-only encrypted session cannot be reused safely. Run `claude` in a terminal and sign in once."
     )]
     DesktopAppOnly,
+    #[error("Claude Code credentials could not be read. Check access to your system credential store, then refresh UsageDeck.")]
+    CredentialRead,
+    #[error(
+        "Claude Code login is incomplete. Run `claude` and sign in again, then refresh UsageDeck."
+    )]
+    IncompleteCredentials,
     #[error("Your Claude session expired. Run `claude` to sign in again.")]
     SessionExpired,
     #[error("Your Claude token expired. Run `claude` to sign in again.")]
@@ -327,7 +333,7 @@ impl ClaudeProvider {
         config: &auth::ClaudeOAuthConfig,
     ) -> Result<ProviderSnapshot, ClaudeError> {
         self.ensure_account_identity_current()?;
-        let candidates = load_candidates(&self.credential_scope);
+        let candidates = load_candidates(&self.credential_scope)?;
         if candidates.is_empty() {
             crate::app_info!("auth:claude", "no reusable CLI credentials found");
             return Err(
@@ -543,7 +549,7 @@ impl ClaudeProvider {
             let token = credential.access_token().ok_or(ClaudeError::TokenExpired)?;
             (status, body, retry_after) = self.client.fetch_usage(token, config)?;
         }
-        if auth::credential_generation(&self.credential_scope) != *credential_generation {
+        if auth::credential_generation(&self.credential_scope)? != *credential_generation {
             return Err(ClaudeError::CredentialsChanged);
         }
         if status == StatusCode::TOO_MANY_REQUESTS {
@@ -790,6 +796,7 @@ impl crate::providers::UsageProvider for ClaudeProvider {
             let kind = match error {
                 ClaudeError::NotLoggedIn
                 | ClaudeError::DesktopAppOnly
+                | ClaudeError::IncompleteCredentials
                 | ClaudeError::SessionExpired
                 | ClaudeError::TokenExpired
                 | ClaudeError::CredentialsChanged
@@ -797,7 +804,7 @@ impl crate::providers::UsageProvider for ClaudeProvider {
                 ClaudeError::InvalidOAuthUrl | ClaudeError::InvalidResponse => {
                     Kind::InvalidResponse
                 }
-                ClaudeError::AuthWrite => Kind::CredentialStorage,
+                ClaudeError::AuthWrite | ClaudeError::CredentialRead => Kind::CredentialStorage,
                 ClaudeError::RequestFailed(429) => Kind::RateLimited,
                 ClaudeError::RequestFailed(_) | ClaudeError::ConnectionFailed => Kind::Network,
                 ClaudeError::LocalUsage => Kind::LocalData,

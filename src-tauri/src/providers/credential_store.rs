@@ -35,16 +35,63 @@ fn cached_read(key: &(String, String)) -> Option<Result<Option<Vec<u8>>, String>
 }
 
 pub fn read_generic_password(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
+    read_cached_password(service, account, || {
+        read_generic_password_uncached(service, account)
+    })
+}
+
+fn read_cached_password(
+    service: &str,
+    account: &str,
+    read: impl FnOnce() -> Result<Option<Vec<u8>>, String>,
+) -> Result<Option<Vec<u8>>, String> {
     let key = (service.to_owned(), account.to_owned());
     if let Some(value) = cached_read(&key) {
         return value;
     }
-    let value = read_generic_password_uncached(service, account);
+    let value = read();
     // A failure is cached too: a store that is locked or unreachable stays
     // that way for the moment, and retrying it several times inside one cycle
     // only multiplies the stall.
     cache_lock().insert(key, (std::time::Instant::now(), value.clone()));
     value
+}
+
+/// Claude Code reads its macOS login through this Apple-signed executable.
+/// Reuse that reader's existing Keychain authorization: Claude Code can reset
+/// the item's ACL when renewing tokens, dropping a grant made to UsageDeck.
+/// This only reads the named item; it never edits credentials or their ACL.
+#[cfg(target_os = "macos")]
+pub fn read_generic_password_via_security(
+    service: &str,
+    account: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    read_cached_password(service, account, || {
+        let mut command = crate::child_process::background_command("/usr/bin/security");
+        command.args(["find-generic-password", "-s", service, "-a", account, "-w"]);
+        let output = crate::child_process::output_with_timeout(
+            &mut command,
+            std::time::Duration::from_secs(30),
+        )
+        .map_err(|_| "The macOS Keychain could not be read.".to_owned())?;
+        decode_security_password_output(output)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn decode_security_password_output(
+    output: std::process::Output,
+) -> Result<Option<Vec<u8>>, String> {
+    if output.status.success() {
+        Ok(Some(output.stdout))
+    } else if output.status.code() == Some(44) {
+        // security exits with errSecItemNotFound (-25300) truncated to 8 bits.
+        Ok(None)
+    } else {
+        // stderr may contain credential details. Never expose command output
+        // in errors or logs, and never turn denied access into a missing login.
+        Err("The macOS Keychain could not be read.".into())
+    }
 }
 
 /// Drops every cached credential. Callers that must observe a change another
@@ -761,6 +808,32 @@ mod tests {
             Some(json)
         );
         assert!(decode_go_keyring_value(b"plain text").is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn security_reader_distinguishes_missing_credentials_from_denied_access() {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::{ExitStatus, Output};
+
+        let output = |code| Output {
+            status: ExitStatus::from_raw(code << 8),
+            stdout: b"secret-token\n".to_vec(),
+            stderr: b"credential detail: secret-token".to_vec(),
+        };
+        assert_eq!(
+            super::decode_security_password_output(output(0))
+                .unwrap()
+                .as_deref(),
+            Some(b"secret-token\n".as_slice())
+        );
+        assert_eq!(
+            super::decode_security_password_output(output(44)).unwrap(),
+            None
+        );
+        let error = super::decode_security_password_output(output(45)).unwrap_err();
+        assert!(!error.contains("secret-token"));
+        assert!(super::decode_security_password_output(output(128)).is_err());
     }
 
     #[test]

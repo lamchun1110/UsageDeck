@@ -16,8 +16,14 @@ UsageDeck tracks Claude subscription limits and local Claude usage history.
 ## Sign-in and local data
 
 Sign in with Claude Code by running `claude`. UsageDeck reuses the credentials maintained by the
-CLI, including `CLAUDE_CONFIG_DIR` when it is set. Refreshed CLI credentials are saved back to the
-same source when possible.
+CLI, including `CLAUDE_CONFIG_DIR` when it is set. On macOS, UsageDeck reads Claude Code's Keychain
+item using the same Apple-signed `/usr/bin/security` reader as the CLI. This reuses that reader's
+existing permission when Claude Code renews its login and drops permissions granted to other apps.
+UsageDeck does not change the item's access controls.
+
+Claude Code maintains and renews its own Keychain login on macOS and Windows. If that login expires,
+UsageDeck shows the last successful limits until Claude Code renews it. File-based logins and Linux
+Secret Service logins can be refreshed and saved back to their original source by UsageDeck.
 
 ## Multiple accounts
 
@@ -40,6 +46,16 @@ uploaded by UsageDeck.
 
 - **Not logged in** — run `claude`, complete sign-in, then refresh UsageDeck.
 - **Claude Desktop login found** — sign in once through the Claude Code CLI.
+- **Claude Code credentials could not be read** — check access to the system credential store, then
+  refresh UsageDeck. This indicates an unreadable CLI login rather than a Desktop-only login.
+- **Claude Code login is incomplete** — the saved CLI credential has no usable access token. Run
+  `claude`, sign in again, then refresh UsageDeck. Granting Keychain access cannot restore missing
+  tokens.
+- **Repeated macOS permission dialogs** — allow `security` to read the `Claude Code-credentials`
+  item when macOS requests it. "Always Allow" applies to that reader and item. If Claude Code resets
+  the item's permissions, macOS may ask again; UsageDeck cannot prevent the owning app from doing
+  so. Avoid granting access to all applications. A dialog naming `usagedeck` for this item indicates
+  an older UsageDeck build that reads it directly.
 - **Session or token expired** — sign in again with `claude`.
 - **No local history** — use Claude Code normally and check whether `CLAUDE_CONFIG_DIR` points to
   the directory containing your Claude data.
