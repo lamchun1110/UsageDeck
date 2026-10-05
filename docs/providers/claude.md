@@ -42,6 +42,17 @@ Spend history is calculated locally from Claude usage logs. It can also include 
 usage recorded by pi and, on macOS, Claude's local agent-mode sessions. These local records are not
 uploaded by UsageDeck.
 
+## Bonus limit resets
+
+The **Rate Limit Resets** row currently shows **Unavailable** with guidance to check Claude's
+**Settings → Usage** page. The Claude Code connection used by UsageDeck does not currently supply
+the web/Desktop reset offers, so UsageDeck cannot show their count or send expiry reminders.
+An unavailable count is different from a confirmed zero.
+
+These bonus resets are separate from the regular session and weekly reset schedules. See
+[Claude's limit-reset guide](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset)
+for expiry and redemption details. UsageDeck does not read encrypted Desktop sessions to obtain them.
+
 ## Troubleshooting
 
 - **Not logged in** — run `claude`, complete sign-in, then refresh UsageDeck.

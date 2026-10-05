@@ -88,6 +88,16 @@ fn definition_for(id: &str, display_name: &str, fallback_enabled: bool) -> Provi
                 false,
                 "E",
             ),
+            MetricDefinition::value(
+                "claude.rateLimitResets",
+                "Rate Limit Resets",
+                "rateLimitResets",
+                true,
+                MetricSection::OnDemand,
+                false,
+                "R",
+                Some("resets"),
+            ),
             MetricDefinition::trend("claude.trend"),
             MetricDefinition::usage(
                 "claude.today",

@@ -32,6 +32,8 @@ const baseSettings: AppSettings = {
     almostOut: true,
     cuttingItClose: true,
     willRunOut: true,
+    resetExpiring: false,
+    resetExpiryHours: 24,
   },
   detectionNoticeDismissed: true,
   kickstartProviderIds: [],
@@ -97,5 +99,15 @@ describe('SettingsScreen language selector', () => {
     } finally {
       setLanguage('system');
     }
+  });
+  it('enables expiry notifications without changing the other preferences', async () => {
+    const onChange = vi.fn();
+    renderSettings(onChange);
+    await fireEvent.click(screen.getByRole('checkbox', { name: /Resets expiring/ }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        notifications: { ...baseSettings.notifications, resetExpiring: true },
+      }),
+    );
   });
 });

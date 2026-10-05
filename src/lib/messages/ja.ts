@@ -387,4 +387,17 @@ export const ja = {
   'reorder.moved': '{label} を移動しました。',
   'reorder.moveCancelled': '{label} の移動を取り消しました。',
   'reorder.defaultLabel': '項目',
+  'settings.row.resetExpiring': 'リセットの期限通知',
+  'settings.notify.resetExpiring.tooltip':
+    'リセット行が非表示でも、取得した各有効期限につき一度通知します。期限不明の場合は通知できません。',
+  'settings.row.resetExpiryNotice': '期限前に通知',
+  'settings.notify.resetLeadHours': '{hours} 時間前',
+  'reset.unavailable': '取得できません',
+  'reset.dataUnavailable': 'この接続ではリセット数を取得できません。',
+  'reset.claudeUnavailable':
+    'Claude の「設定 → 使用量」でリセットを確認してください。UsageDeck の Claude Code ログインではこれらの情報を取得できません。',
+  'reset.zaiUnavailable':
+    'ZCode の「使用量統計」でリセットカードを確認してください。Z.ai API キーでは取得できません。',
+  'reset.unknownExpiries': '他に {count} 個の期限が不明です',
+  'reset.nextExpiry': '次の期限: {time}',
 } as const;

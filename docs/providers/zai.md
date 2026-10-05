@@ -18,6 +18,17 @@ credential store. UsageDeck also checks `ZAI_API_KEY`, `GLM_API_KEY`,
 
 The key must belong to an account with an active GLM Coding Plan.
 
+## Bonus reset cards
+
+The **Rate Limit Resets** row currently shows **Unavailable** with guidance to check **Usage Stats**
+in ZCode. ZCode's reset-card status requires both a ZCode login and Coding Plan account
+authentication; UsageDeck's API-key connection does not supply them. UsageDeck cannot show these
+card counts or send expiry reminders through the current connection. An unavailable count is
+different from a confirmed zero.
+
+Reset cards are separate from the automatic five-hour and weekly quota resets. See the
+[official ZCode usage guide](https://zcode.z.ai/en/docs/usage-stats) for eligibility and expiry details.
+
 ## Troubleshooting
 
 - **Add an API key** — add a key in Customize or provide one through a supported external source.

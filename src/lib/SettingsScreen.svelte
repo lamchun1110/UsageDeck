@@ -56,7 +56,8 @@
   const anyNotificationEnabled = $derived(
     settings.notifications.almostOut ||
       settings.notifications.cuttingItClose ||
-      settings.notifications.willRunOut,
+      settings.notifications.willRunOut ||
+      settings.notifications.resetExpiring,
   );
   const notificationsNeedAttention = $derived(
     anyNotificationEnabled && settingsView.notificationPermission !== 'granted',
@@ -382,6 +383,38 @@
         onchange={(event) => patchNotification('willRunOut', event.currentTarget.checked)}
       /></label
     >
+    <label class="setting-row">
+      <span
+        ><b>{t('settings.row.resetExpiring')}</b><i
+          class="setting-info"
+          data-tooltip={t('settings.notify.resetExpiring.tooltip')}
+          aria-label={t('settings.notify.resetExpiring.tooltip')}
+          ><Icon name="about" size={12} strokeWidth={1.8} /></i
+        ></span
+      >
+      <input
+        type="checkbox"
+        checked={settings.notifications.resetExpiring}
+        onchange={(event) => patchNotification('resetExpiring', event.currentTarget.checked)}
+      />
+    </label>
+    {#if settings.notifications.resetExpiring}
+      <div class="setting-row">
+        <span><b>{t('settings.row.resetExpiryNotice')}</b></span>
+        <SelectMenu
+          label={t('settings.row.resetExpiryNotice')}
+          value={String(settings.notifications.resetExpiryHours)}
+          options={[1, 24, 48, 168].map((hours) => ({
+            value: String(hours),
+            label: t('settings.notify.resetLeadHours', { hours }),
+          }))}
+          onChange={(value) =>
+            patch({
+              notifications: { ...settings.notifications, resetExpiryHours: Number(value) },
+            })}
+        />
+      </div>
+    {/if}
     {#if notificationsNeedAttention}
       <div class="notification-actions">
         <div class="notification-attention" role="status">

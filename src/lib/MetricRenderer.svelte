@@ -83,6 +83,8 @@
     {now}
     resetDisplay={settings.resetDisplay}
     timeFormat={settings.timeFormat}
+    providerId={snapshot.providerId}
+    resetMetric={definition.source.sourceId === 'rateLimitResets'}
   />
 {:else if definition?.source.kind === 'quota' || definition?.source.kind === 'quotaOrValue'}
   <section
@@ -110,5 +112,7 @@
     {now}
     resetDisplay={settings.resetDisplay}
     timeFormat={settings.timeFormat}
+    providerId={snapshot.providerId}
+    resetMetric={definition.source.sourceId === 'rateLimitResets'}
   />
 {/if}

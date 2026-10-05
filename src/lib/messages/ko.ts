@@ -383,4 +383,17 @@ export const ko = {
   'reorder.moved': '{label} 이동됨',
   'reorder.moveCancelled': '{label} 이동 취소됨',
   'reorder.defaultLabel': '항목',
+  'settings.row.resetExpiring': '초기화 만료 알림',
+  'settings.notify.resetExpiring.tooltip':
+    '초기화 행이 숨겨져 있어도 확인된 각 만료 시간에 한 번 알립니다. 만료 시간을 알 수 없으면 알림을 보낼 수 없습니다.',
+  'settings.row.resetExpiryNotice': '만료 전 알림',
+  'settings.notify.resetLeadHours': '{hours}시간 전',
+  'reset.unavailable': '확인할 수 없음',
+  'reset.dataUnavailable': '이 제공업체 연결로는 초기화 개수를 확인할 수 없습니다.',
+  'reset.claudeUnavailable':
+    'Claude의 설정 → 사용량에서 초기화를 확인하세요. UsageDeck이 사용하는 Claude Code 로그인으로는 이 정보를 가져올 수 없습니다.',
+  'reset.zaiUnavailable':
+    'ZCode의 사용량 통계에서 초기화 카드를 확인하세요. Z.ai API 키로는 가져올 수 없습니다.',
+  'reset.unknownExpiries': '{count}개의 만료 시간을 알 수 없습니다',
+  'reset.nextExpiry': '다음 만료: {time}',
 } as const;

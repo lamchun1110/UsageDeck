@@ -67,6 +67,16 @@ pub(crate) fn definition() -> ProviderDefinition {
                 false,
                 "Search",
             ),
+            MetricDefinition::value(
+                "zai.rateLimitResets",
+                "Rate Limit Resets",
+                "rateLimitResets",
+                true,
+                MetricSection::OnDemand,
+                false,
+                "R",
+                Some("resets"),
+            ),
         ],
     }
 }

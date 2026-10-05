@@ -5,6 +5,7 @@
   import { formatResetDetail } from './pacing';
   import Icon from './Icon.svelte';
   import ResetCreditsDetail from './ResetCreditsDetail.svelte';
+  import { availableResetCount, liveResetExpiries } from './resetCredits';
   import type { ValueMetric } from './types';
 
   interface Props {
@@ -13,22 +14,50 @@
     now: number;
     resetDisplay: 'countdown' | 'exact';
     timeFormat: 'system' | 'twelveHour' | 'twentyFourHour';
+    providerId?: string;
+    resetMetric?: boolean;
   }
 
-  let { label, metric, now, resetDisplay, timeFormat }: Props = $props();
+  let {
+    label,
+    metric,
+    now,
+    resetDisplay,
+    timeFormat,
+    providerId = '',
+    resetMetric = false,
+  }: Props = $props();
   let detailOpen = $state(false);
   let detailTop = $state(8);
   let showTimer: ReturnType<typeof setTimeout> | undefined;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   let detailTrigger = $state<HTMLButtonElement>();
   let restoringTriggerFocus = false;
-  const showsResetDetail = $derived(metric?.id === 'rateLimitResets');
+  const showsResetDetail = $derived(resetMetric || metric?.id === 'rateLimitResets');
+  const resetCount = $derived(availableResetCount(metric, now));
+  const liveExpiries = $derived(liveResetExpiries(metric, now));
+  const resetUnavailable = $derived(
+    providerId.split('@')[0] === 'claude'
+      ? t('reset.claudeUnavailable')
+      : providerId.split('@')[0] === 'zai'
+        ? t('reset.zaiUnavailable')
+        : t('reset.dataUnavailable'),
+  );
+  const nearestExpiry = $derived(
+    liveExpiries[0] ? formatResetDetail(liveExpiries[0], now, resetDisplay, timeFormat) : null,
+  );
   const hasEstimatedValue = $derived(metric?.values.some((value) => value.estimated) ?? false);
 
   const reading = $derived(
-    metric?.values
-      .map((value) => formatMetricValue(value.number, value.kind, 'row', value.label ?? undefined))
-      .join(' · ') ?? t('quota.noData'),
+    showsResetDetail
+      ? resetCount === null
+        ? t('reset.unavailable')
+        : t('reset.available', { count: resetCount })
+      : (metric?.values
+          .map((value) =>
+            formatMetricValue(value.number, value.kind, 'row', value.label ?? undefined),
+          )
+          .join(' · ') ?? t('quota.noData')),
   );
   const tooltip = $derived.by(() => {
     if (!metric) return undefined;
@@ -55,9 +84,8 @@
     return undefined;
   });
   const expirySeverity = $derived.by(() => {
-    if (!metric?.expiriesAt.length) return null;
-    const remaining =
-      Math.min(...metric.expiriesAt.map((value) => new Date(value).getTime())) - now;
+    if (!liveExpiries.length) return null;
+    const remaining = Date.parse(liveExpiries[0]) - now;
     if (remaining <= 48 * 60 * 60 * 1000) return 'critical';
     if (remaining <= 7 * 24 * 60 * 60 * 1000) return 'warning';
     return 'normal';
@@ -116,7 +144,7 @@
   });
 </script>
 
-<div class="value-row">
+<div class="value-row" class:value-row--resets={showsResetDetail}>
   <span>{label}</span>
   {#if showsResetDetail}
     <button
@@ -156,13 +184,27 @@
       {/if}
     </span>
   {/if}
+  {#if showsResetDetail && resetCount !== null && resetCount > 0}
+    <small
+      class="reset-expiry-summary"
+      class:reset-expiry-summary--urgent={expirySeverity === 'critical'}
+    >
+      {nearestExpiry
+        ? t('reset.nextExpiry', {
+            time: nearestExpiry,
+          })
+        : t('value.expiryUnavailable')}
+    </small>
+  {/if}
 </div>
 
-{#if detailOpen && metric}
+{#if detailOpen && showsResetDetail}
   <ResetCreditsDetail
     title={label}
-    count={Math.max(0, Math.floor(metric.values[0]?.number ?? 0))}
-    expiries={metric.expiriesAt}
+    count={resetCount ?? 0}
+    expiries={liveExpiries}
+    canClaim={providerId === 'codex'}
+    unavailableReason={resetCount === null ? resetUnavailable : null}
     {now}
     {timeFormat}
     top={detailTop}
@@ -174,6 +216,19 @@
 
 <style>
   :global {
+    .value-row--resets {
+      flex-wrap: wrap;
+      row-gap: 2px;
+    }
+    .reset-expiry-summary {
+      flex-basis: 100%;
+      text-align: right;
+      color: var(--secondary);
+      font-size: 10px;
+    }
+    .reset-expiry-summary--urgent {
+      color: var(--warning);
+    }
     .value-row {
       display: flex;
       align-items: baseline;

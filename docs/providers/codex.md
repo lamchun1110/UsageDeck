@@ -23,6 +23,22 @@ local usage history, but they cannot provide ChatGPT subscription limits.
 Spend history is calculated locally from the Codex `sessions` and `archived_sessions` logs. Compatible
 Codex usage recorded by pi can also be included. UsageDeck does not upload these local records.
 
+## Reset credits and reminders
+
+**Rate Limit Resets** shows the available count and nearest known expiry. Open the row for the
+expiry timeline. Credits that expire after the last refresh drop out of the displayed count as time
+passes. When the provider reports only a count, UsageDeck says the expiry times are unavailable.
+
+Enable **Settings → Notifications → Resets expiring** and choose a lead time of 1, 24, 48, or 168
+hours. Reminders work even when the reset row is hidden. Each account and deadline is notified once;
+successful deliveries are remembered across app restarts, and failed deliveries are retried with
+backoff. A count without an expiry cannot produce an expiry reminder. Notifications require system
+permission and UsageDeck running.
+
+Using a reset still requires explicit confirmation. Redemption is available for the default Codex
+account; additional account cards show their own reset data without routing a claim to another
+account. UsageDeck does not infer a lifetime total received from the remaining count.
+
 ## Troubleshooting
 
 - **Not logged in** — run `codex`, sign in with ChatGPT, then refresh UsageDeck.

@@ -193,6 +193,10 @@ impl Storage {
                sampled_at TEXT NOT NULL,
                used_percent REAL NOT NULL,
                PRIMARY KEY(provider_id, quota_id, sampled_at)
+             );
+             CREATE TABLE IF NOT EXISTS reset_expiry_notifications (
+               receipt_key TEXT PRIMARY KEY,
+               expires_at INTEGER NOT NULL
              );",
         )?;
         if !Self::has_column(&connection, "log_file_cache", "modified_nanos")? {
@@ -779,6 +783,36 @@ impl Storage {
             transaction.commit()?;
             return Ok(provider_id);
         }
+    }
+
+    pub fn reset_expiry_notified(&self, key: &str) -> Result<bool, StorageError> {
+        self.reader()?
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM reset_expiry_notifications WHERE receipt_key = ?1)",
+                [key],
+                |row| row.get(0),
+            )
+            .map_err(StorageError::from)
+    }
+
+    pub fn save_reset_expiry_notification(
+        &self,
+        key: &str,
+        expires_at: i64,
+    ) -> Result<(), StorageError> {
+        self.connection()?.execute(
+            "INSERT OR IGNORE INTO reset_expiry_notifications(receipt_key, expires_at) VALUES (?1, ?2)",
+            params![key, expires_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn prune_reset_expiry_notifications(&self, now: i64) -> Result<(), StorageError> {
+        self.connection()?.execute(
+            "DELETE FROM reset_expiry_notifications WHERE expires_at <= ?1",
+            [now],
+        )?;
+        Ok(())
     }
 
     pub fn load_panel_height(&self) -> Result<Option<u32>, StorageError> {

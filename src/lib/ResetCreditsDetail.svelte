@@ -16,10 +16,23 @@
     onEnter: () => void;
     onLeave: () => void;
     onDismiss: () => void;
+    canClaim?: boolean;
+    unavailableReason?: string | null;
   }
 
-  let { title, count, expiries, now, timeFormat, top, onEnter, onLeave, onDismiss }: Props =
-    $props();
+  let {
+    title,
+    count,
+    expiries,
+    now,
+    timeFormat,
+    top,
+    onEnter,
+    onLeave,
+    onDismiss,
+    canClaim = false,
+    unavailableReason = null,
+  }: Props = $props();
   let confirmingExpiry = $state<string | null>(null);
   let pendingExpiry = $state<string | null>(null);
   let result = $state<{ expiry: string; outcome: ResetClaimOutcome } | null>(null);
@@ -29,27 +42,30 @@
   const requestIds = new SvelteMap<string, string>();
 
   const entries = $derived(
-    [...expiries].sort().map((expiry, index) => {
-      const timestamp = new Date(expiry).getTime();
-      const remaining = timestamp - now;
-      const severity =
-        remaining <= 48 * 60 * 60 * 1000
-          ? 'critical'
-          : remaining <= 7 * 24 * 60 * 60 * 1000
-            ? 'warning'
-            : 'normal';
-      const countdown = formatResetParts(expiry, now, 'countdown', timeFormat);
-      const exact = formatResetParts(expiry, now, 'exact', timeFormat);
-      const imminent = countdown?.kind === 'soon';
-      return {
-        id: `${expiry}:${index}`,
-        expiry,
-        number: index + 1,
-        severity,
-        exact: imminent ? t('reset.expiringSoon') : (exact?.text ?? t('quota.resetUnavailable')),
-        relative: imminent ? null : (countdown?.text ?? null),
-      };
-    }),
+    [...expiries]
+      .filter((expiry) => Date.parse(expiry) > now)
+      .sort((a, b) => Date.parse(a) - Date.parse(b))
+      .map((expiry, index) => {
+        const timestamp = new Date(expiry).getTime();
+        const remaining = timestamp - now;
+        const severity =
+          remaining <= 48 * 60 * 60 * 1000
+            ? 'critical'
+            : remaining <= 7 * 24 * 60 * 60 * 1000
+              ? 'warning'
+              : 'normal';
+        const countdown = formatResetParts(expiry, now, 'countdown', timeFormat);
+        const exact = formatResetParts(expiry, now, 'exact', timeFormat);
+        const imminent = countdown?.kind === 'soon';
+        return {
+          id: `${expiry}:${index}`,
+          expiry,
+          number: index + 1,
+          severity,
+          exact: imminent ? t('reset.expiringSoon') : (exact?.text ?? t('quota.resetUnavailable')),
+          relative: imminent ? null : (countdown?.text ?? null),
+        };
+      }),
   );
 
   const resultMessage = $derived(
@@ -76,6 +92,7 @@
   }
 
   async function beginClaim(expiry: string, triggerIndex: number) {
+    if (!canClaim || Date.parse(expiry) <= now) return;
     confirmingExpiry = expiry;
     claimTriggerIndex = triggerIndex;
     result = null;
@@ -103,6 +120,7 @@
   }
 
   async function confirmClaim(expiry: string) {
+    if (!canClaim || Date.parse(expiry) <= now) return;
     const requestId = requestIds.get(expiry);
     if (!requestId || pendingExpiry) return;
     pendingExpiry = expiry;
@@ -149,7 +167,9 @@
         {resultMessage}
       </div>
     {/if}
-    {#if entries.length > 0}
+    {#if unavailableReason}
+      <div class="reset-empty"><span>{unavailableReason}</span></div>
+    {:else if entries.length > 0}
       <div class="reset-timeline">
         {#each entries as entry, index (entry.id)}
           <div class="reset-entry-shell">
@@ -169,15 +189,15 @@
                   <strong id={`reset-confirm-title-${index}`}>{t('reset.useTitle')}</strong>
                   <span id={`reset-confirm-message-${index}`}>{t('reset.description')}</span>
                   <div>
-                    <button
-                      class="reset-confirm-primary"
-                      type="button"
-                      disabled={pendingExpiry !== null}
-                      onclick={() => confirmClaim(entry.expiry)}
-                      >{pendingExpiry === entry.expiry
-                        ? t('reset.using')
-                        : t('reset.useReset')}</button
-                    >
+                    {#if canClaim}<button
+                        class="reset-confirm-primary"
+                        type="button"
+                        disabled={pendingExpiry !== null}
+                        onclick={() => confirmClaim(entry.expiry)}
+                        >{pendingExpiry === entry.expiry
+                          ? t('reset.using')
+                          : t('reset.useReset')}</button
+                      >{/if}
                     <button
                       bind:this={cancelButton}
                       type="button"
@@ -191,14 +211,15 @@
                   <span>{entry.exact}</span>
                   <div class="reset-trailing">
                     {#if entry.relative}<small>{entry.relative}</small>{/if}
-                    <button
-                      class="reset-use"
-                      type="button"
-                      data-reset-trigger={index}
-                      aria-label={t('reset.useExpiringAria', { time: entry.exact })}
-                      disabled={pendingExpiry !== null}
-                      onclick={() => void beginClaim(entry.expiry, index)}>{t('reset.use')}</button
-                    >
+                    {#if canClaim}<button
+                        class="reset-use"
+                        type="button"
+                        data-reset-trigger={index}
+                        aria-label={t('reset.useExpiringAria', { time: entry.exact })}
+                        disabled={pendingExpiry !== null}
+                        onclick={() => void beginClaim(entry.expiry, index)}
+                        >{t('reset.use')}</button
+                      >{/if}
                   </div>
                 </div>
               {/if}
@@ -206,6 +227,11 @@
           </div>
         {/each}
       </div>
+      {#if count > entries.length}
+        <div class="reset-empty">
+          <span>{t('reset.unknownExpiries', { count: count - entries.length })}</span>
+        </div>
+      {/if}
     {:else if count > 0}
       <div class="reset-empty">
         <strong>{t('reset.available', { count })}</strong>

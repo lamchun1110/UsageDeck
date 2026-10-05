@@ -33,6 +33,54 @@ pub fn finish_refresh(
     tray_presentation::update(app, state, &preferences, settings.registry());
     notifications.prune(&preferences);
     for snapshot in state.providers.values().filter_map(notification_snapshot) {
+        if preferences.notifications.reset_expiring
+            && permission(app) == crate::models::NotificationPermission::Granted
+            && preferences
+                .providers
+                .iter()
+                .any(|provider| provider.id == snapshot.provider_id && provider.enabled)
+        {
+            let registry = settings.registry().snapshot();
+            if let Some(definition) = registry.definition(&snapshot.provider_id) {
+                let identity = registry.cache_identity(&snapshot.provider_id);
+                if !matches!(identity, crate::providers::CacheIdentity::Unresolved) {
+                    let scope = format!(
+                        "{}:{}",
+                        snapshot.provider_id,
+                        identity.resolved_value().unwrap_or("")
+                    );
+                    let now = chrono::Utc::now();
+                    for metric in snapshot
+                        .value_metrics
+                        .iter()
+                        .filter(|metric| metric.id == "rateLimitResets")
+                    {
+                        app.state::<crate::reset_expiry::ResetExpiryNotifier>()
+                            .notify(
+                                metric,
+                                &scope,
+                                preferences.notifications.reset_expiry_hours,
+                                now,
+                                |count, expiry| {
+                                    let minutes = ((expiry - now).num_seconds().max(1) + 59) / 60;
+                                    let body = format!(
+                                        "{} · {}\n{} reset{} expire{} in {}h {}m ({} UTC).",
+                                        preferences.provider_display_name(definition),
+                                        metric.label,
+                                        count,
+                                        if count == 1 { "" } else { "s" },
+                                        if count == 1 { "s" } else { "" },
+                                        minutes / 60,
+                                        minutes % 60,
+                                        expiry.format("%b %d %H:%M")
+                                    );
+                                    show_notification(app, "Resets Expiring", &body).is_ok()
+                                },
+                            );
+                    }
+                }
+            }
+        }
         let alerts = notifications.evaluate(
             snapshot,
             &preferences,

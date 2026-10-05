@@ -379,4 +379,16 @@ export const zhTW = {
   'reorder.moved': '{label} 已移動。',
   'reorder.moveCancelled': '{label} 的移動已取消。',
   'reorder.defaultLabel': '項目',
+  'settings.row.resetExpiring': '重置即將到期',
+  'settings.notify.resetExpiring.tooltip':
+    '每個已回報的重置到期時間只通知一次，即使重置列已隱藏。未知到期時間無法觸發提醒。',
+  'settings.row.resetExpiryNotice': '到期前提醒',
+  'settings.notify.resetLeadHours': '提前 {hours} 小時',
+  'reset.unavailable': '無法取得',
+  'reset.dataUnavailable': '目前的提供商連線無法取得重置數量。',
+  'reset.claudeUnavailable':
+    '請在 Claude 的「設定 → 用量」查看重置。UsageDeck 使用的 Claude Code 登入無法取得這些優惠。',
+  'reset.zaiUnavailable': '請在 ZCode 的「用量統計」查看重置卡。Z.ai API 金鑰無法取得這些資料。',
+  'reset.unknownExpiries': '另有 {count} 個的到期時間未知',
+  'reset.nextExpiry': '下次到期：{time}',
 } as const;

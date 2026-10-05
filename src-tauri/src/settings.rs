@@ -921,6 +921,9 @@ fn normalize_with_persisted_accounts(
     let catalog = registry.catalog();
     let migrating_to_multi_provider = settings.schema_version < 3;
     settings.schema_version = 8;
+    if ![1, 24, 48, 168].contains(&settings.notifications.reset_expiry_hours) {
+        settings.notifications.reset_expiry_hours = 24;
+    }
     settings.dismissed_update_version = settings
         .dismissed_update_version
         .take()
