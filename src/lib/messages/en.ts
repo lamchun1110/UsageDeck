@@ -400,7 +400,7 @@ export const en = {
   'settings.notify.resetExpiring.tooltip':
     'Notify once for each reported reset expiry, even when the reset row is hidden. Unknown expiry times cannot trigger reminders.',
   'settings.row.resetExpiryNotice': 'Remind before expiry',
-  'settings.notify.resetLeadHours': '{hours} hours before',
+  'settings.notify.resetLeadHours': '{hours}h before',
   'reset.unavailable': 'Unavailable',
   'reset.dataUnavailable': 'Reset counts are unavailable from this provider connection.',
   'reset.claudeUnavailable':
