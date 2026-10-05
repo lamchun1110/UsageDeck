@@ -395,9 +395,13 @@ export const ja = {
   'reset.unavailable': '取得できません',
   'reset.dataUnavailable': 'この接続ではリセット数を取得できません。',
   'reset.claudeUnavailable':
-    'Claude の「設定 → 使用量」でリセットを確認してください。UsageDeck の Claude Code ログインではこれらの情報を取得できません。',
+    'Claude からリセットの情報を取得できませんでした。UsageDeck を更新し、Claude の「設定 → 使用量」を確認してください。',
   'reset.zaiUnavailable':
-    'ZCode の「使用量統計」でリセットカードを確認してください。Z.ai API キーでは取得できません。',
+    '個人 Coding Plan アカウントで ZCode にログインしてください。「ZCode API キーを使用」はこのカードの保存済みキーを置き換え、そのアカウントの使用量とリセットを追跡します。',
+  'reset.useZcodeKey': 'ZCode API キーを使用',
+  'reset.zcodeConnecting': 'ZCode に接続中…',
+  'reset.zcodeConnectFailed':
+    '個人 Z.ai Coding Plan アカウントで ZCode にログインして、もう一度お試しください。',
   'reset.unknownExpiries': '他に {count} 個の期限が不明です',
   'reset.nextExpiry': '次の期限: {time}',
 } as const;

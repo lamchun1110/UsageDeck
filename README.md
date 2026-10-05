@@ -31,21 +31,21 @@ requests carry no credentials or usage data, and they happen whether or not you 
 
 ## What it tracks
 
-| Provider                                          | Credentials | What you get                                                                                 |
-| ------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------- |
-| **[Claude Code](docs/providers/claude.md)**       | Local       | Multiple accounts, session and weekly limits, per-model usage, token history, spend          |
-| **[Codex](docs/providers/codex.md)**              | Local       | Session and weekly limits, rate limit resets, credits, token history, model breakdown, spend |
-| **[Command Code](docs/providers/commandcode.md)** | Local       | Session, weekly, and monthly limits, plus extra credits                                      |
-| **[Cursor](docs/providers/cursor.md)**            | Local       | Total, Auto, and API usage, credits, token history, spend                                    |
-| **[Antigravity](docs/providers/antigravity.md)**  | Local       | Shared Gemini and Claude quota pools                                                         |
-| **[Copilot](docs/providers/copilot.md)**          | Local       | Premium requests, extra usage, chat and completion quotas, org billing                       |
-| **[Devin](docs/providers/devin.md)**              | Local       | Daily and weekly limits, reset times, extra usage balance                                    |
-| **[Grok](docs/providers/grok.md)**                | Local       | Weekly allowance, extra usage status, token history, spend                                   |
-| **[OpenCode](docs/providers/opencode.md)**        | Local       | Go session, weekly, and monthly quotas, plus local usage and estimated spend                 |
-| **[OpenRouter](docs/providers/openrouter.md)**    | API key     | Credits, balance, today, this week, this month, key limit                                    |
-| **[Z.ai](docs/providers/zai.md)**                 | API key     | GLM Coding Plan session, weekly, and web-search quotas                                       |
-| **[Kimi](docs/providers/kimi.md)**                | API key     | Kimi Code session and weekly quotas, on the domain you choose                                |
-| **[MiniMax](docs/providers/minimax.md)**          | API key     | Token Plan session and weekly quotas                                                         |
+| Provider                                          | Credentials | What you get                                                                                      |
+| ------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
+| **[Claude Code](docs/providers/claude.md)**       | Local       | Multiple accounts, session and weekly limits, bonus reset counts and expiry, token history, spend |
+| **[Codex](docs/providers/codex.md)**              | Local       | Session and weekly limits, rate limit resets, credits, token history, model breakdown, spend      |
+| **[Command Code](docs/providers/commandcode.md)** | Local       | Session, weekly, and monthly limits, plus extra credits                                           |
+| **[Cursor](docs/providers/cursor.md)**            | Local       | Total, Auto, and API usage, credits, token history, spend                                         |
+| **[Antigravity](docs/providers/antigravity.md)**  | Local       | Shared Gemini and Claude quota pools                                                              |
+| **[Copilot](docs/providers/copilot.md)**          | Local       | Premium requests, extra usage, chat and completion quotas, org billing                            |
+| **[Devin](docs/providers/devin.md)**              | Local       | Daily and weekly limits, reset times, extra usage balance                                         |
+| **[Grok](docs/providers/grok.md)**                | Local       | Weekly allowance, extra usage status, token history, spend                                        |
+| **[OpenCode](docs/providers/opencode.md)**        | Local       | Go session, weekly, and monthly quotas, plus local usage and estimated spend                      |
+| **[OpenRouter](docs/providers/openrouter.md)**    | API key     | Credits, balance, today, this week, this month, key limit                                         |
+| **[Z.ai](docs/providers/zai.md)**                 | API key     | GLM Coding Plan quotas, personal ZCode reset cards and expiry                                     |
+| **[Kimi](docs/providers/kimi.md)**                | API key     | Kimi Code session and weekly quotas, on the domain you choose                                     |
+| **[MiniMax](docs/providers/minimax.md)**          | API key     | Token Plan session and weekly quotas                                                              |
 
 **Local** providers reuse the login your CLI or editor already created — nothing to configure.
 **API key** providers need a key you paste into Customize once; it goes straight into your operating

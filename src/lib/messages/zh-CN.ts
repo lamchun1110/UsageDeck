@@ -386,8 +386,12 @@ export const zhCN = {
   'reset.unavailable': '无法获取',
   'reset.dataUnavailable': '当前的提供商连接无法获取重置数量。',
   'reset.claudeUnavailable':
-    '请在 Claude 的“设置 → 用量”查看重置。UsageDeck 使用的 Claude Code 登录无法获取这些优惠。',
-  'reset.zaiUnavailable': '请在 ZCode 的“用量统计”查看重置卡。Z.ai API 密钥无法获取这些数据。',
+    'Claude 未返回重置优惠数据。请刷新 UsageDeck，并查看 Claude 的“设置 → 用量”。',
+  'reset.zaiUnavailable':
+    '请以个人 Coding Plan 帐户登录 ZCode。“使用 ZCode API 密钥”会替换此卡片保存的密钥，让用量与重置跟踪该帐户。',
+  'reset.useZcodeKey': '使用 ZCode API 密钥',
+  'reset.zcodeConnecting': '正在连接 ZCode…',
+  'reset.zcodeConnectFailed': '请以个人 Z.ai Coding Plan 帐户登录 ZCode，再重试。',
   'reset.unknownExpiries': '另有 {count} 个的到期时间未知',
   'reset.nextExpiry': '下次到期：{time}',
 } as const;

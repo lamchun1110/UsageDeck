@@ -9,6 +9,11 @@ use crate::providers::http::RATE_LIMIT_MAX_COOLDOWN;
 const OAUTH_SCOPES: &str =
     "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
+// The usage API routes reset offers by the CLI surface in this header. The
+// SDK-style claude-code header returns ineligible_reason: "surface" even for
+// an account with an owned grant. Identify UsageDeck as the external client.
+const USAGE_USER_AGENT: &str = "claude-cli/2.1.289 (external, cli, client-app/UsageDeck)";
+
 #[derive(Deserialize)]
 pub struct ClaudeRefreshResponse {
     pub access_token: String,
@@ -46,18 +51,37 @@ impl ClaudeClient {
         config: &ClaudeOAuthConfig,
     ) -> Result<(StatusCode, Value, Option<u64>), ClaudeError> {
         let started = std::time::Instant::now();
-        let response = self
+        let mut usage_url =
+            reqwest::Url::parse(&config.usage_url).map_err(|_| ClaudeError::InvalidOAuthUrl)?;
+        usage_url.query_pairs_mut().append_pair("cedar_ember", "1");
+        let mut response = self
             .client
-            .get(&config.usage_url)
+            .get(usage_url)
             .bearer_auth(token.trim())
             .header("Accept", "application/json")
             .header("anthropic-beta", "oauth-2025-04-20")
-            .header("User-Agent", "claude-code/2.1.69")
+            .header("User-Agent", USAGE_USER_AGENT)
             .send()
             .map_err(|_| {
                 crate::app_warn!("http", "claude usage request failed (transport)");
                 ClaudeError::ConnectionFailed
             })?;
+        // Older deployments can reject the optional offer query. Preserve the
+        // ordinary quota response without turning this into an auth failure.
+        if matches!(
+            response.status(),
+            StatusCode::BAD_REQUEST | StatusCode::FORBIDDEN
+        ) {
+            response = self
+                .client
+                .get(&config.usage_url)
+                .bearer_auth(token.trim())
+                .header("Accept", "application/json")
+                .header("anthropic-beta", "oauth-2025-04-20")
+                .header("User-Agent", USAGE_USER_AGENT)
+                .send()
+                .map_err(|_| ClaudeError::ConnectionFailed)?;
+        }
         let status = response.status();
         crate::app_debug!(
             "http",
@@ -171,6 +195,58 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["plan"], "max");
         assert_eq!(retry_after, Some(120));
+    }
+
+    #[test]
+    fn offers_use_the_external_cli_surface_and_inventory_query() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let reader = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bytes = [0_u8; 8192];
+            let len = stream.read(&mut bytes).unwrap();
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+            String::from_utf8_lossy(&bytes[..len]).to_ascii_lowercase()
+        });
+        ClaudeClient::new()
+            .unwrap()
+            .fetch_usage("test-token", &config(&url))
+            .unwrap();
+        let request = reader.join().unwrap();
+        assert!(request.starts_with("get /usage?cedar_ember=1 http/1.1"));
+        assert!(request
+            .contains("user-agent: claude-cli/2.1.289 (external, cli, client-app/usagedeck)"));
+        assert!(request.contains("anthropic-beta: oauth-2025-04-20"));
+    }
+
+    #[test]
+    fn rejected_optional_inventory_query_preserves_ordinary_quotas() {
+        use test_http::Step;
+        let (base, requests) = test_http::serve_sequence(vec![
+            Step::Respond {
+                status: 403,
+                headers: vec![],
+                body: r#"{"error":"unsupported query"}"#.into(),
+            },
+            Step::Respond {
+                status: 200,
+                headers: vec![],
+                body: r#"{"five_hour":{"utilization":20}}"#.into(),
+            },
+        ]);
+        let (status, body, _) = ClaudeClient::new()
+            .unwrap()
+            .fetch_usage("test-token", &config(&base))
+            .unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["five_hour"]["utilization"], 20);
+        let requests = requests.lock().unwrap();
+        assert!(requests[0].starts_with("GET /usage?cedar_ember=1 "));
+        assert!(requests[1].starts_with("GET /usage "));
     }
 
     #[test]

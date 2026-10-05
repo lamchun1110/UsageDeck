@@ -44,10 +44,15 @@ uploaded by UsageDeck.
 
 ## Bonus limit resets
 
-The **Rate Limit Resets** row currently shows **Unavailable** with guidance to check Claude's
-**Settings → Usage** page. The Claude Code connection used by UsageDeck does not currently supply
-the web/Desktop reset offers, so UsageDeck cannot show their count or send expiry reminders.
-An unavailable count is different from a confirmed zero.
+The **Rate Limit Resets** row shows remaining bonus resets and the earliest known expiry.
+Open the row to see all expiry dates. Enable **Settings → Notifications → Resets expiring** for
+expiry reminders, including when the row is hidden.
+
+UsageDeck reads the grant inventory alongside usage through your existing Claude Code login.
+No additional sign-in is needed. The count includes owned credits that require reaching a limit
+before redemption, and excludes expired grants and already used credits. A grant with multiple
+remaining credits contributes one expiry entry for each credit. Missing or filtered data shows
+**Unavailable**, which is different from a confirmed zero.
 
 These bonus resets are separate from the regular session and weekly reset schedules. See
 [Claude's limit-reset guide](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset)

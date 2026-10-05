@@ -687,6 +687,7 @@ pub fn run() {
             commands::provider::open_provider_link,
             commands::provider::get_provider_api_key_state,
             commands::provider::save_provider_api_key,
+            commands::provider::use_zcode_api_key,
             commands::provider::delete_provider_api_key,
             commands::provider::add_api_key_account,
             commands::provider::remove_api_key_account,

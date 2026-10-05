@@ -391,9 +391,12 @@ export const ko = {
   'reset.unavailable': '확인할 수 없음',
   'reset.dataUnavailable': '이 제공업체 연결로는 초기화 개수를 확인할 수 없습니다.',
   'reset.claudeUnavailable':
-    'Claude의 설정 → 사용량에서 초기화를 확인하세요. UsageDeck이 사용하는 Claude Code 로그인으로는 이 정보를 가져올 수 없습니다.',
+    'Claude가 초기화 혜택 정보를 반환하지 않았습니다. UsageDeck을 새로고침하고 Claude의 설정 → 사용량을 확인하세요.',
   'reset.zaiUnavailable':
-    'ZCode의 사용량 통계에서 초기화 카드를 확인하세요. Z.ai API 키로는 가져올 수 없습니다.',
+    '개인 Coding Plan 계정으로 ZCode에 로그인하세요. “ZCode API 키 사용”은 이 카드에 저장된 키를 교체하여 해당 계정의 사용량과 초기화를 추적합니다.',
+  'reset.useZcodeKey': 'ZCode API 키 사용',
+  'reset.zcodeConnecting': 'ZCode 연결 중…',
+  'reset.zcodeConnectFailed': '개인 Z.ai Coding Plan 계정으로 ZCode에 로그인한 후 다시 시도하세요.',
   'reset.unknownExpiries': '{count}개의 만료 시간을 알 수 없습니다',
   'reset.nextExpiry': '다음 만료: {time}',
 } as const;

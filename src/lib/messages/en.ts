@@ -404,9 +404,13 @@ export const en = {
   'reset.unavailable': 'Unavailable',
   'reset.dataUnavailable': 'Reset counts are unavailable from this provider connection.',
   'reset.claudeUnavailable':
-    'Check Settings → Usage in Claude for limit resets. The Claude Code login used by UsageDeck does not expose these offers.',
+    'Claude did not return reset-offer data. Refresh UsageDeck and check Settings → Usage in Claude.',
   'reset.zaiUnavailable':
-    'Check Usage Stats in ZCode for reset cards. A Z.ai API key does not expose them.',
+    'Sign in to ZCode with your personal Coding Plan account. Use ZCode API key replaces this card’s saved key so usage and resets track that account.',
+  'reset.useZcodeKey': 'Use ZCode API key',
+  'reset.zcodeConnecting': 'Connecting ZCode…',
+  'reset.zcodeConnectFailed':
+    'Sign in to a personal Z.ai Coding Plan account in ZCode, then try again.',
   'reset.unknownExpiries': '{count} more with unknown expiry times',
   'reset.nextExpiry': 'Next expiry: {time}',
 } as const;

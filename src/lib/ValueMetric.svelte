@@ -205,6 +205,9 @@
     expiries={liveExpiries}
     canClaim={providerId === 'codex'}
     unavailableReason={resetCount === null ? resetUnavailable : null}
+    connectProviderId={resetCount === null && providerId.split('@')[0] === 'zai'
+      ? providerId
+      : null}
     {now}
     {timeFormat}
     top={detailTop}
