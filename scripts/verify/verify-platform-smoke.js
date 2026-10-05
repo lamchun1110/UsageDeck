@@ -152,7 +152,7 @@ requireContracts('release', release, [
   'dbus-tests',
   '--config src-tauri/tauri.windows-signing.conf.json',
   '--config src-tauri/tauri.signpath-unsigned.conf.json',
-  'signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627',
+  'signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092',
   'github-artifact-id: ${{ steps.unsigned-artifact.outputs.artifact_id }}',
   'wait-for-completion: true',
   'Get-AuthenticodeSignature',
