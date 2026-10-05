@@ -17,6 +17,7 @@ mod provider_environment;
 mod provider_options;
 mod providers;
 mod refresh_loop;
+mod reset_expiry;
 mod service;
 mod settings;
 mod storage;
@@ -656,6 +657,7 @@ pub fn run() {
             app.manage(service.clone());
             app.manage(settings.clone());
             app.manage(notifications.clone());
+            app.manage(reset_expiry::ResetExpiryNotifier::new(storage.clone()));
             app.manage(Arc::new(CodexResetClaimService::new()?));
 
             apply_initial_window_state(app, &desktop_integration, &settings, floating_window);

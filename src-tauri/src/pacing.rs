@@ -638,6 +638,7 @@ mod tests {
             cutting_it_close: true,
             will_run_out: true,
             almost_out: true,
+            ..NotificationPreferences::default()
         };
         let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
         let reset = Some(Utc.timestamp_opt(1_800_010_000, 0).unwrap());
@@ -680,6 +681,7 @@ mod tests {
             cutting_it_close: true,
             will_run_out: true,
             almost_out: false,
+            ..NotificationPreferences::default()
         };
         let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
         let reset = Utc.timestamp_opt(1_800_010_000, 0).unwrap();
@@ -739,6 +741,7 @@ mod tests {
             cutting_it_close: true,
             will_run_out: true,
             almost_out: false,
+            ..NotificationPreferences::default()
         };
         let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
         let reset = Utc.timestamp_opt(1_800_010_000, 0).unwrap();

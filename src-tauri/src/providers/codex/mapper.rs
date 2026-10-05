@@ -46,7 +46,7 @@ pub fn map_usage(
     quotas.extend(map_spark_windows(&response.body, now));
 
     let mut value_metrics = Vec::new();
-    if let Some(metric) = map_reset_credits(&response.body, reset_credits) {
+    if let Some(metric) = map_reset_credits(&response.body, reset_credits, now) {
         value_metrics.push(metric);
     }
     if let Some(balance) = read_credits_remaining(response) {
@@ -242,7 +242,11 @@ fn map_window(
     })
 }
 
-fn map_reset_credits(body: &Value, dedicated: Option<&UsageResponse>) -> Option<ValueMetric> {
+fn map_reset_credits(
+    body: &Value,
+    dedicated: Option<&UsageResponse>,
+    now: DateTime<Utc>,
+) -> Option<ValueMetric> {
     let source = reset_credits_source(body, dedicated)?;
     let count = number(source.get("available_count"))?;
     if count < 0.0 {
@@ -260,6 +264,7 @@ fn map_reset_credits(body: &Value, dedicated: Option<&UsageResponse>) -> Option<
                 .is_none_or(|status| status == "available")
         })
         .filter_map(|credit| parse_expiry(credit.get("expires_at")))
+        .filter(|expiry| *expiry > now)
         .collect::<Vec<_>>();
     expiries_at.sort();
     Some(ValueMetric {
@@ -280,7 +285,9 @@ fn reset_credits_source<'a>(
     dedicated: Option<&'a UsageResponse>,
 ) -> Option<&'a Value> {
     if let Some(response) = dedicated.filter(|response| response.status.is_success()) {
-        if response.body.is_object() && number(response.body.get("available_count")).is_some() {
+        if response.body.is_object()
+            && number(response.body.get("available_count")).is_some_and(|count| count >= 0.0)
+        {
             return Some(&response.body);
         }
     }
@@ -383,7 +390,7 @@ fn format_plan(value: Option<&Value>) -> Option<String> {
 mod tests {
     use std::collections::HashMap;
 
-    use chrono::{TimeZone, Utc};
+    use chrono::{DateTime, Duration, TimeZone, Utc};
     use reqwest::StatusCode;
     use serde_json::{json, Value};
 
@@ -488,6 +495,7 @@ mod tests {
                 almost_out: false,
                 cutting_it_close: false,
                 will_run_out: true,
+                ..NotificationPreferences::default()
             },
             ..AppSettings::default()
         };
@@ -686,7 +694,14 @@ mod tests {
                 {"status": "consumed", "expires_at": "2026-02-20T16:10:00Z"}
             ]
         }));
-        let mapped = map_usage(&usage, Some(&dedicated), Utc::now()).unwrap();
+        let mapped = map_usage(
+            &usage,
+            Some(&dedicated),
+            DateTime::parse_from_rfc3339("2026-02-20T16:00:00Z")
+                .unwrap()
+                .to_utc(),
+        )
+        .unwrap();
         assert_eq!(mapped.value_metrics[0].id, "rateLimitResets");
         assert_eq!(mapped.value_metrics[0].values[0].number, 2.0);
         assert_eq!(mapped.value_metrics[0].expiries_at.len(), 2);
@@ -746,5 +761,22 @@ mod tests {
         assert_eq!(mapped.quotas[0].used_percent, 37.5);
         assert_eq!(mapped.quotas[1].period_seconds, 604_800);
         assert!(mapped.quotas.iter().all(|quota| quota.resets_at.is_some()));
+    }
+    #[test]
+    fn reset_count_is_authoritative_and_expired_dates_are_not_stored_as_live_credits() {
+        let now = DateTime::parse_from_rfc3339("2026-10-05T10:00:00Z")
+            .unwrap()
+            .to_utc();
+        let usage = response(
+            json!({"rate_limit_reset_credits":{"available_count":1,"credits":[
+                {"expires_at":"2026-10-05T09:00:00Z"}, {"expires_at":"2026-10-05T11:00:00Z"},
+                {"status":"consumed","expires_at":"2026-10-05T12:00:00Z"}
+            ]}}),
+        );
+        let dedicated = response(json!({"available_count":-1}));
+        let mapped = map_usage(&usage, Some(&dedicated), now).unwrap();
+        let metric = value_metric(&mapped, "rateLimitResets");
+        assert_eq!(metric.values[0].number, 1.0);
+        assert_eq!(metric.expiries_at, vec![now + Duration::hours(1)]);
     }
 }

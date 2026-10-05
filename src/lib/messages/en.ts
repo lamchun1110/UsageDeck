@@ -396,4 +396,17 @@ export const en = {
   'reorder.moved': '{label} moved.',
   'reorder.moveCancelled': '{label} move cancelled.',
   'reorder.defaultLabel': 'Item',
+  'settings.row.resetExpiring': 'Resets expiring',
+  'settings.notify.resetExpiring.tooltip':
+    'Notify once for each reported reset expiry, even when the reset row is hidden. Unknown expiry times cannot trigger reminders.',
+  'settings.row.resetExpiryNotice': 'Remind before expiry',
+  'settings.notify.resetLeadHours': '{hours}h before',
+  'reset.unavailable': 'Unavailable',
+  'reset.dataUnavailable': 'Reset counts are unavailable from this provider connection.',
+  'reset.claudeUnavailable':
+    'Check Settings → Usage in Claude for limit resets. The Claude Code login used by UsageDeck does not expose these offers.',
+  'reset.zaiUnavailable':
+    'Check Usage Stats in ZCode for reset cards. A Z.ai API key does not expose them.',
+  'reset.unknownExpiries': '{count} more with unknown expiry times',
+  'reset.nextExpiry': 'Next expiry: {time}',
 } as const;

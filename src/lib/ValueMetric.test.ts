@@ -59,6 +59,7 @@ describe('ValueMetric', () => {
   it('opens a sorted reset-expiry timeline and distinguishes count-only fallback', async () => {
     const { rerender } = render(ValueMetric, {
       label: 'Rate Limit Resets',
+      providerId: 'codex',
       metric: {
         id: 'rateLimitResets',
         label: 'Rate Limit Resets',
@@ -79,6 +80,7 @@ describe('ValueMetric', () => {
 
     rerender({
       label: 'Rate Limit Resets',
+      providerId: 'codex',
       metric: {
         id: 'rateLimitResets',
         label: 'Rate Limit Resets',
@@ -90,13 +92,14 @@ describe('ValueMetric', () => {
       timeFormat: 'twentyFourHour',
     });
     expect(screen.getAllByText('3 available')).toHaveLength(2);
-    expect(screen.getByText('Expiry times unavailable')).toBeInTheDocument();
+    expect(screen.getAllByText('Expiry times unavailable')).toHaveLength(2);
   });
 
   it('requires confirmation and claims one explicitly selected reset credit', async () => {
     mocks.invoke.mockResolvedValue('success');
     render(ValueMetric, {
       label: 'Rate Limit Resets',
+      providerId: 'codex',
       metric: {
         id: 'rateLimitResets',
         label: 'Rate Limit Resets',
@@ -134,6 +137,7 @@ describe('ValueMetric', () => {
     try {
       render(ValueMetric, {
         label: 'Rate Limit Resets',
+        providerId: 'codex',
         metric: {
           id: 'rateLimitResets',
           label: 'Rate Limit Resets',
@@ -168,6 +172,7 @@ describe('ValueMetric', () => {
     try {
       render(ValueMetric, {
         label: 'Rate Limit Resets',
+        providerId: 'codex',
         metric: {
           id: 'rateLimitResets',
           label: 'Rate Limit Resets',
@@ -223,5 +228,67 @@ describe('ValueMetric', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  it('marks an unknown provider count unavailable and keeps the detail read-only', async () => {
+    render(ValueMetric, {
+      label: 'Rate Limit Resets',
+      providerId: 'claude',
+      resetMetric: true,
+      metric: null,
+      now: Date.parse('2026-10-05T10:00:00Z'),
+      resetDisplay: 'countdown',
+      timeFormat: 'twentyFourHour',
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Rate Limit Resets: Unavailable' }));
+    expect(screen.getByText(/Check Settings → Usage in Claude/)).toBeInTheDocument();
+    expect(screen.queryByText('No rate limit resets available')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Use reset/ })).not.toBeInTheDocument();
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
+  it('removes an expired credit from the count, timeline, and redemption controls as time advances', async () => {
+    const props = {
+      label: 'Rate Limit Resets',
+      providerId: 'codex',
+      metric: {
+        id: 'rateLimitResets',
+        label: 'Rate Limit Resets',
+        values: [{ number: 1, kind: 'count' as const, estimated: false }],
+        expiriesAt: ['2026-10-05T11:00:00Z'],
+      },
+      now: Date.parse('2026-10-05T10:00:00Z'),
+      resetDisplay: 'countdown' as const,
+      timeFormat: 'twentyFourHour' as const,
+    };
+    const { rerender } = render(ValueMetric, props);
+    await fireEvent.click(screen.getByRole('button', { name: 'Rate Limit Resets: 1 available' }));
+    expect(screen.getByRole('button', { name: /Use reset expiring/ })).toBeInTheDocument();
+    await rerender({ ...props, now: Date.parse('2026-10-05T11:00:00Z') });
+    expect(
+      screen.getByRole('button', { name: 'Rate Limit Resets: 0 available' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('No rate limit resets available')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Use reset expiring/ })).not.toBeInTheDocument();
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
+  it('never redeems a different Codex account through the default account command', async () => {
+    render(ValueMetric, {
+      label: 'Rate Limit Resets',
+      providerId: 'codex@1234abcd',
+      metric: {
+        id: 'rateLimitResets',
+        label: 'Rate Limit Resets',
+        values: [{ number: 2, kind: 'count', estimated: false }],
+        expiriesAt: ['2026-10-05T11:00:00Z'],
+      },
+      now: Date.parse('2026-10-05T10:00:00Z'),
+      resetDisplay: 'countdown',
+      timeFormat: 'twentyFourHour',
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Rate Limit Resets: 2 available' }));
+    expect(screen.queryByRole('button', { name: /Use reset expiring/ })).not.toBeInTheDocument();
+    expect(screen.getByText('1 more with unknown expiry times')).toBeInTheDocument();
+    expect(mocks.invoke).not.toHaveBeenCalled();
   });
 });

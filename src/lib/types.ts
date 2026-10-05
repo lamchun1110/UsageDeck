@@ -226,6 +226,8 @@ export interface NotificationPreferences {
   almostOut: boolean;
   cuttingItClose: boolean;
   willRunOut: boolean;
+  resetExpiring: boolean;
+  resetExpiryHours: number;
 }
 
 export interface AppSettings {

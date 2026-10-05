@@ -113,7 +113,8 @@ stored in `~/.config/openquota/{kimi,minimax,zai}.json` are still read; new keys
 - **Pacing.** Tells you whether today's burn rate lasts until the reset, before it doesn't.
 - **History.** Today, yesterday, and the trailing 30 days of tokens and estimated spend.
 - **Heads-up before it hurts.** Optional desktop notifications when a quota is almost out, when
-  you are cutting it close, and when your pace says you will run out before the reset.
+  you are cutting it close, and when your pace says you will run out before the reset. Reset-credit
+  expiry reminders support a selectable lead time and stay quiet after successful delivery.
 - **Yours to arrange.** Reorder providers and metrics, hide rows, collapse sections.
 - **Yours to look at.** Light, dark, or system, five accent colours, a compact density, and 12- or
   24-hour clocks.

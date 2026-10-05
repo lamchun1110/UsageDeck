@@ -786,12 +786,26 @@ pub enum WindowMode {
     Popup,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct NotificationPreferences {
     pub almost_out: bool,
     pub cutting_it_close: bool,
     pub will_run_out: bool,
+    pub reset_expiring: bool,
+    pub reset_expiry_hours: u16,
+}
+
+impl Default for NotificationPreferences {
+    fn default() -> Self {
+        Self {
+            almost_out: false,
+            cutting_it_close: false,
+            will_run_out: false,
+            reset_expiring: false,
+            reset_expiry_hours: 24,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1094,5 +1108,15 @@ mod tests {
                 ProviderLink::new("HTTP", "http://example.com/dashboard"),
             ]
         );
+    }
+    #[test]
+    fn old_notification_preferences_preserve_toggles_and_default_reset_reminders_off() {
+        let preferences: super::NotificationPreferences =
+            serde_json::from_value(serde_json::json!({"almostOut":true,"willRunOut":true}))
+                .unwrap();
+        assert!(preferences.almost_out);
+        assert!(preferences.will_run_out);
+        assert!(!preferences.reset_expiring);
+        assert_eq!(preferences.reset_expiry_hours, 24);
     }
 }
