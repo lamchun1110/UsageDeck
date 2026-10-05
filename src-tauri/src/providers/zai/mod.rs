@@ -1,6 +1,7 @@
 mod auth;
 mod client;
 mod mapper;
+pub(crate) mod resets;
 
 use std::sync::Arc;
 
@@ -195,7 +196,7 @@ impl ZaiProvider {
             provider_id: self.identity.provider_id.clone(),
             plan: mapped.plan,
             quotas: mapped.quotas,
-            value_metrics: Vec::new(),
+            value_metrics: resets::fetch(api_key, Utc::now()).into_iter().collect(),
             status_metrics: Vec::new(),
             notices: Vec::new(),
             usage: UsageHistory::default(),

@@ -54,6 +54,10 @@ export function saveProviderApiKey(providerId: string, apiKey: string) {
   return invoke<ApiKeyMutationOutcome>('save_provider_api_key', { providerId, apiKey });
 }
 
+export function useZcodeApiKey(providerId: string) {
+  return invoke<ApiKeyMutationOutcome>('use_zcode_api_key', { providerId });
+}
+
 export function deleteProviderApiKey(providerId: string) {
   return invoke<ApiKeyMutationOutcome>('delete_provider_api_key', { providerId });
 }

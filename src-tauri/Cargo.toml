@@ -1,6 +1,6 @@
 [package]
 name = "usagedeck"
-version = "0.7.11"
+version = "0.7.12"
 description = "Cross-platform AI quota tracker"
 authors = ["UsageDeck contributors"]
 edition = "2021"
@@ -17,6 +17,7 @@ base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
 notify-rust = "4.18.0"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "form", "json", "rustls"] }
+ring = "0.17"
 regex = "1"
 roxmltree = "0.21"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
@@ -37,6 +38,7 @@ thiserror = "2"
 tiny-skia = { version = "0.12", default-features = false, features = ["simd", "std"] }
 tokio = { version = "1", features = ["sync", "time"] }
 walkdir = "2"
+whoami = "2"
 zeroize = "1.8"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]

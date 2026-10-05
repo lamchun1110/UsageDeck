@@ -240,7 +240,7 @@ describe('ValueMetric', () => {
       timeFormat: 'twentyFourHour',
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Rate Limit Resets: Unavailable' }));
-    expect(screen.getByText(/Check Settings → Usage in Claude/)).toBeInTheDocument();
+    expect(screen.getByText(/Claude did not return reset-offer data/)).toBeInTheDocument();
     expect(screen.queryByText('No rate limit resets available')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Use reset/ })).not.toBeInTheDocument();
     expect(mocks.invoke).not.toHaveBeenCalled();
@@ -270,6 +270,32 @@ describe('ValueMetric', () => {
     expect(screen.getByText('No rate limit resets available')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Use reset expiring/ })).not.toBeInTheDocument();
     expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
+  it('explains a ZCode key replacement and imports it only after the selected account action', async () => {
+    mocks.invoke.mockResolvedValue({
+      state: { providerId: 'zai@personal', status: 'saved' },
+      warning: null,
+    });
+    render(ValueMetric, {
+      label: 'Rate Limit Resets',
+      providerId: 'zai@personal',
+      resetMetric: true,
+      metric: null,
+      now: Date.parse('2026-10-05T00:00:00Z'),
+      resetDisplay: 'countdown',
+      timeFormat: 'twentyFourHour',
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Rate Limit Resets: Unavailable' }));
+    expect(screen.getByText(/replaces this card’s saved key/)).toBeInTheDocument();
+    expect(mocks.invoke).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Use ZCode API key' }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith('use_zcode_api_key', {
+        providerId: 'zai@personal',
+      }),
+    );
+    expect(screen.queryByRole('button', { name: /Use reset expiring/ })).not.toBeInTheDocument();
   });
 
   it('never redeems a different Codex account through the default account command', async () => {

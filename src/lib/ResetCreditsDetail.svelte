@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import { t } from './i18n.svelte';
   import { SvelteMap } from 'svelte/reactivity';
-  import { claimCodexResetCredit } from './backend';
+  import { claimCodexResetCredit, useZcodeApiKey } from './backend';
   import { formatResetParts } from './pacing';
   import type { ResetClaimOutcome } from './types';
 
@@ -18,6 +18,7 @@
     onDismiss: () => void;
     canClaim?: boolean;
     unavailableReason?: string | null;
+    connectProviderId?: string | null;
   }
 
   let {
@@ -32,10 +33,27 @@
     onDismiss,
     canClaim = false,
     unavailableReason = null,
+    connectProviderId = null,
   }: Props = $props();
   let confirmingExpiry = $state<string | null>(null);
   let pendingExpiry = $state<string | null>(null);
   let result = $state<{ expiry: string; outcome: ResetClaimOutcome } | null>(null);
+  let connecting = $state(false);
+  let connectionError = $state<string | null>(null);
+
+  async function connectZcode() {
+    if (!connectProviderId || connecting) return;
+    connecting = true;
+    connectionError = null;
+    try {
+      const outcome = await useZcodeApiKey(connectProviderId);
+      if (outcome.warning) connectionError = outcome.warning;
+    } catch {
+      connectionError = t('reset.zcodeConnectFailed');
+    } finally {
+      connecting = false;
+    }
+  }
   let dialogElement: HTMLDivElement | undefined;
   let cancelButton = $state<HTMLButtonElement>();
   let claimTriggerIndex = $state<number | null>(null);
@@ -168,7 +186,19 @@
       </div>
     {/if}
     {#if unavailableReason}
-      <div class="reset-empty"><span>{unavailableReason}</span></div>
+      <div class="reset-empty">
+        <span>{unavailableReason}</span>
+        {#if connectProviderId}
+          <button
+            type="button"
+            class="reset-use"
+            disabled={connecting}
+            onclick={() => void connectZcode()}
+            >{connecting ? t('reset.zcodeConnecting') : t('reset.useZcodeKey')}</button
+          >
+          {#if connectionError}<span role="status">{connectionError}</span>{/if}
+        {/if}
+      </div>
     {:else if entries.length > 0}
       <div class="reset-timeline">
         {#each entries as entry, index (entry.id)}

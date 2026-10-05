@@ -20,11 +20,27 @@ The key must belong to an account with an active GLM Coding Plan.
 
 ## Bonus reset cards
 
-The **Rate Limit Resets** row currently shows **Unavailable** with guidance to check **Usage Stats**
-in ZCode. ZCode's reset-card status requires both a ZCode login and Coding Plan account
-authentication; UsageDeck's API-key connection does not supply them. UsageDeck cannot show these
-card counts or send expiry reminders through the current connection. An unavailable count is
-different from a confirmed zero.
+The **Rate Limit Resets** row reads reset status from your local ZCode login. Sign in to ZCode
+with the same **personal Coding Plan** account and use that account's ZCode-managed API key on
+the UsageDeck card. UsageDeck matches the API key before sending a request, so a different
+account's reset cards cannot appear on this card. Team and start-plan connections are not supported.
+
+If your card uses a different API key, choose **Use ZCode API key** in the unavailable reset row.
+This replaces that card's saved API key with the signed-in ZCode account's personal-plan key;
+both quota usage and reset cards then refer to that account. The key stays in the operating
+system credential store and never enters the frontend. You can restore your previous key in
+**Customize** at any time.
+
+UsageDeck reads `~/.zcode/v2/credentials.json` (or `ZCODE_HOME` / `ZCODE_DESKTOP_HOME_DIR`) without
+changing it, and decrypts ZCode's credential format in memory. `ZCODE_CREDENTIAL_SECRET`, if
+used by ZCode, must also be supplied to the UsageDeck process. It requests only reset **status**;
+it does not redeem cards or mark reset history as read.
+
+The count combines available five-hour and weekly cards, excludes expired cards, and shows
+the earliest expiry. Open the row to see all dates. Enable **Settings → Notifications →
+Resets expiring** for expiry reminders. An unavailable login or mismatched API key shows
+**Unavailable**; a successful response with no available cards shows **0 available**.
+If ZCode's login expires, reopen ZCode and refresh UsageDeck.
 
 Reset cards are separate from the automatic five-hour and weekly quota resets. See the
 [official ZCode usage guide](https://zcode.z.ai/en/docs/usage-stats) for eligibility and expiry details.

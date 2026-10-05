@@ -234,6 +234,39 @@ pub async fn save_provider_api_key(
 }
 
 #[tauri::command]
+pub async fn use_zcode_api_key(
+    app: AppHandle,
+    registry: State<'_, Arc<ProviderRegistry>>,
+    service: State<'_, Arc<ProviderService>>,
+    settings: State<'_, Arc<SettingsService>>,
+    notifications: State<'_, Arc<NotificationEvaluator>>,
+    provider_id: String,
+) -> Result<ApiKeyMutationOutcome, String> {
+    if crate::providers::provider_family(&provider_id) != "zai"
+        || registry.runtime(&provider_id).is_none()
+    {
+        return Err("ZCode keys can only be used with a Z.ai card.".into());
+    }
+    let key =
+        tauri::async_runtime::spawn_blocking(crate::providers::zai::resets::local_personal_api_key)
+            .await
+            .map_err(|_| "Could not read the ZCode login.".to_owned())?
+            .ok_or_else(|| {
+                "Sign in to a personal Z.ai Coding Plan account in ZCode first.".to_owned()
+            })?;
+    save_provider_api_key(
+        app,
+        registry,
+        service,
+        settings,
+        notifications,
+        provider_id,
+        key.to_string(),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn delete_provider_api_key(
     app: AppHandle,
     registry: State<'_, Arc<ProviderRegistry>>,

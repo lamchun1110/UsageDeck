@@ -3,6 +3,7 @@ pub mod auth;
 mod client;
 mod local_usage;
 mod mapper;
+mod resets;
 
 use std::{
     path::PathBuf,
@@ -605,7 +606,8 @@ impl ClaudeProvider {
         warnings: Vec<String>,
         now: chrono::DateTime<Utc>,
     ) -> Result<ProviderSnapshot, ClaudeError> {
-        let mapped = map_usage(status, body, &credential.oauth)?;
+        let mut mapped = map_usage(status, body, &credential.oauth)?;
+        mapped.value_metrics.extend(resets::map_offer(body, now));
         let snapshot = ProviderSnapshot {
             provider_id: self.provider_id().into(),
             plan: mapped.plan,
