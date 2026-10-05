@@ -23,7 +23,7 @@ command-code login
 UsageDeck reads `~/.commandcode/auth.json` locally. The session key remains on your device and is
 used only to request Command Code usage data.
 
-For current individual plans, the monthly meter uses the plan allocation published by Command Code
+For plans with a recognized allocation, the monthly meter uses that allocation
 and resets at the end of the subscription billing cycle. If a custom or future plan does not expose
 a known allocation, UsageDeck shows the remaining monthly balance instead of guessing a limit.
 

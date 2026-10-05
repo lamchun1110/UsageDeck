@@ -18,6 +18,8 @@ UsageDeck tracks account credits, balance, and spending through an OpenRouter AP
 Add an OpenRouter API key from **Customize** in UsageDeck. Saved keys are kept in the operating
 system's credential store. UsageDeck can also use `OPENROUTER_API_KEY` or
 `OPENROUTER_KEY`, or read `~/.config/openrouter/key.json`; a key saved in the app takes priority.
+These external sources apply to the default OpenRouter card. Named accounts use their own saved
+keys; see the [multiple-account setup](../usage.md#named-api-key-accounts).
 
 ## Troubleshooting
 

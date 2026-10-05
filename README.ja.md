@@ -23,26 +23,31 @@ UsageDeck は、Windows、Linux、macOS に対応したオープンソースか�
 
 トレイまたはメニューバーに常駐し、マシンに保存済みの認証情報を再利用します。すべてローカルで動作し、UsageDeck アカウント、バックエンド、分析、テレメトリはありません。
 
+使用量の更新は、設定または認証した第三者のサービスに直接接続します。費用推定に使う公開モデル価格は GitHub、models.dev、openrouter.ai から約 1 日ごとに取得し、この通信に認証情報や使用履歴は含みません。Session Kickstart を有効にすると CLI が小さなプロンプトを送信し、プロバイダーの利用枠を消費します。Codex のリセット利用には確認が必要です。詳しくは[プライバシーポリシー](https://usagedeck.app/privacy/)をご覧ください。
+
+表示できる指標はプロバイダーとアカウントのプランによって異なります。
+
 ## OpenQuota からの移行
 
-UsageDeck は OpenQuota のフォークとして始まり、現在は独立したプロジェクトです。データはそのまま引き継がれます：初回起動時、UsageDeck は既存の OpenQuota インストールから設定・使用履歴・価格キャッシュ・Antigravity のローカルデータを自動で移行し、OS の資格情報ストアに保存された API キーも UsageDeck 固有のエントリーへ移します。旧ロケーションから削除されるものはありません。`~/.config/openquota/{kimi,minimax,zai}.json` に保存されたキーも引き続き読み込まれ、新しいキーは `~/.config/usagedeck/` に保存されます。OpenRouter は従来のパス `~/.config/openrouter/key.json` を引き続き読み込みます。
+UsageDeck は OpenQuota のフォークから独立したプロジェクトです。初回起動時に、既存の OpenQuota から設定・使用履歴・価格キャッシュ・Antigravity のローカルデータをコピーし、元のファイルは保持します。API キーは OS の資格情報ストアの `UsageDeck` エントリーへ移し、新しいキーの保存に成功した場合のみ古い資格情報エントリーを削除します。移行に失敗したキーは「カスタマイズ」で再登録してください。`~/.config/openquota/{kimi,minimax,zai}.json` と `~/.config/usagedeck/{kimi,minimax,zai}.json` は外部キーの読み込み元として引き続き使えます。アプリで保存したキーは OS の資格情報ストアに入ります。OpenRouter は `~/.config/openrouter/key.json` も読み込みます。
 
 ## インストール
 
 [最新リリース](https://github.com/lamchun1110/UsageDeck/releases/latest)からお使いのプラットフォーム向けのファイルを取得してください。
 
-| プラットフォーム | ファイル                                   | 備考                                             |
-| ---------------- | ------------------------------------------ | ------------------------------------------------ |
-| Windows          | `_x64-setup.exe` または `_arm64-setup.exe` | x64 と ARM64                                     |
-| macOS            | `_universal.dmg`                           | Universal、Developer ID 署名済み、Apple 公証済み |
-| Linux            | `.AppImage`、`.deb` または `.rpm`          | x64 と ARM64、GPG 分離署名付き                   |
+| プラットフォーム | ファイル                                   | 備考                                  |
+| ---------------- | ------------------------------------------ | ------------------------------------- |
+| Windows          | `_x64-setup.exe` または `_arm64-setup.exe` | x64 と ARM64                          |
+| macOS            | `_universal.dmg`                           | Intel と Apple Silicon、macOS 11 以降 |
+| Linux            | `.AppImage`、`.deb` または `.rpm`          | x64 と ARM64                          |
 
-アプリは自動で更新されます。更新ペイロードはプロジェクト独自のアップデーター鍵で署名されており、これは OS のパッケージ署名とは別の仕組みです。
+UsageDeck は更新を自動確認できます。Windows、macOS、Linux AppImage はアプリ内から更新をインストールできます。Linux の `.deb` と `.rpm` はリリースページを開くので、新しいパッケージをダウンロードしてインストールしてください。更新ファイルはプロジェクトのアップデーター鍵で署名し、OS のネイティブ署名とは別に検証します。
 
 ### リリース署名
 
-- **macOS:** リポジトリ変数 `ENABLE_MACOS_NATIVE_SIGNING` が `true` の場合、公式リリースは Apple Developer ID 証明書で署名され、Apple による公証が適用されます。署名済みリリースのバンドル ID は `com.lamchun1110.usagedeck` です。リリースワークフローは公開前に、コード署名・Gatekeeper 評価・公証チケット・Hardened Runtime を検証します。
-- **Linux:** すべての `.AppImage`、`.deb`、`.rpm` に、ASCII armored の分離署名 `<file>.asc` が付きます。リリースには `SHA256SUMS`、その GPG 署名版である `SHA256SUMS.asc`、検証に必要な公開鍵 `usagedeck-gpg-public.asc` も含まれます。
+- **Windows:** Authenticode 署名の有無はリリースの設定によります。対象リリースの署名情報を確認してください。未署名のインストーラーでは SmartScreen が警告する場合があります。
+- **macOS:** Developer ID 署名と Apple 公証はリリースごとに有効化します。無効の場合はアドホック署名で、公証はありません。
+- **Linux:** GPG 署名を有効にしたリリースには `<file>.asc`、`SHA256SUMS`、クリア署名文書 `SHA256SUMS.asc`、公開鍵 `usagedeck-gpg-public.asc` が含まれます。RPM には埋め込み署名も付きます。
 
 Linux ダウンロードを検証するには:
 
@@ -53,32 +58,36 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 ```
 
 > [!IMPORTANT]
-> Windows インストーラーは現在 Authenticode 署名がないため、SmartScreen が確認を求めることがあります。UsageDeck は必ず本リポジトリのリリースページからのみダウンロードしてください。各リリースのノートに正確な署名状況が記載されています。
+> このリポジトリのリリースページからダウンロードし、対象リリースの署名情報と提供ファイルを確認してください。ネイティブ署名のないビルドでは Windows SmartScreen や macOS Gatekeeper が警告する場合があります。検証コマンドは [docs/releasing.md](docs/releasing.md) にあります。
 
 ## 取得できる情報
 
-| プロバイダー                                      | 認証情報 | 取得内容                                                                                 |
-| ------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
-| **[Claude Code](docs/providers/claude.md)**       | ローカル | 複数アカウント、セッションと週次の上限、モデル別使用量、トークン履歴、費用               |
-| **[Codex](docs/providers/codex.md)**              | ローカル | セッションと週次の上限、レート制限のリセット、クレジット、トークン履歴、モデル内訳、費用 |
-| **[Command Code](docs/providers/commandcode.md)** | ローカル | セッション・週次・月次の上限と追加クレジット                                             |
-| **[Cursor](docs/providers/cursor.md)**            | ローカル | 全体・Auto・API の使用量、クレジット、トークン履歴、費用                                 |
-| **[Antigravity](docs/providers/antigravity.md)**  | ローカル | Gemini と Claude で共有されるクォータ                                                    |
-| **[Copilot](docs/providers/copilot.md)**          | ローカル | プレミアムリクエスト、追加使用量、チャットと補完の上限、組織課金                         |
-| **[Devin](docs/providers/devin.md)**              | ローカル | 日次と週次の上限、リセット時刻、追加使用量の残高                                         |
-| **[Grok](docs/providers/grok.md)**                | ローカル | 週次の割当、追加使用量の状態、トークン履歴、費用                                         |
-| **[OpenCode](docs/providers/opencode.md)**        | ローカル | Go のセッション・週次・月次の上限と、ローカルの使用履歴                                  |
-| **[OpenRouter](docs/providers/openrouter.md)**    | API キー | クレジット残高と日次・週次・月次の費用                                                   |
-| **[Z.ai](docs/providers/zai.md)**                 | API キー | GLM Coding Plan のセッション・週次・ウェブ検索の上限                                     |
-| **[Kimi](docs/providers/kimi.md)**                | API キー | Kimi Code のセッションと週次の上限（ドメインを選択可能）                                 |
-| **[MiniMax](docs/providers/minimax.md)**          | API キー | Token Plan のセッションと週次の上限                                                      |
+| プロバイダー                                      | 認証情報 | 取得内容                                                                                  |
+| ------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------- |
+| **[Claude Code](docs/providers/claude.md)**       | ローカル | 複数アカウント、セッションと週次の上限、ボーナスリセット数と有効期限、トークン履歴、費用  |
+| **[Codex](docs/providers/codex.md)**              | ローカル | セッションと週次の上限、リセットクレジットと有効期限、トークン履歴、モデル内訳、費用      |
+| **[Command Code](docs/providers/commandcode.md)** | ローカル | セッション・週次・月次の上限と追加クレジット                                              |
+| **[Cursor](docs/providers/cursor.md)**            | ローカル | 全体・Auto・API の使用量、クレジット、トークン履歴、費用                                  |
+| **[Antigravity](docs/providers/antigravity.md)**  | ローカル | Gemini と Claude で共有されるクォータ                                                     |
+| **[Copilot](docs/providers/copilot.md)**          | ローカル | プレミアムリクエストまたは AI クレジット、追加使用量、チャットと補完の上限、組織課金      |
+| **[Devin](docs/providers/devin.md)**              | ローカル | 日次と週次の上限、リセット時刻、追加使用量の残高                                          |
+| **[Grok](docs/providers/grok.md)**                | ローカル | 週次の割当、追加使用量の状態、トークン履歴、費用                                          |
+| **[OpenCode](docs/providers/opencode.md)**        | ローカル | 複数の Go アカウント、セッション・週次・月次の上限、ローカル使用履歴と推定費用            |
+| **[OpenRouter](docs/providers/openrouter.md)**    | API キー | クレジット、残高、日次・週次・月次の費用、キー上限                                        |
+| **[Z.ai](docs/providers/zai.md)**                 | API キー | GLM Coding Plan のセッション・週次・ウェブ検索の上限、個人 ZCode リセットカードと有効期限 |
+| **[Kimi](docs/providers/kimi.md)**                | API キー | Kimi Code のセッションと週次の上限（ドメインを選択可能）                                  |
+| **[MiniMax](docs/providers/minimax.md)**          | API キー | Token Plan のセッションと週次の上限                                                       |
 
 **ローカル**のプロバイダーは、CLI やエディターが作成済みのログインをそのまま利用するため、設定は不要です。**API キー**のプロバイダーは「カスタマイズ」で一度キーを貼り付ける必要があります。キーは設定ファイルではなく OS の資格情報ストアに直接保存されます。Codex のサブスクリプション上限には ChatGPT のログインが必要で、API キーのみの環境では表示されません。
 
 ## 使い心地
 
+- **複数アカウント。** Claude のプロファイル、OpenCode Go のデータディレクトリ、OpenRouter・Z.ai・Kimi・MiniMax の名前付き API キーアカウントを個別カードで表示します。名前付き API アカウントは再起動せず追加できます。
+- **リセットの期限通知。** Claude、Codex、個人 ZCode の利用可能数と既知の有効期限を表示し、1・24・48・168 時間前に通知できます。リセット行が非表示でも通知します。Z.ai には同じ個人 ZCode アカウントのログインと API キーが必要です。
+- **Session Kickstart。** 任意で、ローリング利用枠の期限後に小さな CLI プロンプトを実行し、新しい枠を開始します。各プロンプトは利用枠を消費し、組み込みまたはカスタムコマンドを使えます。
+- **Linux のトレイ対応。** 利用可能なシステムトレイがない場合は独立ウィンドウを使います。
 - **トレイのポップアップ、またはフローティングウィンドウ。** さっと確認して閉じるか、サブディスプレイに開いたままにするか。
-- **重要な値をピン留め。** 任意のメトリクスをトレイや macOS のメニューバーに表示できます。
+- **重要な値をピン留め。** 対応するメトリクスをトレイや macOS のメニューバーに表示できます。
 - **使用量と残量。** 考えやすいほうで表示できます。
 - **ペース配分。** 上限に達してしまう前に、現在のペースで次のリセットまで持つかどうかを知らせます。
 - **履歴。** 今日・昨日・直近 30 日のトークン使用量と概算費用。
@@ -89,11 +98,15 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 - **あなたの言語で。** English・繁體中文・简体中文・日本語・한국어、またはシステムの設定に追従。
 - **邪魔をしない。** ログイン時に起動、グローバルショートカット、システムテーマへの追従。
 
-すべてローカルで動作します。アカウントもバックエンドも、分析もテレメトリーもありません。
+データは端末に保存します。UsageDeck アカウント、プロジェクト運営のバックエンド、分析、テレメトリはありません。使用量と価格の更新は第三者のサービスに直接接続します。
+
+アカウント設定、リセット通知、更新については[使い方ガイド（英語）](docs/usage.md)をご覧ください。
 
 ## ソースからのビルド
 
-Node.js 24 以降、pnpm 11.11.0、安定版 Rust ツールチェーン、そしてお使いのプラットフォーム向けの [Tauri 2 の前提条件](https://v2.tauri.app/start/prerequisites/)が必要です。
+Node.js 24 以降、pnpm 11.11.0、rustup でインストールした Rust、そしてお使いのプラットフォーム向けの [Tauri 2 の前提条件](https://v2.tauri.app/start/prerequisites/)が必要です。
+
+Rust のバージョン、Clippy、rustfmt は [rust-toolchain.toml](rust-toolchain.toml) で固定され、rustup が自動選択します。
 
 ```sh
 corepack pnpm install --frozen-lockfile

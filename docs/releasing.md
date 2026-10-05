@@ -9,8 +9,9 @@ key is project-generated and does not require a paid certificate authority or si
 
 ## One-time repository setup
 
-Releases publish from `lamchun1110/UsageDeck`. Before the first release of a fresh clone or renamed
-repository:
+Releases publish from `lamchun1110/UsageDeck`. Existing releases use the public key committed in
+`src-tauri/tauri.conf.json` and the matching repository signing secret; cloning the repository does
+not require generating a new key. For a new fork or release identity:
 
 1. Generate a dedicated updater keypair (never reuse another project's release identity):
 
@@ -18,9 +19,10 @@ repository:
    corepack pnpm tauri signer generate -w ~/.tauri/usagedeck.key
    ```
 
-   The command writes `usagedeck.key` (private) and `usagedeck.key.pub` (public). The public key
-   is already embedded in `src-tauri/tauri.conf.json` under `plugins.updater.pubkey` as base64;
-   regenerate both together if you ever rotate the key.
+   The command writes `usagedeck.key` (private) and `usagedeck.key.pub` (public). Set
+   `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` to the generated public-key value and
+   configure the corresponding private key in that repository's secrets. The committed UsageDeck
+   public key must not be paired with a newly generated private key.
 
 2. Add repository secrets:
 
@@ -131,10 +133,8 @@ SignPath.io, certificate by SignPath Foundation.”
 
 ## Enabling Linux GPG signing
 
-Linux does not rely on a public CA. UsageDeck signs the Linux installer artifacts
-with a project-controlled GPG key and publishes the matching public key alongside
-the release, so users can verify first-install provenance even though no platform
-authority is involved.
+Linux GPG signing is optional per release. When enabled, UsageDeck signs installer artifacts
+with a project-controlled key and publishes the matching public key alongside the release.
 
 Add repository secrets:
 
@@ -158,42 +158,49 @@ The release workflow then:
    signature round-trip, and uploads the `.asc` files next to the artifacts.
 2. Builds RPM packages carrying an embedded OpenPGP signature from the same key
    (`TAURI_SIGNING_RPM_KEY`), so `rpmkeys`/`dnf` can verify them directly once the public
-   key is imported. Note: rpm only parses EdDSA header signatures from 4.19 on, so the
-   embedded signature checks out on Fedora 40+/RHEL 10/openSUSE Tumbleweed while rpm 4.18
-   and older report it as invalid; the detached `.asc` covers every distro.
+   key is imported. Embedded signature compatibility depends on the installed RPM version and
+   signing algorithm; detached `.asc` verification with GPG is available independently of RPM.
 3. Builds a `SHA256SUMS` manifest covering every installer (Windows, macOS, Linux),
    clearsigns it with the same key, and uploads `SHA256SUMS`, `SHA256SUMS.asc`, and
    `usagedeck-gpg-public.asc` to the release.
 4. Refuses to publish when the secret is missing or the key has no fingerprint.
 
-Leaving `ENABLE_LINUX_GPG_SIGNING` unset (or set to `false`) keeps today's behavior:
-the workflow emits a warning and uploads only the updater-signed artifacts.
+Leaving `ENABLE_LINUX_GPG_SIGNING` unset (or set to `false`) skips the GPG signatures and checksum
+manifest. Updater signatures remain mandatory.
 
 ### User-side verification
 
 ```sh
-# 1. Trust the project key exactly once.
+# Run these commands for a release that includes GPG signatures.
+# 1. Download the public key and verify its fingerprint against a trusted publication.
 curl -L -o usagedeck-release.asc \
   https://github.com/lamchun1110/UsageDeck/releases/latest/download/usagedeck-gpg-public.asc
 gpg --import usagedeck-release.asc
+gpg --show-keys --fingerprint usagedeck-release.asc
 
 # 2. Verify the checksum manifest signature and the manifest itself.
 curl -L -O https://github.com/lamchun1110/UsageDeck/releases/latest/download/SHA256SUMS.asc
-curl -L -O https://github.com/lamchun1110/UsageDeck/releases/latest/download/SHA256SUMS
-gpg --verify SHA256SUMS.asc SHA256SUMS
-sha256sum --strict --check SHA256SUMS
+gpg --verify SHA256SUMS.asc
+# SHA256SUMS.asc is a clearsigned document, not a detached signature.
+# Extract the verified document and check just the installer you downloaded.
+gpg --output SHA256SUMS.verified --decrypt SHA256SUMS.asc
+sha256sum --strict --ignore-missing --check SHA256SUMS.verified
 
 # 3. Verify a specific installer before installing it.
-gpg --verify UsageDeck_0.5.2_amd64.deb.asc UsageDeck_0.5.2_amd64.deb
+installer='UsageDeck_X.Y.Z_amd64.deb' # Replace with the downloaded filename.
+gpg --verify "$installer.asc" "$installer"
 
 # RPM packages additionally carry an embedded signature from the same key:
 rpmkeys --import usagedeck-release.asc
-rpmkeys --checksig UsageDeck_0.5.2_x86_64.rpm
+rpm_installer='UsageDeck_X.Y.Z_x86_64.rpm' # Replace with the downloaded filename.
+rpmkeys --checksig "$rpm_installer"
 ```
 
-Cross-check the key fingerprint against the announcement published on the
-project's website before trusting the key — the `.asc` file alone only proves
-it was the same key as for the prior release.
+Set `installer` and `rpm_installer` to the exact downloaded filenames before running the commands
+that use them. Run the checksum command in the directory containing the downloaded installers.
+An asset and a key from the same download source do not independently establish the key's identity;
+maintainers should publish the fingerprint through a separate trusted channel when enabling or
+rotating GPG signing.
 
 ## Enabling macOS native signing
 
@@ -245,14 +252,15 @@ assets and start a fresh release run using `esign` or `none`.
 Run these commands in PowerShell on the downloaded installer:
 
 ```powershell
-$signature = Get-AuthenticodeSignature -LiteralPath .\UsageDeck_0.7.0_x64-setup.exe
+$installer = '.\UsageDeck_X.Y.Z_x64-setup.exe' # Replace with the downloaded filename.
+$signature = Get-AuthenticodeSignature -LiteralPath $installer
 $signature | Format-List Status, StatusMessage, Path
 $signature.SignerCertificate | Format-List Subject, Thumbprint, NotBefore, NotAfter
 $signature.TimeStamperCertificate | Format-List Subject, NotBefore, NotAfter
 if ($signature.Status -ne 'Valid') { throw 'Invalid Authenticode signature' }
 
 # Optional second verification when the Windows SDK is installed:
-signtool.exe verify /pa /all /tw .\UsageDeck_0.7.0_x64-setup.exe
+signtool.exe verify /pa /all /tw $installer
 ```
 
 Compare `SignerCertificate.Subject` with the release's documented identity or the configured
@@ -262,7 +270,9 @@ expected only when the release notes explicitly identify the Windows artifacts a
 ## Cutting a release
 
 1. Bump the version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` so
-   `corepack pnpm verify:versions` passes.
+   `corepack pnpm verify:versions` passes. Refresh the package entry in `src-tauri/Cargo.lock` too.
+   Update user-facing docs and `website/` for any changed features or setup steps; the Pages workflow
+   publishes website changes merged to `main` independently of application releases.
 2. Open a pull request, get it green, and merge to `main`.
 3. Tag the release commit and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. The Release workflow validates the tag, builds and smoke-tests every platform target, verifies

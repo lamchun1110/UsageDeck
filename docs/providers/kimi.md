@@ -13,8 +13,10 @@ UsageDeck tracks the Session (rolling five-hour) and Weekly quotas of a Kimi Cod
 
 Create a Kimi Code API key in the [Kimi Code Console](https://www.kimi.com/code/console), then add
 it in **Customize** in UsageDeck. Saved keys are stored in the operating system's credential store.
-UsageDeck also checks `KIMI_API_KEY` and `~/.config/usagedeck/kimi.json`; a key saved in the app
-takes priority.
+UsageDeck also checks `KIMI_API_KEY`, `~/.config/usagedeck/kimi.json`, and the legacy
+`~/.config/openquota/kimi.json`; a key saved in the app takes priority. These external sources
+apply to the default Kimi card. Named accounts use their own saved keys; see the
+[multiple-account setup](../usage.md#named-api-key-accounts).
 
 ## Choosing an endpoint
 

@@ -13,8 +13,10 @@ UsageDeck tracks the Session and Weekly quotas of a MiniMax Token Plan.
 
 Create or view the Token Plan subscription key in the [MiniMax global console](https://platform.minimax.io/console/plan),
 then add it in **Customize** in UsageDeck. Saved keys are stored in the operating system's credential
-store. UsageDeck also checks `MINIMAX_API_KEY` and `~/.config/usagedeck/minimax.json`; a key saved
-in the app takes priority.
+store. UsageDeck also checks `MINIMAX_API_KEY`, `~/.config/usagedeck/minimax.json`, and the legacy
+`~/.config/openquota/minimax.json`; a key saved in the app takes priority. These external sources
+apply to the default MiniMax card. Named accounts use their own saved keys; see the
+[multiple-account setup](../usage.md#named-api-key-accounts).
 
 This provider uses MiniMax's global endpoint, `https://www.minimax.io/v1/token_plan/remains`. Use a
 key from the global console; keys from the mainland China platform are a separate account system.

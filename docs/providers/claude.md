@@ -10,6 +10,7 @@ UsageDeck tracks Claude subscription limits and local Claude usage history.
 | Weekly                           | Usage remaining in the weekly window                         |
 | Sonnet / Fable                   | Model-specific limits when they are reported for the account |
 | Extra Usage                      | Extra-usage allowance or spending reported by Claude         |
+| Rate Limit Resets                | Available bonus resets and reported expiry dates             |
 | Today / Yesterday / Last 30 Days | Tokens and estimated spend calculated from local usage logs  |
 | Usage Trend                      | Recent local usage over time                                 |
 
@@ -30,6 +31,12 @@ Secret Service logins can be refreshed and saved back to their original source b
 UsageDeck discovers separate Claude Code logins that use custom `CLAUDE_CONFIG_DIR` homes and shows
 each account as its own card with independent limits, plan, and local usage history. Logins belonging
 to the same Claude account are combined automatically.
+
+For automatic discovery, use a directory such as `~/.claude-work` or `~/.config/claude-work`.
+UsageDeck scans home directories starting with `.claude` and directories under `~/.config` whose
+names contain `claude`. Sign in with
+`CLAUDE_CONFIG_DIR=~/.claude-work claude`, then restart UsageDeck to discover the profile. See the
+[usage guide](../usage.md) for PowerShell setup and other account options.
 
 Account cards can be renamed from Customize or from the dashboard. If a login is removed, its card
 is hidden and returns with its previous customization when the login is detected again.

@@ -27,8 +27,10 @@ Security vulnerabilities should not be reported in a public issue. Follow
 
 ## Development setup
 
-You need Node.js 24 or later, pnpm 11.11.0, stable Rust, and the
+You need Node.js 24 or later, pnpm 11.11.0, Rust installed through rustup, and the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
+The repository selects its compiler, Clippy, and rustfmt through
+[rust-toolchain.toml](rust-toolchain.toml). Use that pinned toolchain to match CI and release builds.
 
 ```sh
 corepack pnpm install --frozen-lockfile
@@ -61,6 +63,9 @@ still needs CI.
 - Explain the problem and the chosen solution.
 - Add or update tests when behavior changes.
 - Include screenshots for visible interface changes.
+- Update the README translations, relevant provider guides, and `website/` when changing setup
+  or user-visible behavior. The website is plain HTML, published by the Pages workflow on changes
+  merged to `main`; it has no build step.
 - Keep platform-specific behavior working on Windows, macOS, and Linux where applicable.
 - Do not include unrelated formatting, generated build output, credentials, or local configuration.
 

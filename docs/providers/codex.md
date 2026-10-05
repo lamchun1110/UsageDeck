@@ -35,9 +35,9 @@ successful deliveries are remembered across app restarts, and failed deliveries 
 backoff. A count without an expiry cannot produce an expiry reminder. Notifications require system
 permission and UsageDeck running.
 
-Using a reset still requires explicit confirmation. Redemption is available for the default Codex
-account; additional account cards show their own reset data without routing a claim to another
-account. UsageDeck does not infer a lifetime total received from the remaining count.
+Using a reset requires explicit confirmation and applies to the active Codex login. UsageDeck
+currently follows one Codex account rather than discovering separate Codex account cards. It does
+not infer a lifetime total received from the remaining count.
 
 ## Troubleshooting
 

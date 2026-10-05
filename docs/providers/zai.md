@@ -4,17 +4,20 @@ UsageDeck tracks quota information for the Z.ai GLM Coding Plan.
 
 ## What it tracks
 
-| Metric       | Meaning                                      |
-| ------------ | -------------------------------------------- |
-| Session      | Usage remaining in the rolling 5-hour window |
-| Weekly       | Usage remaining in the rolling 7-day window  |
-| Web Searches | Monthly web-search allowance remaining       |
+| Metric            | Meaning                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| Session           | Usage remaining in the rolling 5-hour window                   |
+| Weekly            | Usage remaining in the rolling 7-day window                    |
+| Web Searches      | Monthly web-search allowance remaining                         |
+| Rate Limit Resets | Available personal ZCode reset cards and reported expiry dates |
 
 ## Setup
 
 Add a Z.ai API key from **Customize** in UsageDeck. Saved keys are kept in the operating system's
 credential store. UsageDeck also checks `ZAI_API_KEY`, `GLM_API_KEY`,
-`~/.config/usagedeck/zai.json`, and `~/.config/zai/key.json`; a key saved in the app takes priority.
+`~/.config/usagedeck/zai.json`, `~/.config/openquota/zai.json`, and `~/.config/zai/key.json`;
+a key saved in the app takes priority. These external sources apply to the default Z.ai card.
+Named accounts use their own saved keys; see the [multiple-account setup](../usage.md#named-api-key-accounts).
 
 The key must belong to an account with an active GLM Coding Plan.
 
