@@ -406,7 +406,7 @@ export const en = {
   'reset.claudeUnavailable':
     'Claude did not return reset-offer data. Refresh UsageDeck and check Settings → Usage in Claude.',
   'reset.zaiUnavailable':
-    'Sign in to ZCode with your personal Coding Plan account. Use ZCode API key replaces this card’s saved key so usage and resets track that account.',
+    'Sign in to ZCode with the same personal Coding Plan account, then refresh. If account verification fails, Use ZCode API key replaces this card’s saved key so usage and resets track that account.',
   'reset.useZcodeKey': 'Use ZCode API key',
   'reset.zcodeConnecting': 'Connecting ZCode…',
   'reset.zcodeConnectFailed':

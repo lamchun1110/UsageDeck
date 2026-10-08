@@ -1,5 +1,5 @@
-//! ZCode's read-only reset status belongs to its signed-in personal account,
-//! rather than to every API key. Never send a token until the key matches.
+//! ZCode's read-only reset status belongs to its signed-in personal account.
+//! Match either its generated key or the server-reported subscription owner.
 use std::{fs::File, io::Read, path::Path};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -13,9 +13,11 @@ use zeroize::Zeroizing;
 use crate::models::{MetricValue, MetricValueKind, ValueMetric};
 
 const STATUS_URL: &str = "https://zcode.z.ai/api/v1/coding-plan/reset/status";
+const SUBSCRIPTION_URL: &str = "https://api.z.ai/api/biz/subscription/list";
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 struct Credentials {
+    personal_key: Zeroizing<String>,
     jwt: Zeroizing<String>,
     access_token: Zeroizing<String>,
 }
@@ -77,17 +79,19 @@ fn personal_key(data: &Value, secret: &str) -> Option<Zeroizing<String>> {
     (!key.trim().is_empty()).then_some(key)
 }
 
-fn matching_credentials(data: &Value, api_key: &str, secret: &str) -> Option<Credentials> {
-    if personal_key(data, secret)?.trim() != api_key.trim() {
-        return None;
-    }
+fn credentials(data: &Value, secret: &str) -> Option<Credentials> {
+    let personal_key = personal_key(data, secret)?;
     let read = |name: &str| decrypt(data.get(name)?.as_str()?, secret);
     let jwt = read("zcodejwttoken")?;
     let access_token = read("oauth:zai:access_token")?;
     if jwt.trim().is_empty() || access_token.trim().is_empty() {
         return None;
     }
-    Some(Credentials { jwt, access_token })
+    Some(Credentials {
+        personal_key,
+        jwt,
+        access_token,
+    })
 }
 
 fn percent_encode(value: &str) -> String {
@@ -140,39 +144,112 @@ fn local_file() -> Option<(Value, Zeroizing<String>)> {
     Some((data, secret))
 }
 
-fn local_credentials(api_key: &str) -> Option<Credentials> {
+fn local_credentials() -> Option<Credentials> {
     let (data, secret) = local_file()?;
-    matching_credentials(&data, api_key, &secret)
+    credentials(&data, &secret)
 }
 
 pub(crate) fn local_personal_api_key() -> Option<Zeroizing<String>> {
     let (data, secret) = local_file()?;
     let key = personal_key(&data, &secret)?;
-    matching_credentials(&data, &key, &secret)?;
+    credentials(&data, &secret)?;
     // A failed/expired reset login must not replace the card's working key.
-    fetch(&key, Utc::now())?;
+    fetch(&key, None, Utc::now())?;
     Some(key)
 }
 
-pub(super) fn fetch(api_key: &str, now: DateTime<Utc>) -> Option<ValueMetric> {
-    let credentials = local_credentials(api_key)?;
+pub(super) fn fetch(
+    api_key: &str,
+    subscription: Option<&Value>,
+    now: DateTime<Utc>,
+) -> Option<ValueMetric> {
+    let credentials = local_credentials()?;
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()?;
-    let jwt = credentials.jwt.trim();
-    let jwt = if jwt
+    fetch_with_credentials(
+        &client,
+        &credentials,
+        api_key,
+        subscription,
+        (STATUS_URL, SUBSCRIPTION_URL),
+        now,
+    )
+}
+
+fn bearer_token(value: &str) -> &str {
+    let value = value.trim();
+    if value
         .get(..7)
         .is_some_and(|s| s.eq_ignore_ascii_case("bearer "))
     {
-        &jwt[7..]
+        value[7..].trim()
     } else {
-        jwt
-    };
+        value
+    }
+}
+
+// Different keys can belong to the same account. Subscription responses are
+// authenticated by Z.ai, unlike a key prefix, plan name, or local account name.
+// Require one unambiguous owner and preserve integer IDs without float rounding.
+fn subscription_owner(body: &Value) -> Option<String> {
+    if body.get("code")?.as_u64()? != 200 || !body.get("success")?.as_bool()? {
+        return None;
+    }
+    let rows = body.get("data")?.as_array()?;
+    let mut owner = None;
+    for row in rows {
+        let value = row.get("customerId")?;
+        let id = if let Some(value) = value.as_str() {
+            let value = value.trim();
+            if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            value.trim_start_matches('0').to_owned()
+        } else {
+            value.as_u64()?.to_string()
+        };
+        if id.is_empty() || id == "0" {
+            return None;
+        }
+        if owner.as_ref().is_some_and(|owner| owner != &id) {
+            return None;
+        }
+        owner = Some(id);
+    }
+    owner
+}
+
+fn fetch_with_credentials(
+    client: &reqwest::blocking::Client,
+    credentials: &Credentials,
+    api_key: &str,
+    subscription: Option<&Value>,
+    endpoints: (&str, &str),
+    now: DateTime<Utc>,
+) -> Option<ValueMetric> {
+    let (status_url, subscription_url) = endpoints;
+    if credentials.personal_key.trim() != api_key.trim() {
+        let card_owner = subscription_owner(subscription?)?;
+        let response = client
+            .get(subscription_url)
+            .bearer_auth(bearer_token(&credentials.access_token))
+            .header("Accept", "application/json")
+            .send()
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let account_subscription: Value = response.json().ok()?;
+        if subscription_owner(&account_subscription)? != card_owner {
+            return None;
+        }
+    }
     let response = client
-        .get(STATUS_URL)
-        .bearer_auth(jwt.trim())
+        .get(status_url)
+        .bearer_auth(bearer_token(&credentials.jwt))
         .header("X-Bigmodel-Authorization", credentials.access_token.trim())
         .header("Bigmodel-Target-Type", "PERSONAL")
         .header("Accept", "application/json")
@@ -256,11 +333,168 @@ mod tests {
     }
 
     #[test]
-    fn only_uses_the_matching_personal_account() {
+    fn only_loads_the_active_personal_account() {
         let data = json!({"oauth:active_provider":"zai","oauth:zai:user_info":"{\"user_id\":\"test-user\"}","account-provider:coding-plan:account:zai-individual-coding-plan:account:test-user:api-key":"matching-key","zcodejwttoken":"jwt","oauth:zai:access_token":"token"});
-        assert!(matching_credentials(&data, "matching-key", "unused").is_some());
-        assert!(matching_credentials(&data, "another-key", "unused").is_none());
+        assert_eq!(
+            credentials(&data, "unused").unwrap().personal_key.as_str(),
+            "matching-key"
+        );
+        let mut other_account = data.clone();
+        other_account["oauth:zai:user_info"] = json!("{\"user_id\":\"another-user\"}");
+        assert!(credentials(&other_account, "unused").is_none());
+        let mut other_provider = data;
+        other_provider["oauth:active_provider"] = json!("bigmodel");
+        assert!(credentials(&other_provider, "unused").is_none());
         assert!(decrypt("enc:v2:unknown", "unused").is_none());
+    }
+
+    fn subscription(customer_id: Value) -> Value {
+        json!({"code":200,"success":true,"data":[{"customerId":customer_id}]})
+    }
+
+    fn test_credentials() -> Credentials {
+        Credentials {
+            personal_key: Zeroizing::new("zcode-key".into()),
+            jwt: Zeroizing::new("Bearer zcode-jwt".into()),
+            access_token: Zeroizing::new("oauth-access-token".into()),
+        }
+    }
+
+    fn reset_status(now: DateTime<Utc>) -> Value {
+        json!({"code":0,"data":{"available_five_hour_resets":[{"expire_at":(now+chrono::Duration::hours(4)).timestamp_millis()}],"available_week_resets":[]}})
+    }
+
+    #[test]
+    fn subscription_owner_requires_authenticated_unambiguous_ids() {
+        // IDs exceed JavaScript's integer precision; compare their exact digits.
+        let id = "12345678901234567";
+        assert_eq!(
+            subscription_owner(&subscription(json!(id))).as_deref(),
+            Some(id)
+        );
+        assert_eq!(
+            subscription_owner(&subscription(json!(12345678901234567_u64))).as_deref(),
+            Some(id)
+        );
+        let repeated = json!({"code":200,"success":true,"data":[{"customerId":id},{"customerId":12345678901234567_u64}]});
+        assert_eq!(subscription_owner(&repeated).as_deref(), Some(id));
+        for body in [
+            json!({"code":401,"success":true,"data":[{"customerId":id}]}),
+            json!({"code":200,"success":false,"data":[{"customerId":id}]}),
+            json!({"code":200,"data":[{"customerId":id}]}),
+            json!({"code":200,"success":true,"data":[]}),
+            json!({"code":200,"success":true,"data":[{"customerId":id},{}]}),
+            json!({"code":200,"success":true,"data":[{"customerId":id},{"customerId":"999"}]}),
+            subscription(Value::Null),
+            subscription(json!(true)),
+            subscription(json!(0)),
+            subscription(json!(-1)),
+            subscription(json!(1.5)),
+            subscription(json!("")),
+            subscription(json!("unknown")),
+            subscription(json!("000")),
+        ] {
+            assert!(subscription_owner(&body).is_none(), "{body}");
+        }
+    }
+
+    #[test]
+    fn different_key_for_same_account_fetches_real_reset_and_keeps_tokens_scoped() {
+        use crate::providers::test_http;
+        let now = Utc.with_ymd_and_hms(2026, 10, 8, 0, 0, 0).unwrap();
+        let owner = subscription(json!("12345678901234567"));
+        let (subscription_url, subscription_request, subscription_thread) =
+            test_http::capture_once(200, &owner.to_string());
+        let (status_url, status_request, status_thread) =
+            test_http::capture_once(200, &reset_status(now).to_string());
+        let metric = fetch_with_credentials(
+            &reqwest::blocking::Client::new(),
+            &test_credentials(),
+            "another-key-for-same-account",
+            Some(&owner),
+            (&status_url, &subscription_url),
+            now,
+        )
+        .unwrap();
+        assert_eq!(metric.values[0].number, 1.0);
+        assert_eq!(metric.expiries_at, vec![now + chrono::Duration::hours(4)]);
+        let account_request = subscription_request.recv().unwrap().to_ascii_lowercase();
+        assert!(account_request.starts_with("get / "));
+        assert!(account_request.contains("authorization: bearer oauth-access-token\r\n"));
+        assert!(!account_request.contains("zcode-jwt"));
+        let reset_request = status_request.recv().unwrap().to_ascii_lowercase();
+        assert!(reset_request.starts_with("get / "));
+        assert!(reset_request.contains("authorization: bearer zcode-jwt\r\n"));
+        assert!(reset_request.contains("x-bigmodel-authorization: oauth-access-token\r\n"));
+        assert!(reset_request.contains("bigmodel-target-type: personal\r\n"));
+        assert!(!reset_request.contains("another-key-for-same-account"));
+        subscription_thread.join().unwrap();
+        status_thread.join().unwrap();
+    }
+
+    #[test]
+    fn exact_zcode_key_does_not_require_an_extra_account_request() {
+        use crate::providers::test_http;
+        let now = Utc.with_ymd_and_hms(2026, 10, 8, 0, 0, 0).unwrap();
+        let status_url = test_http::serve_once(200, &[], &reset_status(now).to_string());
+        let metric = fetch_with_credentials(
+            &reqwest::blocking::Client::new(),
+            &test_credentials(),
+            " zcode-key ",
+            None,
+            (&status_url, "http://127.0.0.1:1"),
+            now,
+        )
+        .unwrap();
+        assert_eq!(metric.values[0].number, 1.0);
+    }
+
+    #[test]
+    fn another_account_or_failed_owner_verification_never_returns_resets() {
+        use crate::providers::test_http::{serve_sequence, Step};
+        let now = Utc.with_ymd_and_hms(2026, 10, 8, 0, 0, 0).unwrap();
+        let owner = subscription(json!("12345678901234567"));
+        for (status, body) in [
+            (200, subscription(json!("99999999999999999"))),
+            (401, owner.clone()),
+            (200, json!({"code":200,"success":true,"data":[]})),
+            (200, json!({"code":401,"success":false,"data":null})),
+        ] {
+            let (base, requests) = serve_sequence(vec![
+                Step::Respond {
+                    status,
+                    headers: vec![],
+                    body: body.to_string(),
+                },
+                Step::Respond {
+                    status: 200,
+                    headers: vec![],
+                    body: reset_status(now).to_string(),
+                },
+            ]);
+            assert!(fetch_with_credentials(
+                &reqwest::blocking::Client::new(),
+                &test_credentials(),
+                "another-key",
+                Some(&owner),
+                (&format!("{base}/status"), &format!("{base}/subscription")),
+                now,
+            )
+            .is_none());
+            assert_eq!(
+                *requests.lock().unwrap(),
+                vec!["GET /subscription HTTP/1.1"]
+            );
+        }
+        assert!(fetch_with_credentials(
+            &reqwest::blocking::Client::new(),
+            &test_credentials(),
+            "another-key",
+            None,
+            ("http://127.0.0.1:1", "http://127.0.0.1:1"),
+            now,
+        )
+        .is_none());
     }
 
     #[test]

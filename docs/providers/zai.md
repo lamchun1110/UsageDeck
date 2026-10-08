@@ -24,11 +24,13 @@ The key must belong to an account with an active GLM Coding Plan.
 ## Bonus reset cards
 
 The **Rate Limit Resets** row reads reset status from your local ZCode login. Sign in to ZCode
-with the same **personal Coding Plan** account and use that account's ZCode-managed API key on
-the UsageDeck card. UsageDeck matches the API key before sending a request, so a different
-account's reset cards cannot appear on this card. Team and start-plan connections are not supported.
+with the same **personal Coding Plan** account. You can keep any API key belonging to that account
+on the UsageDeck card. UsageDeck accepts an exact match with ZCode's generated key, or verifies
+that Z.ai reports the same subscription owner for your saved key and the ZCode login. Missing,
+ambiguous, or mismatched ownership leaves resets unavailable. Team and start-plan connections
+are not supported.
 
-If your card uses a different API key, choose **Use ZCode API key** in the unavailable reset row.
+If account verification is unavailable, choose **Use ZCode API key** in the unavailable reset row.
 This replaces that card's saved API key with the signed-in ZCode account's personal-plan key;
 both quota usage and reset cards then refer to that account. The key stays in the operating
 system credential store and never enters the frontend. You can restore your previous key in

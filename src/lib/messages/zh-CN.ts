@@ -388,7 +388,7 @@ export const zhCN = {
   'reset.claudeUnavailable':
     'Claude 未返回重置优惠数据。请刷新 UsageDeck，并查看 Claude 的“设置 → 用量”。',
   'reset.zaiUnavailable':
-    '请以个人 Coding Plan 帐户登录 ZCode。“使用 ZCode API 密钥”会替换此卡片保存的密钥，让用量与重置跟踪该帐户。',
+    '请以相同的个人 Coding Plan 帐户登录 ZCode，再刷新。若帐户验证失败，“使用 ZCode API 密钥”会替换此卡片保存的密钥，让用量与重置跟踪该帐户。',
   'reset.useZcodeKey': '使用 ZCode API 密钥',
   'reset.zcodeConnecting': '正在连接 ZCode…',
   'reset.zcodeConnectFailed': '请以个人 Z.ai Coding Plan 帐户登录 ZCode，再重试。',
