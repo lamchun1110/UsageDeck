@@ -196,7 +196,13 @@ impl ZaiProvider {
             provider_id: self.identity.provider_id.clone(),
             plan: mapped.plan,
             quotas: mapped.quotas,
-            value_metrics: resets::fetch(api_key, Utc::now()).into_iter().collect(),
+            value_metrics: resets::fetch(
+                api_key,
+                subscription.as_ref().map(|response| &response.body),
+                Utc::now(),
+            )
+            .into_iter()
+            .collect(),
             status_metrics: Vec::new(),
             notices: Vec::new(),
             usage: UsageHistory::default(),

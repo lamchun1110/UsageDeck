@@ -389,7 +389,7 @@ export const zhTW = {
   'reset.claudeUnavailable':
     'Claude 未回報重置優惠資料。請重新整理 UsageDeck，並查看 Claude 的「設定 → 用量」。',
   'reset.zaiUnavailable':
-    '請以個人 Coding Plan 帳戶登入 ZCode。「使用 ZCode API 金鑰」會取代此卡片儲存的金鑰，讓用量與重置追蹤該帳戶。',
+    '請以相同的個人 Coding Plan 帳戶登入 ZCode，再重新整理。若帳戶驗證失敗，「使用 ZCode API 金鑰」會取代此卡片儲存的金鑰，讓用量與重置追蹤該帳戶。',
   'reset.useZcodeKey': '使用 ZCode API 金鑰',
   'reset.zcodeConnecting': '正在連接 ZCode…',
   'reset.zcodeConnectFailed': '請以個人 Z.ai Coding Plan 帳戶登入 ZCode，再重試。',
