@@ -5280,9 +5280,11 @@ dependencies = [
 
 [[package]]
 name = "usagedeck"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
+ "aes",
  "base64 0.23.1",
+ "cbc",
  "chrono",
  "core-foundation 0.10.1",
  "fontdue",

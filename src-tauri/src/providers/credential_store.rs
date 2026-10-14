@@ -580,6 +580,39 @@ fn read_generic_password_blocking(service: &str, account: &str) -> Result<Option
         .map_err(|_| "Linux Secret Service item could not be read.".into())
 }
 
+/// Electron stores its Linux encryption key under Chromium's `application`
+/// attribute rather than the service/username pair used by CLI credentials.
+#[cfg(target_os = "linux")]
+pub(crate) fn read_electron_password(application: &str) -> Result<Option<Vec<u8>>, String> {
+    let application = application.to_owned();
+    with_secret_service_timeout(move || {
+        use secret_service::{blocking::SecretService, EncryptionType};
+        use std::collections::HashMap;
+        let service = SecretService::connect(EncryptionType::Dh)
+            .map_err(|_| linux_secret_service_unavailable())?;
+        let mut matches = service
+            .search_items(HashMap::from([
+                ("application", application.as_str()),
+                ("xdg:schema", "chrome_libsecret_os_crypt_password_v2"),
+            ]))
+            .map_err(|_| "Electron secure storage could not be searched.")?;
+        let item = matches.unlocked.pop().or_else(|| matches.locked.pop());
+        let Some(item) = item else {
+            return Ok(None);
+        };
+        if item
+            .is_locked()
+            .map_err(|_| "Electron secure storage could not be read.")?
+        {
+            item.unlock()
+                .map_err(|_| "Electron secure storage could not be unlocked.")?;
+        }
+        item.get_secret()
+            .map(Some)
+            .map_err(|_| "Electron secure storage could not be read.".into())
+    })
+}
+
 #[cfg(target_os = "linux")]
 pub fn generic_password_service_exists(
     service: &str,

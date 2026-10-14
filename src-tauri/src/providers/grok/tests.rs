@@ -82,7 +82,9 @@ fn definition_matches_the_complete_default_layout() {
             .collect::<Vec<_>>(),
         [
             "grok.weekly",
+            "grok.botWeekly",
             "grok.payAsYouGo",
+            "grok.botExtra",
             "grok.trend",
             "grok.today",
             "grok.yesterday",
@@ -95,7 +97,7 @@ fn definition_matches_the_complete_default_layout() {
         crate::models::MetricSection::AlwaysVisible
     );
     assert!(!weekly.default_pinned);
-    let extra = &definition.metrics[1];
+    let extra = &definition.metrics[2];
     assert_eq!(
         extra.default_section,
         crate::models::MetricSection::OnDemand
@@ -381,6 +383,91 @@ fn credential_probe_and_missing_login_are_typed() {
     assert!(!provider.has_local_credentials());
     let error = UsageProvider::refresh(&provider).unwrap_err();
     assert_eq!(error.kind(), ProviderErrorKind::Authentication);
+    server.finish();
+}
+
+#[test]
+fn bot_only_login_and_partial_source_failures_keep_the_available_meter() {
+    for cli_failure in [false, true] {
+        let server = TestServer::new(if cli_failure { 2 } else { 1 }, |request| {
+            if request.starts_with("POST /GetSandUsageStatus ") {
+                assert!(request
+                    .to_ascii_lowercase()
+                    .contains("x-cursor-client-type: sand"));
+                assert!(request.to_ascii_lowercase().contains("x-cursor-team-id: 7"));
+                (200, r#"{"usagePercent":22.37,"hasNonZeroIncludedLimit":true,"currentPeriodStart":"2026-10-09T13:37:45.949Z","nextResetTimestampUtc":"2026-10-16T13:37:45.949Z","grokPlanLabel":"SuperGrok"}"#.into())
+            } else {
+                (503, "{}".into())
+            }
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let (mut provider, _) = build_provider(
+            &directory,
+            server.client(),
+            if cli_failure { valid_auth() } else { "{}" },
+            directory.path().join("missing.jsonl"),
+        );
+        if !cli_failure {
+            fs::remove_file(directory.path().join("auth.json")).unwrap();
+        }
+        provider.bot_auth =
+            super::bot_auth::BotAuthStore::for_login(Some(super::bot_auth::BotLogin {
+                token: "fake-bot-token".into(),
+                team_id: Some(7),
+            }));
+        provider.bot_client = super::bot::BotClient::for_test(server.base.clone());
+        assert!(provider.has_local_credentials());
+        let snapshot = provider.refresh_inner().unwrap();
+        assert_eq!(snapshot.quotas[0].id, "botWeekly");
+        assert_eq!(snapshot.quotas[0].used_percent, 22.37);
+        assert_eq!(snapshot.plan.as_deref(), Some("SuperGrok · Grok Bot"));
+        assert_eq!(snapshot.warnings.len(), usize::from(cli_failure));
+        server.finish();
+    }
+}
+
+#[test]
+#[ignore = "requires a signed-in Grok Bot desktop app and secure-storage permission"]
+fn live_bot_meter_uses_the_desktop_login_without_modifying_it() {
+    let auth = super::bot_auth::BotAuthStore::new();
+    let client = super::bot::BotClient::new().unwrap();
+    let mapped = client
+        .fetch(&auth, Utc::now())
+        .unwrap()
+        .expect("Grok Bot login");
+    let quota = mapped.quota.expect("personal weekly allowance");
+    assert!(quota.used_percent.is_finite());
+    assert!(quota.resets_at.is_some());
+    assert_eq!(quota.period_seconds, 604800);
+}
+
+#[test]
+fn unavailable_bot_service_preserves_regular_grok_usage() {
+    let server = TestServer::new(3, |request| {
+        if request.starts_with("GET /credits ") {
+            (200, CREDITS.into())
+        } else if request.starts_with("GET /settings ") {
+            (200, "{}".into())
+        } else {
+            (401, "{}".into())
+        }
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let (mut provider, _) = build_provider(
+        &directory,
+        server.client(),
+        valid_auth(),
+        directory.path().join("missing.jsonl"),
+    );
+    provider.bot_auth = super::bot_auth::BotAuthStore::for_login(Some(super::bot_auth::BotLogin {
+        token: "fake-bot-token".into(),
+        team_id: None,
+    }));
+    provider.bot_client = super::bot::BotClient::for_test(server.base.clone());
+    let snapshot = provider.refresh_inner().unwrap();
+    assert_eq!(snapshot.quotas.len(), 1);
+    assert_eq!(snapshot.quotas[0].id, "weekly");
+    assert!(snapshot.warnings[0].contains("Grok Bot sign-in expired"));
     server.finish();
 }
 

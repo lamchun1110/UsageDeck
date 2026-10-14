@@ -8,6 +8,19 @@ const periodSeconds = 10_000;
 
 afterEach(cleanup);
 
+it('explains a shared allowance without marking it as estimated', () => {
+  show({
+    ...quota(22),
+    label: 'Shared Weekly',
+    sourceNote: 'Shared allowance for Grok, Grok Bot, and Cursor.',
+  });
+  const note = screen.getByRole('img', {
+    name: 'Shared allowance for Grok, Grok Bot, and Cursor.',
+  });
+  expect(note).toHaveAttribute('data-tooltip', 'Shared allowance for Grok, Grok Bot, and Cursor.');
+  expect(screen.queryByRole('img', { name: 'Estimated' })).not.toBeInTheDocument();
+});
+
 function quota(usedPercent: number, elapsedFraction = 0.5): QuotaWindow {
   return {
     id: 'weekly',

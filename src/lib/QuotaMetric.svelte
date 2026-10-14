@@ -155,6 +155,16 @@
   <div class="metric__heading">
     <h2>
       {quota.label}
+      {#if quota.sourceNote && !quota.estimated}
+        <span
+          class="metric-estimate"
+          data-tooltip={quota.sourceNote}
+          aria-label={quota.sourceNote}
+          role="img"
+        >
+          <Icon name="about" size={11} strokeWidth={1.9} />
+        </span>
+      {/if}
       {#if quota.estimated}
         <span
           class="metric-estimate"

@@ -1,4 +1,6 @@
 mod auth;
+mod bot;
+mod bot_auth;
 mod client;
 mod local_usage;
 mod mapper;
@@ -21,6 +23,8 @@ use crate::{
 
 use self::{
     auth::{GrokAuthState, GrokAuthStore},
+    bot::{BotClient, BotUsage},
+    bot_auth::BotAuthStore,
     client::GrokClient,
     local_usage::GrokLogUsageScanner,
     mapper::{map_credits, plan_name},
@@ -35,7 +39,10 @@ pub(crate) fn definition() -> ProviderDefinition {
         short_name: "G".into(),
         fallback_enabled: false,
         local_usage_source_note: Some("From your Grok logs (estimated)".into()),
-        links: vec![ProviderLink::new("Usage", "https://grok.com/?_s=usage")],
+        links: vec![
+            ProviderLink::new("Usage", "https://grok.com/?_s=usage"),
+            ProviderLink::new("Bot Usage", "https://cursor.com/dashboard"),
+        ],
         options: Vec::new(),
         metrics: vec![
             MetricDefinition::quota(
@@ -48,6 +55,16 @@ pub(crate) fn definition() -> ProviderDefinition {
                 false,
                 "W",
             ),
+            MetricDefinition::quota(
+                "grok.botWeekly",
+                "Bot Weekly",
+                "botWeekly",
+                false,
+                true,
+                MetricSection::AlwaysVisible,
+                false,
+                "BW",
+            ),
             MetricDefinition::status(
                 "grok.payAsYouGo",
                 "Extra Usage",
@@ -56,6 +73,15 @@ pub(crate) fn definition() -> ProviderDefinition {
                 MetricSection::OnDemand,
                 false,
                 "E",
+            ),
+            MetricDefinition::status(
+                "grok.botExtra",
+                "Bot Extra Usage",
+                "botExtra",
+                true,
+                MetricSection::OnDemand,
+                false,
+                "BE",
             ),
             MetricDefinition::trend("grok.trend"),
             MetricDefinition::usage(
@@ -85,7 +111,7 @@ pub(crate) fn definition() -> ProviderDefinition {
 
 #[derive(Debug, Error)]
 pub(crate) enum GrokError {
-    #[error("Grok is not logged in. Run `grok login`.")]
+    #[error("Sign in to Grok Bot or run `grok login`.")]
     NotLoggedIn,
     #[error("Grok login data is invalid. Run `grok login` again.")]
     InvalidAuth,
@@ -103,6 +129,8 @@ pub(crate) enum GrokError {
     LocalUsage,
     #[error("UsageDeck cache is unavailable.")]
     Storage,
+    #[error(transparent)]
+    Bot(#[from] bot::BotError),
 }
 
 impl From<crate::storage::StorageError> for GrokError {
@@ -116,6 +144,8 @@ pub struct GrokProvider {
     pricing: Arc<PricingStore>,
     auth: GrokAuthStore,
     client: GrokClient,
+    bot_auth: BotAuthStore,
+    bot_client: BotClient,
     log_usage: GrokLogUsageScanner,
     now: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
 }
@@ -127,6 +157,8 @@ impl GrokProvider {
             pricing,
             auth: GrokAuthStore::new(),
             client: GrokClient::new()?,
+            bot_auth: BotAuthStore::new(),
+            bot_client: BotClient::new()?,
             log_usage: GrokLogUsageScanner::new(),
             now: Arc::new(Utc::now),
         })
@@ -146,12 +178,67 @@ impl GrokProvider {
             pricing,
             auth,
             client,
+            bot_auth: BotAuthStore::for_login(None),
+            bot_client: BotClient::new().unwrap(),
             log_usage,
             now: Arc::new(move || now),
         }
     }
 
     fn refresh_inner(&self) -> Result<ProviderSnapshot, GrokError> {
+        let cli = self.refresh_cli_inner();
+        let bot = if self.bot_auth.has_local_credentials() {
+            self.bot_client
+                .fetch(&self.bot_auth, (self.now)())
+                .map_err(GrokError::from)
+        } else {
+            Ok(None)
+        };
+        match (cli, bot) {
+            (Ok(mut snapshot), Ok(Some(bot))) => {
+                append_bot_usage(&mut snapshot, bot);
+                Ok(snapshot)
+            }
+            (Ok(mut snapshot), Err(error)) => {
+                snapshot.warnings.push(error.to_string());
+                Ok(snapshot)
+            }
+            (Ok(snapshot), Ok(None)) => Ok(snapshot),
+            (Err(cli_error), Ok(Some(bot))) => {
+                let now = (self.now)();
+                let mut warnings = vec![];
+                if !matches!(cli_error, GrokError::NotLoggedIn) {
+                    warnings.push(cli_error.to_string());
+                }
+                let pricing = self.pricing.current();
+                let usage = scan_or_cached_usage(
+                    &self.storage,
+                    "grok",
+                    crate::providers::CacheIdentity::Unscoped,
+                    "Grok",
+                    || self.log_usage.scan(&self.storage, now, &pricing),
+                    &mut warnings,
+                );
+                let mut snapshot = ProviderSnapshot {
+                    provider_id: "grok".into(),
+                    plan: None,
+                    quotas: vec![],
+                    value_metrics: vec![],
+                    status_metrics: vec![],
+                    notices: vec![],
+                    usage,
+                    warnings,
+                    refreshed_at: now,
+                };
+                append_bot_usage(&mut snapshot, bot);
+                Ok(snapshot)
+            }
+            (Err(_), Err(bot_error)) => Err(bot_error),
+            (Err(error), Ok(None)) => Err(error),
+        }
+    }
+
+    fn refresh_cli_inner(&self) -> Result<ProviderSnapshot, GrokError> {
         let now = (self.now)();
         let candidates = self.auth.load_candidates()?;
         crate::app_debug!(
@@ -268,7 +355,7 @@ impl UsageProvider for GrokProvider {
     }
 
     fn has_local_credentials(&self) -> bool {
-        self.auth.has_local_credentials()
+        self.auth.has_local_credentials() || self.bot_auth.has_local_credentials()
     }
 
     fn refresh(&self) -> Result<ProviderSnapshot, ProviderError> {
@@ -285,9 +372,19 @@ impl UsageProvider for GrokProvider {
                 GrokError::InvalidResponse => ProviderErrorKind::InvalidResponse,
                 GrokError::LocalUsage => ProviderErrorKind::LocalData,
                 GrokError::Storage => ProviderErrorKind::Storage,
+                GrokError::Bot(ref error) => error.kind(),
             };
             ProviderError::from_display(kind, error)
         })
+    }
+}
+
+fn append_bot_usage(snapshot: &mut ProviderSnapshot, bot: BotUsage) {
+    snapshot.quotas.extend(bot.quota);
+    snapshot.status_metrics.extend(bot.extra);
+    snapshot.warnings.extend(bot.warnings);
+    if snapshot.plan.is_none() {
+        snapshot.plan = bot.plan;
     }
 }
 

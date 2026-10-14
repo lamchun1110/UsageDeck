@@ -71,7 +71,7 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 | **[Antigravity](docs/providers/antigravity.md)**  | ローカル | Gemini と Claude で共有されるクォータ                                                     |
 | **[Copilot](docs/providers/copilot.md)**          | ローカル | プレミアムリクエストまたは AI クレジット、追加使用量、チャットと補完の上限、組織課金      |
 | **[Devin](docs/providers/devin.md)**              | ローカル | 日次と週次の上限、リセット時刻、追加使用量の残高                                          |
-| **[Grok](docs/providers/grok.md)**                | ローカル | 週次の割当、追加使用量の状態、トークン履歴、費用                                          |
+| **[Grok](docs/providers/grok.md)**                | ローカル | Grok と Grok Bot の週次割当、追加使用量の状態、トークン履歴、費用                         |
 | **[OpenCode](docs/providers/opencode.md)**        | ローカル | 複数の Go アカウント、セッション・週次・月次の上限、ローカル使用履歴と推定費用            |
 | **[OpenRouter](docs/providers/openrouter.md)**    | API キー | クレジット、残高、日次・週次・月次の費用、キー上限                                        |
 | **[Z.ai](docs/providers/zai.md)**                 | API キー | GLM Coding Plan のセッション・週次・ウェブ検索の上限、個人 ZCode リセットカードと有効期限 |
