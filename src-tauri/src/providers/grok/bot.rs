@@ -155,7 +155,8 @@ fn map_status(body: &Value) -> Result<BotUsage, BotError> {
         .and_then(Value::as_bool)
         == Some(true);
     let unified = body.get("isUnified").and_then(Value::as_bool) == Some(true);
-    let quota = if pooled {
+    let zero_allowance = body.get("includedLimitZero").and_then(Value::as_bool) == Some(true);
+    let quota = if pooled || zero_allowance {
         None
     } else {
         body.get("usagePercent")
@@ -287,6 +288,12 @@ mod tests {
         let mapped = map_status(&json!({"isUnified":true,"usagePercent":0})).unwrap();
         assert_eq!(mapped.quota.unwrap().label, "Shared Weekly");
         assert!(map_status(&json!({})).unwrap().quota.is_none());
+        assert!(
+            map_status(&json!({"usagePercent":0,"includedLimitZero":true}))
+                .unwrap()
+                .quota
+                .is_none()
+        );
         assert!(map_status(&json!({"usagePercent":null})).is_err());
         assert!(
             map_status(&json!({"usagePercent":40,"usesPooledEnterpriseAllowance":true}))
