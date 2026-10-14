@@ -73,7 +73,7 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 | **[Antigravity](docs/providers/antigravity.md)**  | 本地     | Gemini 与 Claude 共享的额度池                                       |
 | **[Copilot](docs/providers/copilot.md)**          | 本地     | 高级请求或 AI 点数、额外用量、聊天与补全限额、组织计费              |
 | **[Devin](docs/providers/devin.md)**              | 本地     | 每日与每周限额、重置时间、额外用量余额                              |
-| **[Grok](docs/providers/grok.md)**                | 本地     | 每周配额、额外用量状态、Token 历史、预估支出                        |
+| **[Grok](docs/providers/grok.md)**                | 本地     | Grok 与 Grok Bot 每周配额、额外用量状态、Token 历史、预估支出       |
 | **[OpenCode](docs/providers/opencode.md)**        | 本地     | 多个 Go 账户、会话与每周及每月额度、本地用量与预估支出              |
 | **[OpenRouter](docs/providers/openrouter.md)**    | API 密钥 | 点数、余额、每日与每周及每月支出、密钥限额                          |
 | **[Z.ai](docs/providers/zai.md)**                 | API 密钥 | GLM Coding Plan 会话、每周与网页搜索额度；个人 ZCode 重置卡与到期日 |

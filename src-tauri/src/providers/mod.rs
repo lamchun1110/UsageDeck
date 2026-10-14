@@ -324,7 +324,10 @@ mod tests {
         );
         assert_eq!(
             links(grok::definition()),
-            [("Usage".into(), "https://grok.com/?_s=usage".into())]
+            [
+                ("Usage".into(), "https://grok.com/?_s=usage".into()),
+                ("Bot Usage".into(), "https://cursor.com/dashboard".into()),
+            ]
         );
         assert_eq!(
             links(opencode::definition()),
