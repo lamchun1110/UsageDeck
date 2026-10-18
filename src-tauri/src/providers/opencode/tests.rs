@@ -956,7 +956,7 @@ fn v2_oauth_populates_quotas_with_organization_scope_and_current_local_history()
         .unwrap()
         .to_ascii_lowercase();
     assert!(request.contains("authorization: bearer v2-access-token\r\n"));
-    assert!(request.contains("x-org-id: org-selected\r\n"));
+    assert!(request.contains("x-opencode-org-id: org-selected\r\n"));
     assert!(!request.contains("stale-key"));
     assert!(!request.contains("never-refresh-here"));
     handle.join().unwrap();

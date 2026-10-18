@@ -48,7 +48,9 @@ impl OpenCodeClient {
         let mut headers = reqwest::header::HeaderMap::new();
         if let Some(organization) = &credentials.organization {
             headers.insert(
-                "x-org-id",
+                // This quota route uses the inference API's workspace header,
+                // rather than the Console config API's `x-org-id` header.
+                "x-opencode-org-id",
                 organization
                     .parse()
                     .map_err(|_| OpenCodeError::InvalidAuth)?,
