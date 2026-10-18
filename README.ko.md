@@ -72,7 +72,7 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 | **[Copilot](docs/providers/copilot.md)**          | 로컬      | 프리미엄 요청 또는 AI 크레딧, 추가 사용량, 채팅·자동 완성 한도, 조직 결제   |
 | **[Devin](docs/providers/devin.md)**              | 로컬      | 일간·주간 한도, 초기화 시간, 추가 사용량 잔액                               |
 | **[Grok](docs/providers/grok.md)**                | 로컬      | Grok 및 Grok Bot 주간 할당량, 추가 사용량 상태, 토큰 기록, 예상 비용        |
-| **[OpenCode](docs/providers/opencode.md)**        | 로컬      | 여러 Go 계정, 세션·주간·월간 할당량, 로컬 사용 기록과 예상 비용             |
+| **[OpenCode](docs/providers/opencode.md)**        | 로컬      | V1/V2 로그인, 여러 Go 프로필, 할당량, 로컬 사용 기록과 예상 비용            |
 | **[OpenRouter](docs/providers/openrouter.md)**    | API 키    | 크레딧, 잔액, 일간·주간·월간 비용, 키 한도                                  |
 | **[Z.ai](docs/providers/zai.md)**                 | API 키    | GLM Coding Plan 세션·주간·웹 검색 한도, 개인 ZCode 초기화 카드와 만료일     |
 | **[Kimi](docs/providers/kimi.md)**                | API 키    | Kimi Code의 세션·주간 한도 (도메인 선택 가능)                               |

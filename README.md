@@ -42,7 +42,7 @@ requests carry no credentials or usage data, and they happen whether or not you 
 | **[Copilot](docs/providers/copilot.md)**          | Local       | Premium requests or AI credits, extra usage, chat and completion quotas, org billing              |
 | **[Devin](docs/providers/devin.md)**              | Local       | Daily and weekly limits, reset times, extra usage balance                                         |
 | **[Grok](docs/providers/grok.md)**                | Local       | Grok and Grok Bot weekly allowances, extra usage status, token history, spend                     |
-| **[OpenCode](docs/providers/opencode.md)**        | Local       | Multiple Go accounts, session, weekly, and monthly quotas, local usage and estimated spend        |
+| **[OpenCode](docs/providers/opencode.md)**        | Local       | V1/V2 login, multiple Go profiles, quotas, local usage and estimated spend                        |
 | **[OpenRouter](docs/providers/openrouter.md)**    | API key     | Credits, balance, today, this week, this month, key limit                                         |
 | **[Z.ai](docs/providers/zai.md)**                 | API key     | GLM Coding Plan session, weekly, and web-search quotas; personal ZCode reset cards and expiry     |
 | **[Kimi](docs/providers/kimi.md)**                | API key     | Kimi Code session and weekly quotas, on the domain you choose                                     |

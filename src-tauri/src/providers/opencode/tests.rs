@@ -751,3 +751,232 @@ fn transient_account_quota_failure_is_propagated_with_local_history() {
 
     assert_eq!(error.kind(), ProviderErrorKind::RateLimited);
 }
+
+fn create_v2_tables(connection: &Connection) {
+    connection.execute_batch("CREATE TABLE session_v2 (id TEXT PRIMARY KEY);
+        CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+            type TEXT NOT NULL, seq INTEGER, time_created INTEGER NOT NULL, time_updated INTEGER, data TEXT NOT NULL);
+        CREATE INDEX session_message_time_created_idx ON session_message(time_created);").unwrap();
+}
+
+fn insert_v2_message(
+    connection: &Connection,
+    session: &str,
+    id: &str,
+    kind: &str,
+    time: i64,
+    data: &str,
+) {
+    connection.execute("INSERT INTO session_message (id,session_id,type,time_created,data) VALUES (?1,?2,?3,?4,?5)",params![id,session,kind,time,data]).unwrap();
+}
+
+fn v2_message(provider: &str, cost: f64) -> String {
+    serde_json::json!({"model":{"id":"priced-model","providerID":provider,"variant":"default"},
+        "content":[{"type":"text","text":"conversation contents are not usage"}],
+        "cost":cost,"tokens":{"input":100,"output":20,"reasoning":5,"cache":{"read":40,"write":10}},
+        "time":{"created":timestamp()},"finish":"stop"})
+    .to_string()
+}
+
+#[test]
+fn v2_only_database_reads_usage_and_filters_non_assistants_other_providers_orphans_and_old_rows() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("opencode.db");
+    let db = Connection::open(&path).unwrap();
+    create_v2_tables(&db);
+    db.execute("INSERT INTO session_v2 VALUES ('session')", [])
+        .unwrap();
+    insert_v2_message(
+        &db,
+        "session",
+        "valid",
+        "assistant",
+        timestamp(),
+        &v2_message("opencode-go", 2.5),
+    );
+    insert_v2_message(
+        &db,
+        "session",
+        "free",
+        "assistant",
+        timestamp(),
+        &v2_message("opencode", 0.0),
+    );
+    insert_v2_message(
+        &db,
+        "session",
+        "other-provider",
+        "assistant",
+        timestamp(),
+        &v2_message("anthropic", 99.0),
+    );
+    insert_v2_message(
+        &db,
+        "session",
+        "user",
+        "user",
+        timestamp(),
+        &v2_message("opencode-go", 99.0),
+    );
+    insert_v2_message(
+        &db,
+        "missing-session",
+        "orphan",
+        "assistant",
+        timestamp(),
+        &v2_message("opencode-go", 99.0),
+    );
+    insert_v2_message(
+        &db,
+        "session",
+        "old",
+        "assistant",
+        timestamp() - 40 * 86_400_000,
+        &v2_message("opencode-go", 99.0),
+    );
+    insert_v2_message(&db, "session", "bad", "assistant", timestamp(), "not-json");
+    drop(db);
+    assert!(has_hosted_usage(&path).unwrap());
+    let result = scan(vec![path]);
+    let today = result.usage.today.unwrap();
+    assert_eq!(today.tokens, 350);
+    assert_eq!(today.estimated_cost_usd, Some(2.5));
+    assert!(!today.cost_estimated);
+    assert!(result.warnings.is_empty());
+}
+
+#[test]
+fn migrated_sessions_use_v2_records_and_unmigrated_v1_sessions_are_preserved() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("opencode.db");
+    let db = create_database(&path, true);
+    create_v2_tables(&db);
+    insert_message(
+        &db,
+        "migrated",
+        "same-id",
+        timestamp(),
+        &exact_message("opencode-go", "priced-model", 50.0, 5000, 0),
+    );
+    // V2 can omit or transform old messages during migration. Do not add them
+    // back from the retained legacy session, even when the IDs differ.
+    insert_message(
+        &db,
+        "migrated",
+        "legacy-only",
+        timestamp(),
+        &exact_message("opencode-go", "priced-model", 50.0, 5000, 0),
+    );
+    insert_message(
+        &db,
+        "unmigrated",
+        "v1-only",
+        timestamp(),
+        &exact_message("opencode-go", "priced-model", 1.0, 25, 0),
+    );
+    db.execute("INSERT INTO session_v2 VALUES ('migrated')", [])
+        .unwrap();
+    insert_v2_message(
+        &db,
+        "migrated",
+        "same-id",
+        "assistant",
+        timestamp(),
+        &v2_message("opencode-go", 2.0),
+    );
+    drop(db);
+    let today = scan(vec![path]).usage.today.unwrap();
+    assert_eq!(today.tokens, 200);
+    assert_eq!(today.estimated_cost_usd, Some(3.0));
+}
+
+#[test]
+fn v2_missing_cost_uses_catalog_and_duplicate_databases_count_messages_once() {
+    let directory = tempdir().unwrap();
+    let first = directory.path().join("opencode.db");
+    let db = Connection::open(&first).unwrap();
+    create_v2_tables(&db);
+    db.execute("INSERT INTO session_v2 VALUES ('session')", [])
+        .unwrap();
+    let data = serde_json::json!({"model":{"providerID":"opencode","id":"priced-model"},
+        "tokens":{"input":1_000_000,"output":0},"time":{"created":timestamp()}})
+    .to_string();
+    insert_v2_message(&db, "session", "message", "assistant", timestamp(), &data);
+    drop(db);
+    let second = directory.path().join("opencode-next.db");
+    fs::copy(&first, &second).unwrap();
+    let today = scan(vec![first, second]).usage.today.unwrap();
+    assert_eq!(today.tokens, 1_000_000);
+    assert_eq!(today.estimated_cost_usd, Some(1.0));
+    assert!(today.cost_estimated);
+}
+
+#[test]
+fn v2_oauth_populates_quotas_with_organization_scope_and_current_local_history() {
+    let directory = tempdir().unwrap();
+    fs::write(
+        directory.path().join("auth.json"),
+        r#"{"opencode-go":{"type":"api","key":"stale-key"}}"#,
+    )
+    .unwrap();
+    let db = Connection::open(directory.path().join("opencode.db")).unwrap();
+    create_v2_tables(&db);
+    db.execute_batch("CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT, active INTEGER, time_updated INTEGER);
+        INSERT INTO session_v2 VALUES ('session');").unwrap();
+    let value=serde_json::json!({"type":"oauth","methodID":"device","access":"v2-access-token","refresh":"never-refresh-here",
+        "expires":now().timestamp_millis()+3_600_000,"metadata":{"server":"https://opencode.ai/console","orgID":"org-selected"}}).to_string();
+    db.execute(
+        "INSERT INTO credential VALUES ('cred-1','opencode',?1,1,1)",
+        [value],
+    )
+    .unwrap();
+    insert_v2_message(
+        &db,
+        "session",
+        "message",
+        "assistant",
+        timestamp(),
+        &v2_message("opencode-go", 1.25),
+    );
+    drop(db);
+    let body=serde_json::json!({"usage":{"rolling":{"percent":10},"weekly":{"percent":20},"monthly":{"percent":30}}}).to_string();
+    let (url, request, handle) = crate::providers::test_http::capture_once(200, &body);
+    let provider = OpenCodeProvider::with_dependencies(
+        OpenCodePaths::for_data_directory(directory.path().into()),
+        test_client(&url),
+        pricing_store(directory.path()),
+        now(),
+    );
+    assert!(provider.has_local_credentials());
+    let snapshot = provider.refresh().unwrap();
+    assert_eq!(snapshot.quotas.len(), 3);
+    assert_eq!(snapshot.usage.today.unwrap().tokens, 175);
+    let request = request
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .to_ascii_lowercase();
+    assert!(request.contains("authorization: bearer v2-access-token\r\n"));
+    assert!(request.contains("x-org-id: org-selected\r\n"));
+    assert!(!request.contains("stale-key"));
+    assert!(!request.contains("never-refresh-here"));
+    handle.join().unwrap();
+}
+
+#[test]
+#[ignore = "requires a signed-in OpenCode V2 Console account with Go and recent local usage"]
+fn live_v2_login_and_usage_are_read_without_modifying_opencode() {
+    let directory = tempdir().unwrap();
+    let pricing =
+        Arc::new(PricingStore::new_without_refresh_for_test(directory.path().into()).unwrap());
+    let provider = OpenCodeProvider::new(pricing);
+    assert!(provider.has_local_credentials());
+    let snapshot = provider.refresh().unwrap();
+    assert_eq!(snapshot.quotas.len(), 3);
+    assert!(snapshot
+        .quotas
+        .iter()
+        .all(|quota| quota.used_percent.is_finite()));
+    assert!(snapshot.usage.last_30_days.is_some());
+    assert!(!snapshot.usage.daily.is_empty());
+    assert!(snapshot.warnings.is_empty());
+}

@@ -72,7 +72,7 @@ gpg --verify UsageDeck.AppImage.asc UsageDeck.AppImage
 | **[Copilot](docs/providers/copilot.md)**          | 本機     | 進階要求或 AI 點數、額外用量、聊天與補全額度、組織帳務                  |
 | **[Devin](docs/providers/devin.md)**              | 本機     | 每日與每週限制、重設時間、額外用量餘額                                  |
 | **[Grok](docs/providers/grok.md)**                | 本機     | Grok 與 Grok Bot 每週配額、額外用量狀態、Token 歷史、預估支出           |
-| **[OpenCode](docs/providers/opencode.md)**        | 本機     | 多個 Go 帳戶、工作階段與每週及每月額度、本機用量與預估支出              |
+| **[OpenCode](docs/providers/opencode.md)**        | 本機     | V1/V2 登入、多個 Go 設定檔、額度、本機用量與預估支出                    |
 | **[OpenRouter](docs/providers/openrouter.md)**    | API 金鑰 | 點數、餘額、每日與每週及每月支出、金鑰限額                              |
 | **[Z.ai](docs/providers/zai.md)**                 | API 金鑰 | GLM Coding Plan 工作階段、每週與網頁搜尋額度；個人 ZCode 重設卡與到期日 |
 | **[Kimi](docs/providers/kimi.md)**                | API 金鑰 | Kimi Code 的工作階段與每週額度，可自選網域                              |

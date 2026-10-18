@@ -126,6 +126,16 @@ pub(super) fn parse_message(
     if value.get("role").and_then(Value::as_str) != Some("assistant") {
         return None;
     }
+    parse_assistant(session_id, message_id, column_timestamp, value)
+}
+
+// V2 stores the assistant type in a column rather than inside the JSON.
+pub(super) fn parse_assistant(
+    session_id: String,
+    message_id: String,
+    column_timestamp: Option<i64>,
+    value: &Value,
+) -> Option<ParsedMessage> {
     let provider_id = provider_id(value)?;
     if !HOSTED_PROVIDER_IDS.contains(&provider_id.as_str()) {
         return None;

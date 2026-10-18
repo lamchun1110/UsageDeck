@@ -1,11 +1,11 @@
 //! Discovery of additional OpenCode data directories — one card per login.
 //!
-//! Everything an OpenCode account needs (its `opencode-go` credential and its
-//! usage databases) lives inside one data directory, so sibling directories
+//! Everything an OpenCode account needs (its active V2 Console/Go credential
+//! or V1 `opencode-go` login, and usage databases) lives inside one data directory, so sibling directories
 //! following the `opencode-<name>` convention next to the default directory
 //! are separate logins, exactly like alternate `CLAUDE_CONFIG_DIR`s for
 //! Claude. Accounts appear when the directory holds a subscribed login; no
-//! credential ever passes through UsageDeck.
+//! credentials are only read to authenticate requests to OpenCode.
 
 use std::{
     collections::HashSet,
@@ -88,9 +88,9 @@ pub(crate) fn discover_with(
             continue;
         }
         // Only a directory with a subscribed login is an account; a data
-        // directory without an `opencode-go` key is just a data directory.
+        // directory without a supported active login is just a data directory.
         let paths = OpenCodePaths::for_data_directory(canonical.clone());
-        if !matches!(paths.go_api_key(), Ok(Some(_))) {
+        if !matches!(paths.go_credentials(chrono::Utc::now()), Ok(Some(_))) {
             continue;
         }
         let display_name = label.trim();
@@ -193,5 +193,28 @@ mod tests {
 
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].display_name, "alt");
+    }
+}
+
+#[cfg(test)]
+mod v2_tests {
+    #[test]
+    fn active_v2_console_login_creates_a_sibling_card_without_auth_json() {
+        let home = tempfile::tempdir().unwrap();
+        let directory = home.path().join(".local/share/opencode-work");
+        std::fs::create_dir_all(&directory).unwrap();
+        let db = rusqlite::Connection::open(directory.join("opencode.db")).unwrap();
+        db.execute_batch("CREATE TABLE credential (id TEXT, integration_id TEXT, value TEXT, active INTEGER, time_updated INTEGER)").unwrap();
+        let value=serde_json::json!({"type":"oauth","access":"fixture-access","expires":chrono::Utc::now().timestamp_millis()+3_600_000,"metadata":{"server":"https://opencode.ai/console"}}).to_string();
+        db.execute(
+            "INSERT INTO credential VALUES ('cred','opencode',?1,1,1)",
+            [value],
+        )
+        .unwrap();
+        let accounts = super::discover_with(|_| None, home.path(), std::time::Instant::now());
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].display_name, "work");
+        db.execute("UPDATE credential SET active=0", []).unwrap();
+        assert!(super::discover_with(|_| None, home.path(), std::time::Instant::now()).is_empty());
     }
 }

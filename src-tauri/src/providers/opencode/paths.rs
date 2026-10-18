@@ -16,21 +16,42 @@ const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
 #[derive(Debug, Clone)]
 pub(crate) struct OpenCodePaths {
     data_directory: PathBuf,
+    database: Option<PathBuf>,
 }
 
 impl OpenCodePaths {
     pub(crate) fn new() -> Self {
+        Self::from_environment(|name| std::env::var(name).ok(), &home_directory())
+    }
+
+    fn from_environment(environment: impl Fn(&str) -> Option<String>, home: &Path) -> Self {
         Self {
-            data_directory: data_directory(|name| std::env::var(name).ok(), &home_directory()),
+            data_directory: data_directory(&environment, home),
+            database: environment("OPENCODE_DB")
+                .and_then(non_empty)
+                .map(|value| expand_home(&value, home)),
         }
     }
 
     pub(crate) fn for_data_directory(data_directory: PathBuf) -> Self {
-        Self { data_directory }
+        Self {
+            data_directory,
+            database: None,
+        }
     }
 
     pub(crate) fn database_files(&self) -> Result<Vec<PathBuf>, OpenCodeError> {
+        if let Some(database) = &self.database {
+            return Ok(vec![database.clone()]);
+        }
         database_files(&self.data_directory)
+    }
+
+    pub(crate) fn go_credentials(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<super::auth::GoCredentials>, OpenCodeError> {
+        super::auth::load(self, now)
     }
 
     pub(crate) fn go_api_key(&self) -> Result<Option<Zeroizing<String>>, OpenCodeError> {
@@ -174,6 +195,23 @@ mod tests {
                 directory.path().join("opencode-next.db"),
                 directory.path().join("opencode.db"),
             ]
+        );
+    }
+
+    #[test]
+    fn explicit_v2_database_overrides_directory_discovery_and_accepts_custom_names() {
+        let home = tempdir().unwrap();
+        let environment = HashMap::from([
+            ("OPENCODE_DB", "~/custom/history.sqlite"),
+            ("OPENCODE_DATA_DIR", "~/data/opencode"),
+        ]);
+        let paths = OpenCodePaths::from_environment(
+            |name| environment.get(name).map(ToString::to_string),
+            home.path(),
+        );
+        assert_eq!(
+            paths.database_files().unwrap(),
+            [home.path().join("custom/history.sqlite")]
         );
     }
 
