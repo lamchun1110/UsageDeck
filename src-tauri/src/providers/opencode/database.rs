@@ -12,7 +12,8 @@ use serde_json::Value;
 use crate::pricing::ModelPricing;
 
 use super::record::{
-    parse_message, parse_part, ParsedMessage, ParsedPart, UsageRecord, EPOCH_MILLISECONDS_THRESHOLD,
+    parse_assistant, parse_message, parse_part, ParsedMessage, ParsedPart, UsageRecord,
+    EPOCH_MILLISECONDS_THRESHOLD,
 };
 
 const PROVIDER_JSON: &str = "COALESCE(\
@@ -46,24 +47,60 @@ pub(crate) fn read_database(
     }
 
     let connection = open_read_only(path)?;
-    let schema = inspect_schema(&connection)?;
-    let mut messages = load_messages(&connection, &schema, cutoff_ms)?;
-    let parts = load_parts(&connection, &schema, cutoff_ms, &messages)?;
-
-    let mut records = Vec::with_capacity(messages.len());
-    for message in messages.drain(..) {
-        let message_parts = parts
-            .get(&message.message_id)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        records.push(message.into_usage(message_parts, pricing));
+    let legacy = inspect_schema(&connection).ok();
+    let v2 = inspect_v2_schema(&connection)?;
+    if legacy.is_none() && v2.is_none() {
+        return Err(());
+    }
+    let mut records = Vec::new();
+    if let Some(schema) = legacy {
+        let messages = load_messages(&connection, &schema, cutoff_ms)?;
+        let parts = load_parts(&connection, &schema, cutoff_ms, &messages)?;
+        for message in messages {
+            let message_parts = parts
+                .get(&message.message_id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            records.push(message.into_usage(message_parts, pricing));
+        }
+    }
+    if let Some(schema) = v2 {
+        records.extend(
+            load_v2_messages(&connection, &schema, cutoff_ms)?
+                .into_iter()
+                .map(|message| message.into_usage(&[], pricing)),
+        );
     }
     Ok(DatabaseRead::Usable(DatabaseUsage { records }))
 }
 
 pub(crate) fn has_hosted_usage(path: &Path) -> Result<bool, ()> {
     let connection = open_read_only(path)?;
-    let schema = inspect_schema(&connection)?;
+    let v2 = inspect_v2_schema(&connection)?;
+    if let Some(schema) = &v2 {
+        let join = if schema.join_sessions {
+            " INNER JOIN session_v2 s ON s.id = m.session_id"
+        } else {
+            ""
+        };
+        let cost = numeric_cost_sql("m");
+        let sql = format!(
+            "SELECT EXISTS(SELECT 1 FROM session_message m{join} WHERE m.type = 'assistant' \
+             AND CASE WHEN json_valid(m.data) THEN \
+             {PROVIDER_JSON} IN ('opencode-go','opencode') AND {cost} ELSE 0 END LIMIT 1)"
+        );
+        if connection
+            .query_row(&sql, [], |row| row.get::<_, bool>(0))
+            .map_err(|_| ())?
+        {
+            return Ok(true);
+        }
+    }
+    let schema = match inspect_schema(&connection) {
+        Ok(schema) => schema,
+        Err(()) if v2.is_some() => return Ok(false),
+        Err(()) => return Err(()),
+    };
     let join = schema.session_join_sql();
     let cost = hosted_cost_sql(schema.part.is_some());
     let sql = format!(
@@ -72,8 +109,9 @@ pub(crate) fn has_hosted_usage(path: &Path) -> Result<bool, ()> {
             WHERE json_valid(m.data) \
               AND json_extract(m.data,'$.role') = 'assistant' \
               AND {PROVIDER_JSON} IN ('opencode-go','opencode') \
-              AND {cost} \
-            LIMIT 1)"
+              AND {cost} {exclusion}\
+            LIMIT 1)",
+        exclusion = schema.migrated_session_exclusion()
     );
     connection
         .query_row(&sql, [], |row| row.get::<_, bool>(0))
@@ -105,7 +143,7 @@ fn hosted_cost_sql(has_parts: bool) -> String {
     )
 }
 
-struct OpenedDatabase {
+pub(super) struct OpenedDatabase {
     // Field order matters: close SQLite before TempDir removes its database
     // and WAL/SHM files.
     connection: Connection,
@@ -120,7 +158,7 @@ impl Deref for OpenedDatabase {
     }
 }
 
-fn open_read_only(path: &Path) -> Result<OpenedDatabase, ()> {
+pub(super) fn open_read_only(path: &Path) -> Result<OpenedDatabase, ()> {
     match Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -185,6 +223,7 @@ struct DatabaseSchema {
     message_time_created: bool,
     join_sessions: bool,
     part: Option<PartSchema>,
+    exclude_migrated_sessions: bool,
 }
 
 struct PartSchema {
@@ -192,6 +231,13 @@ struct PartSchema {
 }
 
 impl DatabaseSchema {
+    fn migrated_session_exclusion(&self) -> &'static str {
+        if self.exclude_migrated_sessions {
+            " AND NOT EXISTS (SELECT 1 FROM session_v2 v WHERE v.id = m.session_id)"
+        } else {
+            ""
+        }
+    }
     fn session_join_sql(&self) -> &'static str {
         if self.join_sessions {
             " INNER JOIN session s ON s.id = m.session_id"
@@ -220,10 +266,15 @@ fn inspect_schema(connection: &Connection) -> Result<DatabaseSchema, ()> {
         message_time_created: message.contains("time_created"),
         join_sessions,
         part,
+        exclude_migrated_sessions: inspect_v2_schema(connection)?
+            .is_some_and(|schema| schema.join_sessions),
     })
 }
 
-fn table_columns(connection: &Connection, table: &str) -> Result<Option<HashSet<String>>, ()> {
+pub(super) fn table_columns(
+    connection: &Connection,
+    table: &str,
+) -> Result<Option<HashSet<String>>, ()> {
     let exists = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
@@ -248,6 +299,88 @@ fn table_columns(connection: &Connection, table: &str) -> Result<Option<HashSet<
     Ok(Some(columns))
 }
 
+struct V2Schema {
+    time_created: bool,
+    join_sessions: bool,
+}
+
+fn inspect_v2_schema(connection: &Connection) -> Result<Option<V2Schema>, ()> {
+    let Some(columns) = table_columns(connection, "session_message")? else {
+        return Ok(None);
+    };
+    if !["id", "session_id", "type", "data"]
+        .iter()
+        .all(|column| columns.contains(*column))
+    {
+        return Ok(None);
+    }
+    Ok(Some(V2Schema {
+        time_created: columns.contains("time_created"),
+        join_sessions: table_columns(connection, "session_v2")?
+            .is_some_and(|columns| columns.contains("id")),
+    }))
+}
+
+fn load_v2_messages(
+    connection: &Connection,
+    schema: &V2Schema,
+    cutoff_ms: i64,
+) -> Result<Vec<ParsedMessage>, ()> {
+    let time = if schema.time_created {
+        "m.time_created"
+    } else {
+        "NULL"
+    };
+    let join = if schema.join_sessions {
+        " INNER JOIN session_v2 s ON s.id = m.session_id"
+    } else {
+        ""
+    };
+    let filter = if schema.time_created {
+        timestamp_filter("m.time_created")
+    } else {
+        " WHERE 1=1".into()
+    };
+    // Read only usage fields, never conversation text, tool output, or error bodies.
+    let sql = format!(
+        "SELECT m.id, m.session_id, {time}, \
+         json_remove(m.data,'$.content','$.error') FROM session_message m{join}{filter} \
+         AND m.type = 'assistant' AND json_valid(m.data)"
+    );
+    let mut statement = connection.prepare(&sql).map_err(|_| ())?;
+    let mut rows = if schema.time_created {
+        statement
+            .query(rusqlite::params![
+                cutoff_ms,
+                cutoff_ms.div_euclid(1_000),
+                EPOCH_MILLISECONDS_THRESHOLD
+            ])
+            .map_err(|_| ())?
+    } else {
+        statement.query([]).map_err(|_| ())?
+    };
+    let mut messages = Vec::new();
+    while let Some(row) = rows.next().map_err(|_| ())? {
+        let (Some(id), Some(session), Some(data)) = (
+            row_text(row, 0).and_then(non_empty),
+            row_text(row, 1).and_then(non_empty),
+            row_text(row, 3),
+        ) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        let Some(message) = parse_assistant(session, id, row_i64(row, 2), &value) else {
+            continue;
+        };
+        if message.timestamp.timestamp_millis() >= cutoff_ms {
+            messages.push(message);
+        }
+    }
+    Ok(messages)
+}
+
 fn load_messages(
     connection: &Connection,
     schema: &DatabaseSchema,
@@ -259,11 +392,17 @@ fn load_messages(
         "NULL"
     };
     let join = schema.session_join_sql();
-    let filter = if schema.message_time_created {
+    let mut filter = if schema.message_time_created {
         timestamp_filter("m.time_created")
     } else {
         String::new()
     };
+    if schema.exclude_migrated_sessions {
+        if filter.is_empty() {
+            filter.push_str(" WHERE 1=1");
+        }
+        filter.push_str(schema.migrated_session_exclusion());
+    }
     let sql = format!("SELECT m.id, m.session_id, {time}, m.data FROM message m{join}{filter}");
     let mut statement = connection.prepare(&sql).map_err(|_| ())?;
     let mut rows = if schema.message_time_created {

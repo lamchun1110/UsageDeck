@@ -148,6 +148,24 @@ pub(crate) fn get_json(
     provider: &str,
     endpoint: &str,
 ) -> Result<EndpointResponse, TransportError> {
+    get_json_with_headers(
+        client,
+        url,
+        api_key,
+        provider,
+        endpoint,
+        &reqwest::header::HeaderMap::new(),
+    )
+}
+
+pub(crate) fn get_json_with_headers(
+    client: &Client,
+    url: &str,
+    api_key: &str,
+    provider: &str,
+    endpoint: &str,
+    headers: &reqwest::header::HeaderMap,
+) -> Result<EndpointResponse, TransportError> {
     if rate_limit_active(provider, api_key) {
         crate::app_debug!(
             "http",
@@ -160,6 +178,7 @@ pub(crate) fn get_json(
         let started = Instant::now();
         let result = client
             .get(url)
+            .headers(headers.clone())
             .bearer_auth(api_key)
             .header("Accept", "application/json")
             .send();

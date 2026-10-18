@@ -137,7 +137,7 @@ mod tests {
         let error = map_go_usage(response).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "OpenCode Go login data is invalid or expired. Sign in to OpenCode Go again."
+            "OpenCode login is invalid or expired. Open OpenCode to renew it, then refresh."
         );
     }
 
@@ -175,6 +175,11 @@ mod tests {
         let url = test_http::serve_once(status, &[], body);
         let client =
             super::super::client::OpenCodeClient::for_test(&url, std::time::Duration::from_secs(1));
-        client.fetch_go_usage(&key).unwrap()
+        client
+            .fetch_go_usage(&super::super::auth::GoCredentials {
+                token: zeroize::Zeroizing::new(key),
+                organization: None,
+            })
+            .unwrap()
     }
 }

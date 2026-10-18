@@ -58,6 +58,11 @@ signing and is not notarized. `ENABLE_LINUX_GPG_SIGNING` is also unchanged.
 This default does not weaken updater verification. Tauri updater signatures are still generated,
 uploaded, and verified with the bundled public key before publication.
 
+The application enables the updater's TLS and system-proxy features explicitly and leaves legacy
+ZIP compatibility disabled. Release metadata points Windows at raw `.exe` installers, Linux at raw
+`.AppImage` files, and macOS at `.app.tar.gz` bundles. macOS tarball extraction remains supported
+without the legacy ZIP feature. Keep these formats when preparing updater metadata.
+
 ## SSL.com eSigner fallback
 
 Set `WINDOWS_SIGNING_BACKEND=esign` only after configuring all of the following:

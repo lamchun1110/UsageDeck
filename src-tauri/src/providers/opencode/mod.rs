@@ -1,4 +1,5 @@
 mod accounts;
+mod auth;
 mod client;
 mod database;
 mod mapper;
@@ -98,13 +99,13 @@ pub(crate) fn definition() -> ProviderDefinition {
 pub(crate) enum OpenCodeError {
     #[error("OpenCode was not detected. Sign in to OpenCode Go or use OpenCode locally first.")]
     NotDetected,
-    #[error("OpenCode login data could not be read. Sign in to OpenCode Go again.")]
+    #[error("OpenCode login data could not be read. Sign in to OpenCode Console or Go again.")]
     CredentialsUnreadable,
     #[error("The OpenCode data directory could not be read.")]
     DataDirectoryUnreadable,
     #[error("OpenCode local usage data is temporarily unavailable.")]
     DatabaseUnreadable,
-    #[error("OpenCode Go login data is invalid or expired. Sign in to OpenCode Go again.")]
+    #[error("OpenCode login is invalid or expired. Open OpenCode to renew it, then refresh.")]
     InvalidAuth,
     #[error("OpenCode Go subscription required.")]
     GoSubscriptionRequired,
@@ -225,17 +226,17 @@ impl OpenCodeProvider {
 
     fn refresh_snapshot(&self) -> Result<ProviderSnapshot, OpenCodeError> {
         let now = (self.now)();
-        let (go_api_key, go_key_error) = match self.paths.go_api_key() {
+        let (go_credentials, go_key_error) = match self.paths.go_credentials(now) {
             Ok(key) => (key, None),
             Err(error) => (None, Some(error)),
         };
-        let go_usage = go_api_key
-            .as_deref()
-            .map(|key| {
+        let go_usage = go_credentials
+            .as_ref()
+            .map(|credentials| {
                 self.client
                     .as_ref()
                     .map_err(|error| *error)
-                    .and_then(|client| client.fetch_go_usage(key))
+                    .and_then(|client| client.fetch_go_usage(credentials))
                     .and_then(map_go_usage)
             })
             .transpose();
@@ -276,7 +277,7 @@ impl OpenCodeProvider {
         let mut warnings = scan.warnings;
         if go_key_error.is_some() {
             warnings.push(
-                "OpenCode Go login data could not be read; local database usage is still shown."
+                "OpenCode login is unavailable or expired; local database usage is still shown. Open OpenCode to renew the login, then refresh."
                     .into(),
             );
         }
@@ -317,8 +318,9 @@ impl UsageProvider for OpenCodeProvider {
     }
 
     fn has_local_credentials(&self) -> bool {
-        match self.paths.go_api_key() {
-            Ok(Some(_)) | Err(OpenCodeError::CredentialsUnreadable) => true,
+        match self.paths.go_credentials((self.now)()) {
+            Ok(Some(_))
+            | Err(OpenCodeError::CredentialsUnreadable | OpenCodeError::InvalidAuth) => true,
             Ok(None) | Err(_) => self.scanner.has_hosted_usage(),
         }
     }
