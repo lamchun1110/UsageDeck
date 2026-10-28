@@ -76,7 +76,7 @@ jobs:
       # them because the fingerprints looked fresh — surfacing as `can't find crate
       # for tauri` in the first step to compile. Keying on the image keeps a cache
       # with the environment that produced it.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri -> target
           key: ${{ matrix.os }}
@@ -270,7 +270,7 @@ jobs:
       # rust-cache carries ~/.cargo/bin, so cargo-audit is restored rather than
       # recompiled on every run. Keyed apart from the build legs, which cache a
       # target directory this job never populates.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri -> target
           key: audit
