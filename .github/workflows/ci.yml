@@ -286,6 +286,7 @@ jobs:
       # cargo-audit still fetches the current advisory database on every run.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
+          workspaces: src-tauri -> target
           key: audit-tool-0.22.2
           add-rust-environment-hash-key: 'false'
           cache-targets: 'false'
