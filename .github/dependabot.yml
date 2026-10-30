@@ -1,27 +1,33 @@
 version: 2
+# Tauri's Rust and JavaScript packages must move together. One weekly group
+# also prevents a separate five-platform CI run for every small dependency bump.
+multi-ecosystem-groups:
+  maintenance:
+    schedule:
+      interval: weekly
 updates:
   - package-ecosystem: cargo
     directory: /src-tauri
-    schedule:
-      interval: weekly
+    patterns: ['*']
+    multi-ecosystem-group: maintenance
     commit-message:
       prefix: chore
     ignore:
-      # gtk 0.18 — pinned by tauri 2.11 — requires glib 0.18, so Dependabot's glib
+      # Tauri's gtk 0.18 stack requires glib 0.18, so Dependabot's glib
       # update PRs can never satisfy Cargo. Drop this rule once Cargo.lock moves to
       # glib >= 0.20 (tauri adopting the gtk 0.20+ stack).
       - dependency-name: glib
   - package-ecosystem: npm
     directory: /
-    schedule:
-      interval: weekly
+    patterns: ['*']
+    multi-ecosystem-group: maintenance
     commit-message:
       prefix: chore
   # The workflows run with release-signing secrets in scope; every action is
   # SHA-pinned, and this set keeps those pins moving forward instead of rotting.
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: weekly
+    patterns: ['*']
+    multi-ecosystem-group: maintenance
     commit-message:
       prefix: chore

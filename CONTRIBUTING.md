@@ -43,6 +43,17 @@ Run the complete quality checks before submitting a pull request:
 corepack pnpm verify
 ```
 
+CI runs frontend checks and dependency audits before starting the five native platform jobs.
+All platforms retain Rust lint/tests, native credential-store tests, installer builds, and packaged
+startup smoke tests. `verify:versions` also rejects mismatched Tauri Rust and JavaScript API
+major/minor versions before native compilation starts.
+
+CI omits Rust debug symbols and builds test installers with optimization level 1 to shorten
+compilation. The Release workflow uses Cargo's normal release settings and performs its existing
+signing and smoke checks. Native build caches are saved by `main` and restored by PRs; the pinned
+audit tool has its own cache independent of the application's lockfile. Weekly dependency updates
+are grouped across Cargo, npm, and Actions so coupled Tauri updates can be reviewed together.
+
 ### Pre-push hook
 
 Optional, and recommended if you push to `main` directly. It runs `corepack pnpm verify:rust` —

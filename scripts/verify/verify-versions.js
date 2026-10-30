@@ -25,6 +25,14 @@ if (uniqueVersions.size !== 1) {
   );
 }
 
+// Tauri rejects a Rust/API major-minor mismatch during packaging. Detect it
+// here, before every native runner spends minutes compiling the same bad pair.
+const rustTauri = cargoManifest.match(/^tauri\s*=\s*\{[^\n]*version\s*=\s*"[^\d]*(\d+)\.(\d+)/m);
+const apiTauri = packageJson.dependencies['@tauri-apps/api'].match(/(\d+)\.(\d+)/);
+if (!rustTauri || !apiTauri || rustTauri[1] !== apiTauri[1] || rustTauri[2] !== apiTauri[2]) {
+  throw new Error('Tauri Rust and @tauri-apps/api versions must use the same major/minor release.');
+}
+
 const expectedTag = process.argv[2];
 if (expectedTag && expectedTag !== `v${versions.package}`) {
   throw new Error(

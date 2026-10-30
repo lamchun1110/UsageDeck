@@ -114,7 +114,7 @@ jobs:
           version: 11.11.0
           run_install: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: pnpm
@@ -129,9 +129,10 @@ jobs:
           toolchain: ${{ steps.pinned-toolchain.outputs.channel }}
           components: clippy
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri -> target
+          key: validate-ubuntu-22.04
 
       - name: Validate release tag
         run: node scripts/verify/verify-versions.js "$RELEASE_TAG"
@@ -288,7 +289,7 @@ jobs:
           version: 11.11.0
           run_install: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: pnpm
@@ -303,9 +304,10 @@ jobs:
           toolchain: ${{ steps.pinned-toolchain.outputs.channel }}
           targets: ${{ matrix.rust-targets }}
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri -> target
+          key: release-${{ matrix.platform }}-${{ matrix.rust-targets }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -398,7 +400,7 @@ jobs:
       - name: Upload unsigned installer for SignPath
         if: runner.os == 'Windows' && needs.validate.outputs.windows_signing_backend == 'signpath'
         id: upload-unsigned-windows
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: signpath-unsigned-${{ matrix.name }}-${{ github.run_id }}
           path: ${{ matrix.smoke-artifact-root }}/nsis/*-setup.exe
@@ -469,7 +471,7 @@ jobs:
           "artifact_id=$($matches[0].id)" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Download unsigned reference without executing it
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signpath-unsigned-${{ matrix.name }}-${{ github.run_id }}
           path: unsigned-reference
@@ -493,7 +495,7 @@ jobs:
           version: 11.11.0
           run_install: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: pnpm
