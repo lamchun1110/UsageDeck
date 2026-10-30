@@ -5,13 +5,13 @@ multi-ecosystem-groups:
   maintenance:
     schedule:
       interval: weekly
+    commit-message:
+      prefix: chore
 updates:
   - package-ecosystem: cargo
     directory: /src-tauri
     patterns: ['*']
     multi-ecosystem-group: maintenance
-    commit-message:
-      prefix: chore
     ignore:
       # Tauri's gtk 0.18 stack requires glib 0.18, so Dependabot's glib
       # update PRs can never satisfy Cargo. Drop this rule once Cargo.lock moves to
@@ -21,13 +21,9 @@ updates:
     directory: /
     patterns: ['*']
     multi-ecosystem-group: maintenance
-    commit-message:
-      prefix: chore
   # The workflows run with release-signing secrets in scope; every action is
   # SHA-pinned, and this set keeps those pins moving forward instead of rotting.
   - package-ecosystem: github-actions
     directory: /
     patterns: ['*']
     multi-ecosystem-group: maintenance
-    commit-message:
-      prefix: chore
