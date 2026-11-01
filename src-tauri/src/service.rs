@@ -856,6 +856,14 @@ fn merge_refresh_result(
             state.stale = false;
         }
         Err(error) => {
+            // A sign-in failure supersedes notices from the previous refresh,
+            // such as waiting for a CLI to renew a login that is now missing.
+            // Retain the last known figures and their original timestamp.
+            if error.kind() == ProviderErrorKind::Authentication {
+                if let Some(snapshot) = &mut state.snapshot {
+                    snapshot.notices.clear();
+                }
+            }
             state.error_kind = Some(error.kind());
             state.error = Some(error.to_string());
         }
@@ -888,9 +896,10 @@ mod tests {
     };
     use crate::{
         models::{
-            MetricDefinition, MetricSection, MetricSource, ProviderDefinition, ProviderErrorKind,
-            ProviderSnapshot, ProviderViewState, QuotaFormat, QuotaWindow, SnapshotSource,
-            StatusMetric, StatusTone, UsageHistory,
+            DailyUsage, MetricDefinition, MetricSection, MetricSource, ProviderDefinition,
+            ProviderErrorKind, ProviderNotice, ProviderNoticeTone, ProviderSnapshot,
+            ProviderViewState, QuotaFormat, QuotaWindow, SnapshotSource, StatusMetric, StatusTone,
+            UsageHistory,
         },
         policy::{FAILURE_RETRY_BACKOFF, STALE_AFTER},
         providers::{
@@ -1309,7 +1318,7 @@ mod tests {
 
     #[test]
     fn failed_refresh_preserves_last_successful_snapshot_without_forcing_stale() {
-        let snapshot = ProviderSnapshot {
+        let mut snapshot = ProviderSnapshot {
             provider_id: "codex".into(),
             plan: None,
             quotas: Vec::new(),
@@ -1320,6 +1329,12 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         };
+        snapshot.notices.push(ProviderNotice {
+            id: "rateLimited".into(),
+            title: "Live usage paused".into(),
+            message: "Retrying in about 5 minutes".into(),
+            tone: ProviderNoticeTone::Warning,
+        });
         let mut state = ProviderViewState {
             snapshot: Some(snapshot.clone()),
             ..ProviderViewState::default()
@@ -1332,6 +1347,72 @@ mod tests {
         assert!(!state.stale);
         assert_eq!(state.error.as_deref(), Some("offline"));
         assert_eq!(state.error_kind, Some(ProviderErrorKind::Network));
+    }
+
+    #[test]
+    fn missing_claude_login_replaces_the_waiting_notice_and_preserves_usage_until_relogin() {
+        use crate::providers::claude::ClaudeError;
+
+        let mut snapshot = test_snapshot("claude");
+        snapshot.plan = Some("Max".into());
+        snapshot.quotas.push(QuotaWindow {
+            id: "session".into(),
+            label: "Session".into(),
+            used_percent: 37.0,
+            resets_at: None,
+            period_seconds: 5 * 60 * 60,
+            format: QuotaFormat::Percent,
+            used_value: None,
+            limit_value: None,
+            unit: None,
+            estimated: false,
+            source_note: None,
+        });
+        snapshot.usage.daily.push(DailyUsage {
+            date: "2026-11-01".into(),
+            tokens: 1200,
+            estimated_cost_usd: Some(0.02),
+            estimate_complete: true,
+        });
+        snapshot.notices.push(ProviderNotice {
+            id: "loginRefreshDeferred".into(),
+            title: "Waiting for Claude Code".into(),
+            message: "Claude Code refreshes this login when you next use it".into(),
+            tone: ProviderNoticeTone::Warning,
+        });
+
+        for source in [SnapshotSource::Live, SnapshotSource::Cache] {
+            for error in [ClaudeError::NotLoggedIn, ClaudeError::IncompleteCredentials] {
+                let mut state = ProviderViewState {
+                    snapshot: Some(snapshot.clone()),
+                    source,
+                    refreshing: true,
+                    ..ProviderViewState::default()
+                };
+                merge_refresh_result(
+                    &mut state,
+                    Err(ProviderError::from_display(
+                        ProviderErrorKind::Authentication,
+                        error,
+                    )),
+                );
+
+                let mut retained = snapshot.clone();
+                retained.notices.clear();
+                assert_eq!(state.snapshot, Some(retained.clone()));
+                assert!(state.error.as_deref().unwrap().contains("/login"));
+                assert_eq!(state.error_kind, Some(ProviderErrorKind::Authentication));
+                assert_eq!(state.source, source);
+                assert!(!state.refreshing);
+
+                retained.quotas[0].used_percent = 42.0;
+                merge_refresh_result(&mut state, Ok(retained.clone()));
+                assert_eq!(state.snapshot, Some(retained));
+                assert_eq!(state.source, SnapshotSource::Live);
+                assert!(state.error.is_none());
+                assert!(state.error_kind.is_none());
+            }
+        }
     }
 
     #[test]

@@ -26,6 +26,10 @@ Claude Code maintains and renews its own Keychain login on macOS and Windows. If
 UsageDeck shows the last successful limits until Claude Code renews it. File-based logins and Linux
 Secret Service logins can be refreshed and saved back to their original source by UsageDeck.
 
+If the saved login is missing or incomplete, UsageDeck asks you to sign in again with `/login`
+inside Claude Code. This replaces any previous "Waiting for Claude Code" notice while keeping
+the last known usage figures. Refresh UsageDeck after completing the browser sign-in.
+
 ## Multiple accounts
 
 UsageDeck discovers separate Claude Code logins that use custom `CLAUDE_CONFIG_DIR` homes and shows
@@ -67,13 +71,14 @@ for expiry and redemption details. UsageDeck does not read encrypted Desktop ses
 
 ## Troubleshooting
 
-- **Not logged in** — run `claude`, complete sign-in, then refresh UsageDeck.
+- **Claude Code is not signed in** — run `claude` in a terminal, use `/login`, complete the browser
+  sign-in, then refresh UsageDeck.
 - **Claude Desktop login found** — sign in once through the Claude Code CLI.
 - **Claude Code credentials could not be read** — check access to the system credential store, then
   refresh UsageDeck. This indicates an unreadable CLI login rather than a Desktop-only login.
-- **Claude Code login is incomplete** — the saved CLI credential has no usable access token. Run
-  `claude`, sign in again, then refresh UsageDeck. Granting Keychain access cannot restore missing
-  tokens.
+- **Claude Code's saved login is missing or incomplete** — the saved CLI credential has no usable
+  access token. Run `/login` inside Claude Code, complete sign-in, then refresh UsageDeck. Granting
+  Keychain access cannot restore missing tokens.
 - **Repeated macOS permission dialogs** — allow `security` to read the `Claude Code-credentials`
   item when macOS requests it. "Always Allow" applies to that reader and item. If Claude Code resets
   the item's permissions, macOS may ask again; UsageDeck cannot prevent the owning app from doing

@@ -148,7 +148,7 @@ use crate::providers::log_usage::scan_or_cached_usage;
 
 #[derive(Debug, Error)]
 pub enum ClaudeError {
-    #[error("Not logged in. Run `claude` to authenticate.")]
+    #[error("Claude Code is not signed in. Run `/login` in Claude Code, then refresh UsageDeck.")]
     NotLoggedIn,
     #[error(
         "Claude Desktop login found, but its macOS-only encrypted session cannot be reused safely. Run `claude` in a terminal and sign in once."
@@ -157,7 +157,7 @@ pub enum ClaudeError {
     #[error("Claude Code credentials could not be read. Check access to your system credential store, then refresh UsageDeck.")]
     CredentialRead,
     #[error(
-        "Claude Code login is incomplete. Run `claude` and sign in again, then refresh UsageDeck."
+        "Claude Code's saved login is missing or incomplete. Run `/login` in Claude Code to sign in again, then refresh UsageDeck."
     )]
     IncompleteCredentials,
     #[error("Your Claude session expired. Run `claude` to sign in again.")]
