@@ -5140,7 +5140,7 @@ dependencies = [
 
 [[package]]
 name = "usagedeck"
-version = "0.7.16"
+version = "0.7.17"
 dependencies = [
  "aes",
  "base64 0.23.1",
