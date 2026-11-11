@@ -109,7 +109,7 @@ jobs:
             xdg-utils \
             patchelf
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 11.11.0
           run_install: false
@@ -284,7 +284,7 @@ jobs:
             xdotool \
             xvfb
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 11.11.0
           run_install: false
@@ -490,7 +490,7 @@ jobs:
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: signpath-signed
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 11.11.0
           run_install: false
